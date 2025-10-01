@@ -1,0 +1,15 @@
+.idea/.gitignore
+.idea/misc.xml
+.idea/modules.xml
+.idea/PeaceMusic.iml
+.idea/vcs.xml
+.idea/inspectionProfiles/profiles_settings.xml
+.idea/inspectionProfiles/Project_Default.xml
+__pycache__/config.cpython-310.pyc
+cogs/__pycache__/ai_cog.cpython-310.pyc
+cogs/__pycache__/music_cog.cpython-310.pyc
+utils/__pycache__/default_prompt.cpython-310.pyc
+utils/__pycache__/telegram_downloader.cpython-310.pyc
+utils/__pycache__/tools.cpython-310.pyc
+.env
+cogs/cookies.txt
