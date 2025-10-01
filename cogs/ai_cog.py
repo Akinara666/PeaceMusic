@@ -197,7 +197,9 @@ class ChatGPT(commands.Cog):
 
         if not tool_invoked:
             history.append(content)
-        return final_text.strip()
+            return final_text.strip() or None
+
+        return final_text.strip() or None
 
     # ------------------------------------------------------------------
     # Discord events
@@ -226,7 +228,8 @@ class ChatGPT(commands.Cog):
 
             try:
                 reply = await self._generate_reply(history, prompt_text, message)
-                await message.channel.send(reply or "Я пока не готова ответить.")
+                if reply is not None:
+                    await message.channel.send(reply or "Я пока не готова ответить.")
             except Exception as exc:  # noqa: BLE001
                 logger.exception("Gemini response failed")
                 await message.channel.send(f"Не вышло ответить: {exc}")
