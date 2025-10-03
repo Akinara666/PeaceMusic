@@ -28,7 +28,7 @@ _GENERATION_MODEL = "gemini-2.5-flash"
 _HISTORY_LIMIT = 300
 
 
-class ChatGPT(commands.Cog):
+class GeminiChatCog(commands.Cog):
     """Discord cog responsible for Gemini-powered chat responses."""
 
     def __init__(self, bot: commands.Bot):
@@ -52,7 +52,7 @@ class ChatGPT(commands.Cog):
     # ------------------------------------------------------------------
     def set_music_cog(self, music_cog: "Music") -> None:
         self.music_cog = music_cog
-        logger.info("ChatGPT cog linked with Music cog")
+        logger.info("Gemini chat cog linked with Music cog")
 
     # ------------------------------------------------------------------
     # Internal helpers
