@@ -22,7 +22,7 @@ Discord‑бот, который умеет общаться (Gemini) и упр�
 ## Установка и запуск (локально)
 ```bash
 # 1) Клонируем репозиторий и заходим в папку
-git clone <your-repo-url> && cd PeaceMusic
+git clone https://github.com/Akinara666/PeaceMusic.git && cd PeaceMusic
 
 # 2) Виртуальное окружение
 python -m venv .venv
