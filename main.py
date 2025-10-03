@@ -6,7 +6,7 @@ import logging
 import discord
 from discord.ext import commands
 
-from cogs.ai_cog import ChatGPT
+from cogs.ai_cog import GeminiChatCog
 from cogs.music_cog import Music
 from config import DISCORD_BOT_TOKEN, INTENTS
 
@@ -16,7 +16,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(na
 class PeaceMusicBot(commands.Bot):
     async def setup_hook(self) -> None:
         music_cog = Music(self)
-        chat_cog = ChatGPT(self)
+        chat_cog = GeminiChatCog(self)
         chat_cog.set_music_cog(music_cog)
 
         await self.add_cog(music_cog)
