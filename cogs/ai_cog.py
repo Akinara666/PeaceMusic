@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 import discord
 import requests
@@ -12,7 +13,7 @@ from discord.ext import commands
 from google import genai
 from google.genai import types
 
-from config import CHATBOT_CHANNEL_ID, GEMINI_API_KEY
+from config import CHATBOT_CHANNEL_ID, CONTEXT_FILE, GEMINI_API_KEY
 from utils.default_prompt import default_prompt
 from utils.tools import tools
 
@@ -36,6 +37,15 @@ class ChatGPT(commands.Cog):
         self.music_cog: Optional["Music"] = None
         self._histories: Dict[int, List[types.Content]] = {}
         self._lock = asyncio.Lock()
+
+        base_dir = Path(__file__).resolve().parent.parent
+        context_path = Path(CONTEXT_FILE)
+        if not context_path.is_absolute():
+            context_path = (base_dir / context_path).resolve()
+        self._context_file = context_path
+        if not self._context_file.parent.exists():
+            self._context_file.parent.mkdir(parents=True, exist_ok=True)
+        self._load_histories_from_disk()
 
     # ------------------------------------------------------------------
     # Public API
@@ -97,6 +107,182 @@ class ChatGPT(commands.Cog):
             trimmed.pop()
         logger.info("Trimmed chat history from %s to %s entries", len(history), len(trimmed))
         return trimmed
+
+
+    def _history_snapshot(self) -> Dict[str, List[Dict[str, Any]]]:
+        snapshot: Dict[str, List[Dict[str, Any]]] = {}
+        for channel_id, history in self._histories.items():
+            serialized = [self._serialize_content(content) for content in history if content.parts]
+            if serialized:
+                snapshot[str(channel_id)] = serialized
+        return snapshot
+
+    def _serialize_content(self, content: types.Content) -> Dict[str, Any]:
+        parts: List[Dict[str, Any]] = []
+        for part in content.parts:
+            text_value = getattr(part, 'text', None)
+            if text_value:
+                parts.append({"type": "text", "text": text_value})
+                continue
+            function_call = getattr(part, 'function_call', None)
+            if function_call:
+                args = getattr(function_call, 'args', None) or {}
+                if not isinstance(args, dict):
+                    try:
+                        args = dict(args)
+                    except Exception:  # noqa: BLE001
+                        pass
+                parts.append(
+                    {
+                        "type": "function_call",
+                        "name": getattr(function_call, 'name', ''),
+                        "args": self._ensure_json_safe(args),
+                    }
+                )
+                continue
+            function_response = getattr(part, 'function_response', None)
+            if function_response:
+                parts.append(
+                    {
+                        "type": "function_response",
+                        "name": getattr(function_response, 'name', ''),
+                        "response": self._ensure_json_safe(
+                            getattr(function_response, 'response', {})
+                        ),
+                    }
+                )
+                continue
+            file_data = getattr(part, 'file_data', None)
+            if file_data and getattr(file_data, 'uri', None):
+                parts.append(
+                    {
+                        "type": "file_data",
+                        "uri": getattr(file_data, 'uri', ''),
+                        "mime_type": getattr(file_data, 'mime_type', None),
+                    }
+                )
+        return {"role": content.role, "parts": parts}
+
+    def _deserialize_content(self, payload: Dict[str, Any]) -> Optional[types.Content]:
+        role = payload.get('role')
+        if not role:
+            return None
+        parts: List[types.Part] = []
+        for part_payload in payload.get('parts', []):
+            kind = part_payload.get('type')
+            if kind == 'text':
+                text_value = part_payload.get('text', '')
+                if text_value:
+                    parts.append(types.Part.from_text(text=text_value))
+            elif kind == 'function_call':
+                name = part_payload.get('name')
+                args = part_payload.get('args') or {}
+                if name:
+                    try:
+                        parts.append(
+                            types.Part.from_function_call(name=name, args=args)
+                        )
+                    except Exception:  # noqa: BLE001
+                        parts.append(
+                            types.Part.from_text(
+                                text=f"[tool call] {name}({args})"
+                            )
+                        )
+            elif kind == 'function_response':
+                name = part_payload.get('name') or ''
+                response = part_payload.get('response') or {}
+                try:
+                    parts.append(
+                        types.Part.from_function_response(name=name, response=response)
+                    )
+                except Exception:  # noqa: BLE001
+                    parts.append(
+                        types.Part.from_text(
+                            text=f"[tool response] {name}: {response}"
+                        )
+                    )
+            elif kind == 'file_data':
+                uri = part_payload.get('uri')
+                if uri:
+                    parts.append(
+                        types.Part.from_uri(
+                            file_uri=uri, mime_type=part_payload.get('mime_type')
+                        )
+                    )
+        if not parts:
+            return None
+        return types.Content(role=role, parts=parts)
+
+    def _ensure_json_safe(self, payload: Any) -> Any:
+        try:
+            json.dumps(payload)
+            return payload
+        except TypeError:
+            try:
+                return json.loads(json.dumps(payload, default=str))
+            except Exception:
+                return str(payload)
+
+    def _load_histories_from_disk(self) -> None:
+        if not getattr(self, '_context_file', None):
+            return
+        if not self._context_file.exists():
+            return
+        try:
+            raw_data = json.loads(self._context_file.read_text(encoding='utf-8'))
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to load chat history from %s", self._context_file)
+            return
+        if not isinstance(raw_data, dict):
+            logger.warning("Context file has unexpected structure; skipping load")
+            return
+
+        for channel_id_str, contents in raw_data.items():
+            try:
+                channel_id = int(channel_id_str)
+            except (TypeError, ValueError):
+                logger.warning("Skipping invalid channel id in context file: %s", channel_id_str)
+                continue
+            if not isinstance(contents, list):
+                logger.warning("Skipping context entry for channel %s: expected list", channel_id_str)
+                continue
+            history: List[types.Content] = []
+            for content_payload in contents:
+                if not isinstance(content_payload, dict):
+                    continue
+                content = self._deserialize_content(content_payload)
+                if content:
+                    history.append(content)
+            if not history:
+                continue
+            history = self._trim_history(history)
+            self._histories[channel_id] = history
+
+    async def _persist_histories(self) -> None:
+        if not getattr(self, '_context_file', None):
+            return
+        snapshot = self._history_snapshot()
+
+        def _write() -> None:
+            if not snapshot:
+                if self._context_file.exists():
+                    try:
+                        self._context_file.unlink()
+                    except FileNotFoundError:
+                        pass
+                return
+            tmp_path = self._context_file.with_name(self._context_file.name + '.tmp')
+            tmp_path.write_text(
+                json.dumps(snapshot, ensure_ascii=False, indent=2),
+                encoding='utf-8',
+            )
+            tmp_path.replace(self._context_file)
+
+        try:
+            await asyncio.to_thread(_write)
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to persist chat histories to %s", self._context_file)
+
 
     async def _download_attachment(self, attachment: discord.Attachment, target: Path) -> Path:
         def _fetch() -> bytes:
@@ -235,5 +421,7 @@ class ChatGPT(commands.Cog):
                 await message.channel.send(f"Не вышло ответить: {exc}")
                 if history and history[-1].role == "user":
                     history.pop()
+            finally:
+                await self._persist_histories()
 
         await self.bot.process_commands(message)
