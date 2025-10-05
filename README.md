@@ -1,60 +1,62 @@
 # PeaceMusic
 
-Discord‑бот, который умеет общаться (Gemini) и управлять музыкой в голосовых каналах. Поддерживает воспроизведение ссылок (YouTube и др. через yt‑dlp), перемотку и изменение громкости.
+PeaceMusic is a Discord bot powered by Google Gemini for multi-turn chat and music control in voice channels. It can stream tracks from YouTube and other sources via yt-dlp, downloading them for local caching when needed.
 
-## Возможности
-- AI‑чат на базе Google Gemini (включая обработку изображений/видео‑вложений)
-- Музыкальный плеер: `play` (очередь), `skip`, `stop`, `seek`, `set_volume`, `summon`/`disconnect`
-- Очередь треков с информативными эмбедами
+Russian documentation is available in [README.ru.md](README.ru.md).
 
-## Требования
-- Python 3.10+
-- FFmpeg в `PATH` (для `discord.FFmpegPCMAudio`)
-- Действующие ключи/токены: Discord Bot Token, Gemini API Key
+## Features
+- Gemini-based AI chat suitable for free-form conversation and music commands.
+- Music commands: `play` (search or direct URL), `skip`, `stop`, `seek`, `set_volume`, `summon`, `disconnect`.
+- Conversation history with persistent context stored on disk.
 
-## Структура проекта
-- `main.py` — запуск бота (инициализация когов)
-- `cogs/ai_cog.py` — чат‑ассистент и обработка вложений
-- `cogs/music_cog.py` — логика плеера, очередь, голосовой канал
-- `utils/` — утилиты: голос Gemini (`gemini_voice.py`), инструменты для Gemini Tool Calling (`tools.py`), дефолтный системный промпт
-- `config.py` — типизированные настройки, загрузка переменных окружения из `.env`
+## Requirements
+- Python 3.10 or newer.
+- FFmpeg available in `PATH` (required by `discord.FFmpegPCMAudio`).
+- Secrets for external services: Discord Bot Token and Gemini API Key.
 
-## Установка и запуск (локально)
+## Project Structure
+- `main.py` - application entry point and bot bootstrap.
+- `cogs/ai_cog.py` - Gemini chat cog and command dispatcher.
+- `cogs/music_cog.py` - music playback cog, queue, and voice helpers.
+- `utils/` - shared utilities: Gemini helpers (`gemini_voice.py`), tool schema (`tools.py`), default prompt, etc.
+- `config.py` - configuration loader; reads environment variables from `.env`.
+
+## Quick Start (development)
 ```bash
-# 1) Клонируем репозиторий и заходим в папку
-git clone <your-repo-url> && cd PeaceMusic
+# 1) Clone the repository and enter the project folder
+git clone https://github.com/Akinara666/PeaceMusic.git && cd PeaceMusic
 
-# 2) Виртуальное окружение
+# 2) Create a virtual environment
 python -m venv .venv
 # Linux/macOS
 source .venv/bin/activate
 # Windows (PowerShell)
 # .\.venv\Scripts\Activate.ps1
 
-# 3) Зависимости
+# 3) Install dependencies
 python -m pip install --upgrade pip
 pip install -r requirements.txt
 
-# 4) Конфигурация
+# 4) Configure secrets
 cp .env.example .env  # Windows: copy .env.example .env
-# Открой .env и заполни ключи/идентификаторы (см. раздел ниже)
+# Fill out .env with your tokens and other settings (see next section)
 
-# 5) Старт
+# 5) Launch the bot
 python main.py
 ```
 
-## Переменные окружения
-Заполняются в `.env` (см. шаблон `.env.example`).
+## Environment Variables
+Configure them in `.env` (see `.env.example`).
 
-- `DISCORD_BOT_TOKEN` — токен Discord‑бота
-- `CHATBOT_CHANNEL_ID` — ID текстового канала для общения с ассистентом (опционально; если пусто — слушает все)
-- `GEMINI_API_KEY` — ключ Gemini Developer API
-- `MUSIC_DIRECTORY` — путь для кэша/локальных файлов (по умолчанию `music_files`)
+- `DISCORD_BOT_TOKEN` - your Discord bot token.
+- `CHATBOT_CHANNEL_ID` - channel ID for AI chat (optional; omit to respond in any channel).
+- `GEMINI_API_KEY` - Google Gemini Developer API key.
+- `MUSIC_DIRECTORY` - path for downloaded/cached tracks (defaults to `music_files`).
 
-## Команды/возможности (в чате)
-Ассистент сам вызывает музыкальные функции через Tool Calling — просто пиши: «включи <трек>», «перемотай на 1:23», «сделай громкость 50%», «пропусти трек», «останови музыку», «зайди ко мне в голосовой» и т.п.
+## Sample Prompts (in chat)
+Use natural language to trigger Tool Calling and music features: `play <song name>`, `seek to 1:23`, `set volume to 50%`, `skip this track`, `disconnect from voice`, `join my channel`, etc.
 
-## Обновление
+## Updating
 ```bash
 git pull
 pip install -r requirements.txt
