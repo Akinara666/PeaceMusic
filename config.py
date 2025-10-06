@@ -80,6 +80,7 @@ class MiscSettings:
     tenor_api_key: Optional[str]
     music_directory: Path
     context_file: Path
+    status_message: str
 
 
 @dataclass(frozen=True)
@@ -121,6 +122,7 @@ def load_settings() -> AppSettings:
     tenor_api_key = _get_env('TENOR_API_KEY')
     music_directory = Path(_get_env('MUSIC_DIRECTORY', default='music_files') or 'music_files')
     context_file = Path(_get_env('CONTEXT_FILE', default='chat_context.json') or 'chat_context.json')
+    status_message = _get_env('DISCORD_STATUS_MESSAGE', default='Серегу пирата') or 'Серегу пирата'
 
     elevenlabs_settings = ElevenLabsSettings(api_key=elevenlabs_key) if elevenlabs_key else None
 
@@ -146,6 +148,7 @@ def load_settings() -> AppSettings:
         tenor_api_key=tenor_api_key,
         music_directory=music_directory,
         context_file=context_file,
+        status_message=status_message,
     )
 
     return AppSettings(
@@ -175,6 +178,7 @@ HAILUO_API_KEY = _settings.misc.hailuo_api_key or ''
 GENIUS_ACCESS_TOKEN = _settings.misc.genius_access_token or ''
 TENOR_API_KEY = _settings.misc.tenor_api_key or ''
 CONTEXT_FILE = str(_settings.misc.context_file)
+DISCORD_STATUS_MESSAGE = _settings.misc.status_message
 
 ELEVENLABS_API_KEY = _settings.elevenlabs.api_key if _settings.elevenlabs else ''
 TELEGRAM_API_ID = _settings.telegram.api_id if _settings.telegram else None
