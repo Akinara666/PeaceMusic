@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 _ATTACHMENT_IMAGE_NAME = Path("uploaded_image.png")
 _ATTACHMENT_VIDEO_NAME = Path("uploaded_video.mp4")
 _GENERATION_MODEL = "gemini-2.5-flash"
-_HISTORY_LIMIT = 300
+_HISTORY_LIMIT = 10
 
 
 class GeminiChatCog(commands.Cog):
@@ -99,13 +99,29 @@ class GeminiChatCog(commands.Cog):
         return self._histories.setdefault(channel_id, [])
 
     def _trim_history(self, history: List[types.Content]) -> List[types.Content]:
-        if len(history) <= _HISTORY_LIMIT:
+        if not history:
             return history
 
-        trimmed = history[-_HISTORY_LIMIT:]
-        while trimmed and any(part.function_call for part in trimmed[-1].parts):
+        original_len = len(history)
+        trimmed = list(history)
+        if original_len > _HISTORY_LIMIT:
+            trimmed = trimmed[-_HISTORY_LIMIT:]
+
+        def _has_part(content: types.Content, attr: str) -> bool:
+            return any(getattr(part, attr, None) for part in content.parts)
+
+        # Drop trailing function calls without their responses.
+        while trimmed and _has_part(trimmed[-1], "function_call"):
             trimmed.pop()
-        logger.info("Trimmed chat history from %s to %s entries", len(history), len(trimmed))
+
+        # Ensure the history starts with a valid turn (not a dangling call/response).
+        while trimmed and (
+            _has_part(trimmed[0], "function_call") or _has_part(trimmed[0], "function_response")
+        ):
+            trimmed.pop(0)
+
+        if len(trimmed) != original_len:
+            logger.info("Trimmed chat history from %s to %s entries", original_len, len(trimmed))
         return trimmed
 
 
