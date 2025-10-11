@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 _ATTACHMENT_IMAGE_NAME = Path("uploaded_image.png")
 _ATTACHMENT_VIDEO_NAME = Path("uploaded_video.mp4")
 _GENERATION_MODEL = "gemini-2.5-flash"
-_HISTORY_LIMIT = 10
+_HISTORY_LIMIT = 100
 
 
 class GeminiChatCog(commands.Cog):
