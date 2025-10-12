@@ -1,5 +1,5 @@
 from __future__ import annotations
 
-from .ai.cog import GeminiChatCog
+from .cog import GeminiChatCog
 
 __all__ = ["GeminiChatCog"]
