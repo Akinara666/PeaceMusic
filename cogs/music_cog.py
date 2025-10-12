@@ -76,11 +76,23 @@ YTDL_OPTIONS = {
 LOUDNESS_NORMALIZATION_FILTER = "loudnorm=I=-14:LRA=11:TP=-1.5"
 
 FFMPEG_OPTIONS = {
-    "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
-    "options": f"-vn -sn -dn -bufsize 64k -af {LOUDNESS_NORMALIZATION_FILTER}",
+    "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -nostdin",
+    "options": (
+        "-vn -sn -dn "
+        "-bufsize 64k "
+        "-probesize 32k "
+        "-analyzeduration 0 "
+        "-flags low_delay "
+        "-threads 1 "
+        "-loglevel warning "
+        f"-af {LOUDNESS_NORMALIZATION_FILTER}"
+    ),
 }
 
 ytdl = youtube_dl.YoutubeDL(YTDL_OPTIONS)
+
+INFO_CACHE_TTL_SECONDS = 900
+_info_cache: dict[str, tuple[float, dict]] = {}
 
 
 class YTDLSource(discord.PCMVolumeTransformer):
@@ -97,10 +109,18 @@ class YTDLSource(discord.PCMVolumeTransformer):
     @classmethod
     async def from_url(cls, url: str, *, loop: Optional[asyncio.AbstractEventLoop] = None, stream: bool = False) -> list["YTDLSource"]:
         loop = loop or asyncio.get_event_loop()
-        ytdl.cache.remove()
-        start_time = time.monotonic()
-        data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=not stream))
-        logger.debug("yt_dlp extract_info took %.2fs", time.monotonic() - start_time)
+        cache_key = f"{int(stream)}:{url}"
+        cached = _info_cache.get(cache_key)
+        now = time.monotonic()
+        if cached and (now - cached[0]) < INFO_CACHE_TTL_SECONDS:
+            data = cached[1]
+            logger.debug("yt_dlp extract_info cache hit for %s", url)
+        else:
+            start_time = time.monotonic()
+            data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=not stream))
+            elapsed = time.monotonic() - start_time
+            _info_cache[cache_key] = (time.monotonic(), data)
+            logger.debug("yt_dlp extract_info took %.2fs for %s", elapsed, url)
 
         entries = data.get("entries", [data])
         sources: list[YTDLSource] = []
