@@ -29,10 +29,16 @@ COOKIES_PATH = Path(__file__).resolve().parent / "cookies.txt"
 # Helpers
 # ----------------------------------------------------------------------------
 
-def format_duration(duration_seconds: int) -> str:
-    if not duration_seconds or duration_seconds < 1:
+def format_duration(duration_seconds: float | int | None) -> str:
+    if duration_seconds is None:
         return "00:00"
-    hours, remainder = divmod(duration_seconds, 3600)
+    try:
+        total_seconds = int(float(duration_seconds))
+    except (TypeError, ValueError):
+        return "00:00"
+    if total_seconds < 1:
+        return "00:00"
+    hours, remainder = divmod(total_seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
     if hours:
         return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
