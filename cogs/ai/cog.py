@@ -104,7 +104,7 @@ class GeminiChatCog(commands.Cog):
         except Exception as exc:  # noqa: BLE001 - surface every failure to the model
             logger.exception("Error while executing tool '%s'", tool_name)
             await message.channel.send("Failed to run the requested music command.")
-            return types.Part.from_function_response(name=tool_name, response={"error": str(exc)})
+            return types.Part.from_function_response(name=tool_name, response={"error": str(exc) if exc else "Unknown error"})
 
         payload = {"result": str(result)} if result is not None else {"result": "ok"}
         return types.Part.from_function_response(name=tool_name, response=payload)

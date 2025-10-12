@@ -73,9 +73,11 @@ YTDL_OPTIONS = {
     "socket_timeout": 15,
 }
 
+LOUDNESS_NORMALIZATION_FILTER = "loudnorm=I=-14:LRA=11:TP=-1.5"
+
 FFMPEG_OPTIONS = {
     "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
-    "options": "-vn -sn -dn -bufsize 64k",
+    "options": f"-vn -sn -dn -bufsize 64k -af {LOUDNESS_NORMALIZATION_FILTER}",
 }
 
 ytdl = youtube_dl.YoutubeDL(YTDL_OPTIONS)
@@ -304,7 +306,7 @@ class Music(commands.Cog):
         new_source = discord.FFmpegPCMAudio(
             source_url,
             before_options=f"-ss {seconds} -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
-            options="-vn",
+            options=f"-vn -sn -dn -bufsize 64k -af {LOUDNESS_NORMALIZATION_FILTER}",
         )
         wrapped = discord.PCMVolumeTransformer(new_source)
         self.voice_client.stop()
