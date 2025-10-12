@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 _ATTACHMENT_IMAGE_NAME = Path("uploaded_image.png")
 _ATTACHMENT_VIDEO_NAME = Path("uploaded_video.mp4")
 _GENERATION_MODEL = "gemini-2.5-flash"
-_HISTORY_LIMIT = 100
+_HISTORY_LIMIT = 300
 
 
 class GeminiChatCog(commands.Cog):
@@ -387,19 +387,16 @@ class GeminiChatCog(commands.Cog):
         candidate = response.candidates[0]
         content = candidate.content
         final_text = ""
-        tool_invoked = False
 
-        for part in content.parts:
+        if content:
+            history.append(content)
+
+        for part in content.parts if content else []:
             if part.function_call:
-                tool_invoked = True
                 feedback = await self.process_tool_call(part.function_call, message)
                 history.append(types.Content(role="user", parts=[feedback]))
             elif part.text:
                 final_text = part.text
-
-        if not tool_invoked:
-            history.append(content)
-            return final_text.strip() or None
 
         return final_text.strip() or None
 
