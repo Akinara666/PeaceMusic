@@ -10,6 +10,13 @@ import discord
 
 REPO_ROOT = Path(__file__).resolve().parent
 DEFAULT_ENV_FILE = REPO_ROOT / ".env"
+DEFAULT_PROMPT_PATH = REPO_ROOT / "utils" / "default_prompt.txt"
+_FALLBACK_PROMPT = (
+    "You are PeaceMusic, the assistant for a Discord music bot. Help users search, "
+    "queue, play, pause, and otherwise control music playback. Respond in a concise, "
+    "friendly tone, mention what actions you take, and keep users within the server "
+    "rules. If a request is unclear or unsafe, ask for clarification or politely refuse."
+)
 
 
 def _load_env_file(path: Path = DEFAULT_ENV_FILE) -> None:
@@ -41,6 +48,18 @@ def _get_env(name: str, default: Optional[str] = None, *, required: bool = False
     return value
 
 
+def _load_default_prompt() -> str:
+    try:
+        text = DEFAULT_PROMPT_PATH.read_text(encoding="utf-8")
+        if text.strip():
+            return text
+    except FileNotFoundError:
+        pass
+    except OSError:
+        pass
+    return _FALLBACK_PROMPT
+
+
 @dataclass(frozen=True)
 class DiscordSettings:
     token: str
@@ -59,6 +78,8 @@ class MiscSettings:
     music_directory: Path
     context_file: Path
     status_message: str
+    prompt_file: Optional[Path]
+    prompt_text: str
 
 
 @dataclass(frozen=True)
@@ -87,12 +108,29 @@ def load_settings() -> AppSettings:
 
     music_directory = Path(_get_env('MUSIC_DIRECTORY', default='music_files') or 'music_files')
     context_file = Path(_get_env('CONTEXT_FILE', default='chat_context.json') or 'chat_context.json')
-    status_message = _get_env('DISCORD_STATUS_MESSAGE', default='Серегу пирата') or 'Серегу пирата'
+    status_message = _get_env('DISCORD_STATUS_MESSAGE', default='PeaceMusic') or 'PeaceMusic'
+
+    prompt_file_raw = _get_env('BOT_PROMPT_FILE')
+    prompt_file: Optional[Path] = None
+    prompt_text = _load_default_prompt()
+    if prompt_file_raw:
+        candidate = Path(prompt_file_raw)
+        if not candidate.is_absolute():
+            candidate = (REPO_ROOT / candidate).resolve()
+        prompt_file = candidate
+        try:
+            loaded_text = candidate.read_text(encoding="utf-8")
+            if loaded_text.strip():
+                prompt_text = loaded_text
+        except (FileNotFoundError, OSError):
+            pass
 
     misc_settings = MiscSettings(
         music_directory=music_directory,
         context_file=context_file,
         status_message=status_message,
+        prompt_file=prompt_file,
+        prompt_text=prompt_text,
     )
 
     return AppSettings(
@@ -116,6 +154,8 @@ GEMINI_API_KEY = _settings.gemini.api_key
 MUSIC_DIRECTORY = _settings.misc.music_directory
 CONTEXT_FILE = str(_settings.misc.context_file)
 DISCORD_STATUS_MESSAGE = _settings.misc.status_message
+BOT_PROMPT_FILE = str(_settings.misc.prompt_file) if _settings.misc.prompt_file else None
+BOT_PROMPT_TEXT = _settings.misc.prompt_text
 
 
 def get_settings() -> AppSettings:

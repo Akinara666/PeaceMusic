@@ -10,8 +10,7 @@ from discord.ext import commands
 from google import genai
 from google.genai import types
 
-from config import CHATBOT_CHANNEL_ID, CONTEXT_FILE, GEMINI_API_KEY
-from utils.default_prompt import default_prompt
+from config import BOT_PROMPT_TEXT, CHATBOT_CHANNEL_ID, CONTEXT_FILE, GEMINI_API_KEY
 from utils.tools import tools
 from .attachments import AttachmentProcessor
 from .history import HistoryManager
@@ -56,7 +55,7 @@ class GeminiChatCog(commands.Cog):
             client=self.client,
             model_name=_GENERATION_MODEL,
             tools=tools,
-            system_instruction=default_prompt,
+            system_instruction=BOT_PROMPT_TEXT,
             temperature=1.0,
             thinking_budget=2048,
         )

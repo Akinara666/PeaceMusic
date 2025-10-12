@@ -18,3 +18,4 @@ cogs/ai/__pycache__/attachments.cpython-310.pyc
 cogs/ai/__pycache__/cog.cpython-310.pyc
 cogs/ai/__pycache__/history.cpython-310.pyc
 cogs/ai/__pycache__/response.cpython-310.pyc
+cogs/chat_context.json
