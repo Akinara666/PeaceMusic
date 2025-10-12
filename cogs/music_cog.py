@@ -142,19 +142,26 @@ YTDL_OPTIONS = {
 
 LOUDNESS_NORMALIZATION_FILTER = "loudnorm=I=-14:LRA=11:TP=-1.5"
 
-FFMPEG_OPTIONS = {
-    "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -nostdin",
-    "options": (
-        "-vn -sn -dn "
-        "-bufsize 64k "
-        "-probesize 32k "
-        "-analyzeduration 0 "
-        "-flags low_delay "
-        "-threads 1 "
-        "-loglevel warning "
-        f"-af {LOUDNESS_NORMALIZATION_FILTER}"
-    ),
-}
+FFMPEG_BEFORE_STREAM = "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -nostdin"
+FFMPEG_BEFORE_FILE = "-nostdin"
+FFMPEG_COMMON_OPTIONS = (
+    "-vn -sn -dn "
+    "-bufsize 64k "
+    "-probesize 32k "
+    "-analyzeduration 0 "
+    "-flags low_delay "
+    "-threads 1 "
+    "-loglevel warning "
+    f"-af {LOUDNESS_NORMALIZATION_FILTER}"
+)
+
+
+def build_ffmpeg_options(stream: bool) -> dict[str, str]:
+    before = FFMPEG_BEFORE_STREAM if stream else FFMPEG_BEFORE_FILE
+    return {
+        "before_options": before,
+        "options": FFMPEG_COMMON_OPTIONS,
+    }
 
 ytdl = youtube_dl.YoutubeDL(YTDL_OPTIONS)
 
@@ -211,7 +218,8 @@ class YTDLSource(discord.PCMVolumeTransformer):
                 filename = ytdl.prepare_filename(entry)
                 local_path = Path(filename)
                 playback_target = str(local_path)
-            audio_source = discord.FFmpegPCMAudio(playback_target, **FFMPEG_OPTIONS)
+            ffmpeg_args = build_ffmpeg_options(stream)
+            audio_source = discord.FFmpegPCMAudio(playback_target, **ffmpeg_args)
             sources.append(cls(audio_source, data=entry, stream=stream, local_path=local_path))
         return sources
 
