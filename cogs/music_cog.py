@@ -4,7 +4,6 @@ from __future__ import annotations
 import asyncio
 import datetime
 import logging
-import os
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -250,9 +249,24 @@ class Music(commands.Cog):
         self.current: Optional[QueuedTrack] = None
         self._play_lock = asyncio.Lock()
         self._last_audio_time: Optional[datetime.datetime] = None
-        self.speaking = False
 
         self.check_for_inactivity.start()
+
+    def _cleanup_track_file(self, track: Optional[QueuedTrack]) -> None:
+        if not track or not track.local_path:
+            return
+        try:
+            track.local_path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            logger.warning("Failed to delete downloaded track %s", track.local_path, exc_info=True)
+        track.local_path = None
+
+    def _cleanup_queue(self) -> None:
+        for track in list(self.queue):
+            self._cleanup_track_file(track)
+        self.queue.clear()
 
     # ------------------------------------------------------------------
     # Queue helpers
@@ -285,8 +299,12 @@ class Music(commands.Cog):
         self._last_audio_time = discord.utils.utcnow()
 
     def _after_playback(self, error: Optional[Exception]) -> None:
+        finished_track = self.current
         if error:
             logger.error("Playback error", exc_info=error)
+        if finished_track:
+            self._cleanup_track_file(finished_track)
+        self.current = None
         self.bot.loop.call_soon_threadsafe(asyncio.create_task, self._start_next_track())
 
     def _build_track_embed(self, track: QueuedTrack, *, color: discord.Color) -> discord.Embed:
@@ -307,18 +325,10 @@ class Music(commands.Cog):
         embed.set_footer(text="Приятного прослушивания!")
         return embed
 
-    def _queue_summary(self) -> str:
-        if not self.queue:
-            return "Очередь пуста."
-        return "Очередь: " + ", ".join(track.title for track in list(self.queue)[:5])
-
     # ------------------------------------------------------------------
     # Public functions used by the AI cog
     async def play_func(self, message: discord.Message, song_name: str) -> str:
         async with self._play_lock:
-            while self.speaking:
-                await asyncio.sleep(1)
-
             voice_client = await self._ensure_voice_client(message)
             if not voice_client:
                 return "Пользователь не в голосовом канале"
@@ -375,15 +385,19 @@ class Music(commands.Cog):
         for track in list(self.queue):
             if lowercase_query in track.title.lower():
                 self.queue.remove(track)
+                self._cleanup_track_file(track)
                 await message.reply(f"Удалено из очереди: {track.title}")
                 return f"Удалено из очереди: {track.title}"
         await message.reply("Такой трек не найден в очереди.")
         return "Трек не найден"
 
     async def stop_func(self, message: discord.Message) -> str:
-        self.queue.clear()
+        self._cleanup_queue()
         if self.voice_client:
             self.voice_client.stop()
+        else:
+            self._cleanup_track_file(self.current)
+            self.current = None
         await message.reply("Очередь очищена и воспроизведение остановлено.")
         return "Очередь очищена"
 
@@ -398,7 +412,8 @@ class Music(commands.Cog):
         if self.voice_client:
             await self.voice_client.disconnect(force=True)
             self.voice_client = None
-        self.queue.clear()
+        self._cleanup_queue()
+        self._cleanup_track_file(self.current)
         self.current = None
         await message.reply("Отключилась от канала и очистила очередь.")
         return "Бот отключён"
@@ -459,7 +474,8 @@ class Music(commands.Cog):
                 if (now - last_time).total_seconds() > 1800:
                     await vc.disconnect()
         if not self.voice_client or not self.voice_client.is_connected():
-            self.queue.clear()
+            self._cleanup_queue()
+            self._cleanup_track_file(self.current)
             self.current = None
 
     @check_for_inactivity.before_loop
