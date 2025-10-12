@@ -10,6 +10,7 @@ from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Deque, Optional
+from urllib.parse import urlparse
 
 import discord
 import yt_dlp as youtube_dl
@@ -58,12 +59,72 @@ def parse_time(time_str: str) -> int:
     raise ValueError("Invalid time format. Use seconds, MM:SS, or HH:MM:SS.")
 
 
+SOUNDCLOUD_DOMAINS = ("soundcloud.com", "on.soundcloud.com")
+SOUNDCLOUD_QUERY_PREFIXES = ("sc ", "soundcloud ")
+SOUNDCLOUD_QUERY_PREFIXES_WITH_COLON = ("sc:", "soundcloud:")
+
+
+def _looks_like_url(query: str) -> bool:
+    lowered = query.lower()
+    return lowered.startswith(("http://", "https://"))
+
+
+def normalize_audio_query(query: str) -> str:
+    """Normalize user input to support explicit SoundCloud searches and URLs."""
+    query = query.strip()
+    if not query:
+        return query
+
+    lowered = query.lower()
+
+    for prefix in SOUNDCLOUD_QUERY_PREFIXES:
+        if lowered.startswith(prefix):
+            rest = query[len(prefix):].strip()
+            if rest:
+                return f"scsearch1:{rest}"
+            return query
+
+    for prefix in SOUNDCLOUD_QUERY_PREFIXES_WITH_COLON:
+        if lowered.startswith(prefix):
+            rest = query[len(prefix):].strip()
+            if rest:
+                return f"scsearch1:{rest}"
+            return query
+
+    if lowered.startswith("scsearch"):
+        return query
+
+    if not _looks_like_url(query):
+        stripped_query = query.lstrip("www.")
+        if " " not in stripped_query and any(domain in stripped_query.lower() for domain in SOUNDCLOUD_DOMAINS):
+            return f"https://{query}"
+
+    return query
+
+
+def is_soundcloud_query(query: str) -> bool:
+    lowered = query.lower()
+    if lowered.startswith("scsearch"):
+        return True
+    if _looks_like_url(query):
+        parsed = urlparse(query)
+        hostname = (parsed.hostname or "").lower()
+        if not hostname:
+            return False
+        return any(
+            hostname == domain or hostname.endswith(f".{domain}")
+            for domain in SOUNDCLOUD_DOMAINS
+        )
+    return False
+
+
 YTDL_OPTIONS = {
     "cookiefile": str(COOKIES_PATH),
     "format": "bestaudio[acodec=opus][ext=webm]/bestaudio[ext=m4a]/bestaudio",
     "noplaylist": True,
     "nopart": True,
     "default_search": "ytsearch1",
+    "outtmpl": str(MUSIC_DIRECTORY_PATH / "%(extractor)s-%(id)s.%(ext)s"),
     "http_chunk_size": 1_048_576,
     "forceipv4": True,
     "external_downloader": "aria2c",
@@ -102,7 +163,15 @@ _info_cache: dict[str, tuple[float, dict]] = {}
 
 
 class YTDLSource(discord.PCMVolumeTransformer):
-    def __init__(self, source: discord.AudioSource, *, data: dict, volume: float = 1.0):
+    def __init__(
+        self,
+        source: discord.AudioSource,
+        *,
+        data: dict,
+        stream: bool,
+        local_path: Optional[Path] = None,
+        volume: float = 1.0,
+    ):
         super().__init__(source, volume)
         self.data = data
         self.title = data.get("title", "Untitled")
@@ -110,7 +179,9 @@ class YTDLSource(discord.PCMVolumeTransformer):
         self.webpage_url = data.get("webpage_url", "")
         self.thumbnail = data.get("thumbnail", "")
         self.uploader = data.get("uploader", "Unknown artist")
-        self.duration = data.get("duration", 0)
+        self.duration = data.get("duration")
+        self.local_path = local_path
+        self.is_stream = stream
 
     @classmethod
     async def from_url(cls, url: str, *, loop: Optional[asyncio.AbstractEventLoop] = None, stream: bool = False) -> list["YTDLSource"]:
@@ -133,9 +204,15 @@ class YTDLSource(discord.PCMVolumeTransformer):
         for entry in entries:
             if not entry:
                 continue
-            filename = entry['url'] if stream else ytdl.prepare_filename(entry)
-            audio_source = discord.FFmpegPCMAudio(filename, **FFMPEG_OPTIONS)
-            sources.append(cls(audio_source, data=entry))
+            local_path: Optional[Path] = None
+            if stream:
+                playback_target = entry["url"]
+            else:
+                filename = ytdl.prepare_filename(entry)
+                local_path = Path(filename)
+                playback_target = str(local_path)
+            audio_source = discord.FFmpegPCMAudio(playback_target, **FFMPEG_OPTIONS)
+            sources.append(cls(audio_source, data=entry, stream=stream, local_path=local_path))
         return sources
 
 
@@ -239,17 +316,22 @@ class Music(commands.Cog):
                 return "Пользователь не в голосовом канале"
 
             tracks: list[QueuedTrack]
-            sources = await YTDLSource.from_url(song_name, loop=self.bot.loop, stream=True)
+            normalized_query = normalize_audio_query(song_name)
+            should_stream = not is_soundcloud_query(normalized_query)
+            if normalized_query != song_name:
+                logger.debug("Normalized audio query from %s to %s", song_name, normalized_query)
+            sources = await YTDLSource.from_url(normalized_query, loop=self.bot.loop, stream=should_stream)
             tracks = [
                 QueuedTrack(
                     source=src,
                     title=src.title,
                     requester=message.author,
-                    stream_url=src.url,
+                    stream_url=src.url if src.is_stream else None,
                     webpage_url=src.webpage_url,
                     thumbnail=src.thumbnail,
                     uploader=src.uploader,
                     duration=src.duration,
+                    local_path=src.local_path,
                 )
                 for src in sources
             ]
