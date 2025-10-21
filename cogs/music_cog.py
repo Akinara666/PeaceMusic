@@ -119,21 +119,19 @@ def is_soundcloud_query(query: str) -> bool:
 
 YTDL_OPTIONS = {
     "cookiefile": str(COOKIES_PATH),
+    "extractor_args": {
+        "youtube": {
+            "player_client": "web",
+            "player_js_version": "actual",
+        }
+    },
     "format": "bestaudio[acodec=opus][ext=webm]/bestaudio[ext=m4a]/bestaudio",
     "noplaylist": True,
     "nopart": True,
     "default_search": "ytsearch1",
     "outtmpl": str(MUSIC_DIRECTORY_PATH / "%(extractor)s-%(id)s.%(ext)s"),
-    "http_chunk_size": 1_048_576,
+    "http_chunk_size": 10 * 1024 * 1024,
     "forceipv4": True,
-    "external_downloader": "aria2c",
-    "external_downloader_args": [
-        "aria2c",
-        "-x16",
-        "-k1M",
-        "--min-split-size=1M",
-        "--summary-interval=0",
-    ],
     "retries": 5,
     "fragment_retries": 5,
     "socket_timeout": 15,
