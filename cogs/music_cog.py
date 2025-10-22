@@ -119,21 +119,33 @@ def is_soundcloud_query(query: str) -> bool:
 
 YTDL_OPTIONS = {
     "cookiefile": str(COOKIES_PATH),
-    "format": "bestaudio[acodec=opus][ext=webm]/bestaudio[ext=m4a]/bestaudio",
+    # Ключевое: не душим форматы
+    "format": "bestaudio*/bestaudio/best",
     "noplaylist": True,
     "nopart": True,
     "default_search": "ytsearch1",
     "outtmpl": str(MUSIC_DIRECTORY_PATH / "%(extractor)s-%(id)s.%(ext)s"),
     "http_chunk_size": 1_048_576,
     "forceipv4": True,
-    "external_downloader": "aria2c",
-    "external_downloader_args": [
-        "aria2c",
-        "-x16",
-        "-k1M",
-        "--min-split-size=1M",
-        "--summary-interval=0",
-    ],
+
+    # ОТКЛЮЧАЕМ внешнего качальщика для YouTube/HLS
+    # "external_downloader": "aria2c",  # <-- убери для YouTube
+
+    # Даём yt-dlp самому разрулить HLS через ffmpeg
+    "hls_prefer_native": False,  # по умолчанию ок; главное — без aria2c
+
+    # Журнал для отладки
+    "verbose": True,
+
+    # Anti-SABR: другой клиент
+    "extractor_args": {
+        "youtube": {
+            # Вариант 1: android
+            "player_client": ["android"]
+            # Вариант 2 (если android не заходит): ["tv_simply","default","-tv"]
+        }
+    },
+
     "retries": 5,
     "fragment_retries": 5,
     "socket_timeout": 15,
