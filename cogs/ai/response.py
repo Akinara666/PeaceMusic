@@ -4,7 +4,7 @@ import asyncio
 import random
 from typing import Awaitable, Callable, List, Optional, Sequence, TYPE_CHECKING
 
-from google.genai import types
+from google.genai import errors, types
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from google import genai
@@ -98,16 +98,29 @@ class ResponseGenerator:
         attempts = 3
         response: Optional[types.GenerateContentResponse] = None
 
+        delay = 2.0
         while attempts:
-            response = await self._client.aio.models.generate_content(
-                model=self._model_name,
-                contents=history,
-                config=config,
-            )
+            try:
+                response = await self._client.aio.models.generate_content(
+                    model=self._model_name,
+                    contents=history,
+                    config=config,
+                )
+            except errors.ServerError as exc:
+                if getattr(exc, "status_code", None) == 503 or "overloaded" in str(exc).lower():
+                    attempts -= 1
+                    if not attempts:
+                        raise
+                    await asyncio.sleep(delay)
+                    delay = min(delay * 1.5, 10.0)
+                    continue
+                raise
+
             if response.candidates and response.candidates[0].content:
                 break
             attempts -= 1
-            await asyncio.sleep(2)
+            await asyncio.sleep(delay)
+            delay = min(delay * 1.5, 10.0)
 
         if not response or not response.candidates:
             return None
