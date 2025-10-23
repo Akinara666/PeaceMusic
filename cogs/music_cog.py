@@ -5,6 +5,7 @@ import asyncio
 import contextlib
 import datetime
 import logging
+import re
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -170,6 +171,15 @@ FFMPEG_COMMON_OPTIONS = (
     f"-af {LOUDNESS_NORMALIZATION_FILTER}"
 )
 
+ANSI_ESCAPE_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
+
+
+def _clean_progress_text(value: str) -> str:
+    if not value:
+        return ""
+    cleaned = ANSI_ESCAPE_RE.sub("", value)
+    return " ".join(cleaned.strip().split())
+
 
 def build_ffmpeg_options(stream: bool) -> dict[str, str]:
     before = FFMPEG_BEFORE_STREAM if stream else FFMPEG_BEFORE_FILE
@@ -324,9 +334,9 @@ class Music(commands.Cog):
     def _format_download_progress(self, payload: dict) -> str:
         status = payload.get("status")
         if status == "downloading":
-            percent = (payload.get("_percent_str") or "").strip()
-            speed = (payload.get("_speed_str") or "").strip()
-            eta = (payload.get("_eta_str") or "").strip()
+            percent = _clean_progress_text(payload.get("_percent_str") or "")
+            speed = _clean_progress_text(payload.get("_speed_str") or "")
+            eta = _clean_progress_text(payload.get("_eta_str") or "")
 
             details: list[str] = []
             if percent:
