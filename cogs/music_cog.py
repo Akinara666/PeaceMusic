@@ -280,11 +280,11 @@ class Music(commands.Cog):
     async def _download_progress_worker(
         self,
         message: discord.Message,
-        queue: asyncio.Queue[Optional[dict]],
+        queue: asyncio.Queue[object],
+        sentinel: object,
         *,
         update_interval: float = 0.5,
     ) -> None:
-        last_payload: Optional[dict] = None
         last_content: Optional[str] = None
         last_update = 0.0
 
@@ -292,12 +292,14 @@ class Music(commands.Cog):
             try:
                 payload = await asyncio.wait_for(queue.get(), timeout=update_interval)
             except asyncio.TimeoutError:
-                payload = None
+                continue
 
-            if payload is None:
+            if payload is sentinel:
                 break
 
-            last_payload = payload
+            if not isinstance(payload, dict):
+                continue
+
             status = payload.get("status")
             now = time.monotonic()
 
@@ -431,15 +433,17 @@ class Music(commands.Cog):
                 logger.debug("Normalized audio query from %s to %s", song_name, normalized_query)
 
             progress_message: Optional[discord.Message] = None
-            progress_queue: Optional[asyncio.Queue[Optional[dict]]] = None
+            progress_queue: Optional[asyncio.Queue[object]] = None
             progress_task: Optional[asyncio.Task[None]] = None
             progress_hook_fn: Optional[Callable[[dict], None]] = None
+            progress_sentinel: Optional[object] = None
 
             if not should_stream:
                 progress_queue = asyncio.Queue()
+                progress_sentinel = object()
                 progress_message = await message.reply("Готовлю загрузку трека…")
                 progress_task = asyncio.create_task(
-                    self._download_progress_worker(progress_message, progress_queue)
+                    self._download_progress_worker(progress_message, progress_queue, progress_sentinel)
                 )
 
                 def yt_progress_hook(payload: dict) -> None:
@@ -458,12 +462,14 @@ class Music(commands.Cog):
                 )
             except DownloadError as exc:
                 logger.warning("Failed to download track %s: %s", normalized_query, exc)
-                if progress_queue:
-                    with contextlib.suppress(asyncio.QueueFull):
-                        progress_queue.put_nowait(None)
+                if progress_queue and progress_sentinel is not None:
+                    progress_queue.put_nowait(progress_sentinel)
                 if progress_task:
                     with contextlib.suppress(asyncio.CancelledError):
                         await progress_task
+                progress_queue = None
+                progress_task = None
+                progress_sentinel = None
                 if progress_message:
                     with contextlib.suppress(discord.HTTPException):
                         await progress_message.edit(content="Не удалось загрузить трек.", embed=None)
@@ -474,12 +480,14 @@ class Music(commands.Cog):
                 if isinstance(exc, asyncio.CancelledError):
                     raise
                 logger.exception("Unexpected error while fetching track %s", normalized_query)
-                if progress_queue:
-                    with contextlib.suppress(asyncio.QueueFull):
-                        progress_queue.put_nowait(None)
+                if progress_queue and progress_sentinel is not None:
+                    progress_queue.put_nowait(progress_sentinel)
                 if progress_task:
                     with contextlib.suppress(asyncio.CancelledError):
                         await progress_task
+                progress_queue = None
+                progress_task = None
+                progress_sentinel = None
                 if progress_message:
                     with contextlib.suppress(discord.HTTPException):
                         await progress_message.edit(content="Произошла ошибка при загрузке трека.", embed=None)
@@ -487,9 +495,8 @@ class Music(commands.Cog):
                     await message.reply("Произошла ошибка при загрузке трека.")
                 return "Ошибка загрузки"
             finally:
-                if progress_queue:
-                    with contextlib.suppress(asyncio.QueueFull):
-                        progress_queue.put_nowait(None)
+                if progress_queue and progress_sentinel is not None:
+                    progress_queue.put_nowait(progress_sentinel)
                 if progress_task:
                     with contextlib.suppress(asyncio.CancelledError):
                         await progress_task
