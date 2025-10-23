@@ -2,18 +2,20 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import datetime
 import logging
 import time
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Deque, Optional
+from typing import Callable, Deque, Optional
 from urllib.parse import urlparse
 
 import discord
 import yt_dlp as youtube_dl
 from discord.ext import commands, tasks
+from yt_dlp.utils import DownloadError
 
 from config import MUSIC_DIRECTORY
 
@@ -204,17 +206,26 @@ class YTDLSource(discord.PCMVolumeTransformer):
         self.is_stream = stream
 
     @classmethod
-    async def from_url(cls, url: str, *, loop: Optional[asyncio.AbstractEventLoop] = None, stream: bool = False) -> list["YTDLSource"]:
+    async def from_url(
+        cls,
+        url: str,
+        *,
+        loop: Optional[asyncio.AbstractEventLoop] = None,
+        stream: bool = False,
+        progress_hook: Optional[Callable[[dict], None]] = None,
+    ) -> list["YTDLSource"]:
         loop = loop or asyncio.get_event_loop()
         cache_key = f"{int(stream)}:{url}"
         cached = _info_cache.get(cache_key)
         now = time.monotonic()
+        use_progress = bool(progress_hook) and not stream
+        ytdl_client = ytdl if not use_progress else youtube_dl.YoutubeDL({**YTDL_OPTIONS, "progress_hooks": [progress_hook]})
         if cached and (now - cached[0]) < INFO_CACHE_TTL_SECONDS:
             data = cached[1]
             logger.debug("yt_dlp extract_info cache hit for %s", url)
         else:
             start_time = time.monotonic()
-            data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=not stream))
+            data = await loop.run_in_executor(None, lambda: ytdl_client.extract_info(url, download=not stream))
             elapsed = time.monotonic() - start_time
             _info_cache[cache_key] = (time.monotonic(), data)
             logger.debug("yt_dlp extract_info took %.2fs for %s", elapsed, url)
@@ -228,7 +239,7 @@ class YTDLSource(discord.PCMVolumeTransformer):
             if stream:
                 playback_target = entry["url"]
             else:
-                filename = ytdl.prepare_filename(entry)
+                filename = ytdl_client.prepare_filename(entry)
                 local_path = Path(filename)
                 playback_target = str(local_path)
             ffmpeg_args = build_ffmpeg_options(stream)
@@ -265,6 +276,72 @@ class Music(commands.Cog):
         self._last_audio_time: Optional[datetime.datetime] = None
 
         self.check_for_inactivity.start()
+
+    async def _download_progress_worker(
+        self,
+        message: discord.Message,
+        queue: asyncio.Queue[Optional[dict]],
+        *,
+        update_interval: float = 0.5,
+    ) -> None:
+        last_payload: Optional[dict] = None
+        last_content: Optional[str] = None
+        last_update = 0.0
+
+        while True:
+            try:
+                payload = await asyncio.wait_for(queue.get(), timeout=update_interval)
+            except asyncio.TimeoutError:
+                payload = None
+
+            if payload is None:
+                break
+
+            last_payload = payload
+            status = payload.get("status")
+            now = time.monotonic()
+
+            if status == "downloading" and (now - last_update) < update_interval:
+                continue
+
+            content = self._format_download_progress(payload)
+            if not content or content == last_content:
+                continue
+
+            try:
+                await message.edit(content=content, embed=None)
+            except discord.HTTPException:
+                return
+
+            last_content = content
+            last_update = now
+
+            if status in {"finished", "error"}:
+                break
+
+    def _format_download_progress(self, payload: dict) -> str:
+        status = payload.get("status")
+        if status == "downloading":
+            percent = (payload.get("_percent_str") or "").strip()
+            speed = (payload.get("_speed_str") or "").strip()
+            eta = (payload.get("_eta_str") or "").strip()
+
+            details: list[str] = []
+            if percent:
+                details.append(percent)
+            if speed and speed.lower() != "nan":
+                details.append(speed)
+            if eta and eta.lower() != "n/a":
+                details.append(f"ETA {eta}")
+
+            details_text = " • ".join(details)
+            return f"Загружаю трек… {details_text}" if details_text else "Загружаю трек…"
+
+        if status == "finished":
+            return "Загрузка завершена, подготавливаю аудио…"
+        if status == "error":
+            return "Ошибка при загрузке трека."
+        return "Готовлю загрузку трека…"
 
     def _cleanup_track_file(self, track: Optional[QueuedTrack]) -> None:
         if not track or not track.local_path:
@@ -352,7 +429,71 @@ class Music(commands.Cog):
             should_stream = not is_soundcloud_query(normalized_query)
             if normalized_query != song_name:
                 logger.debug("Normalized audio query from %s to %s", song_name, normalized_query)
-            sources = await YTDLSource.from_url(normalized_query, loop=self.bot.loop, stream=should_stream)
+
+            progress_message: Optional[discord.Message] = None
+            progress_queue: Optional[asyncio.Queue[Optional[dict]]] = None
+            progress_task: Optional[asyncio.Task[None]] = None
+            progress_hook_fn: Optional[Callable[[dict], None]] = None
+
+            if not should_stream:
+                progress_queue = asyncio.Queue()
+                progress_message = await message.reply("Готовлю загрузку трека…")
+                progress_task = asyncio.create_task(
+                    self._download_progress_worker(progress_message, progress_queue)
+                )
+
+                def yt_progress_hook(payload: dict) -> None:
+                    if not payload or not progress_queue:
+                        return
+                    self.bot.loop.call_soon_threadsafe(progress_queue.put_nowait, dict(payload))
+
+                progress_hook_fn = yt_progress_hook
+
+            try:
+                sources = await YTDLSource.from_url(
+                    normalized_query,
+                    loop=self.bot.loop,
+                    stream=should_stream,
+                    progress_hook=progress_hook_fn,
+                )
+            except DownloadError as exc:
+                logger.warning("Failed to download track %s: %s", normalized_query, exc)
+                if progress_queue:
+                    with contextlib.suppress(asyncio.QueueFull):
+                        progress_queue.put_nowait(None)
+                if progress_task:
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await progress_task
+                if progress_message:
+                    with contextlib.suppress(discord.HTTPException):
+                        await progress_message.edit(content="Не удалось загрузить трек.", embed=None)
+                else:
+                    await message.reply("Не удалось загрузить трек.")
+                return "Ошибка загрузки"
+            except Exception as exc:  # noqa: BLE001 - логируем и уведомляем пользователя
+                if isinstance(exc, asyncio.CancelledError):
+                    raise
+                logger.exception("Unexpected error while fetching track %s", normalized_query)
+                if progress_queue:
+                    with contextlib.suppress(asyncio.QueueFull):
+                        progress_queue.put_nowait(None)
+                if progress_task:
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await progress_task
+                if progress_message:
+                    with contextlib.suppress(discord.HTTPException):
+                        await progress_message.edit(content="Произошла ошибка при загрузке трека.", embed=None)
+                else:
+                    await message.reply("Произошла ошибка при загрузке трека.")
+                return "Ошибка загрузки"
+            finally:
+                if progress_queue:
+                    with contextlib.suppress(asyncio.QueueFull):
+                        progress_queue.put_nowait(None)
+                if progress_task:
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await progress_task
+
             tracks = [
                 QueuedTrack(
                     source=src,
@@ -376,7 +517,11 @@ class Music(commands.Cog):
                 self.queue.append(track)
 
             embed = self._build_track_embed(tracks[0], color=discord.Color.blue())
-            await message.reply(embed=embed)
+            if progress_message:
+                with contextlib.suppress(discord.HTTPException):
+                    await progress_message.edit(content=None, embed=embed)
+            else:
+                await message.reply(embed=embed)
 
             if voice_client.is_connected() and not voice_client.is_playing():
                 await self._start_next_track()
