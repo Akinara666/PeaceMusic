@@ -118,9 +118,8 @@ def is_soundcloud_query(query: str) -> bool:
 
 
 YTDL_OPTIONS = {
-    "cookiefile": str(COOKIES_PATH),
-    # Ключевое: не душим форматы
-    "format": "bestaudio*/bestaudio/best",
+    "cookiefile": str(COOKIES_PATH),            # оставляем, если нужно обходить ограничения/возраст/регион
+    "format": "bestaudio*/bestaudio/best",      # без жесткой привязки к opus/webm
     "noplaylist": True,
     "nopart": True,
     "default_search": "ytsearch1",
@@ -128,28 +127,27 @@ YTDL_OPTIONS = {
     "http_chunk_size": 1_048_576,
     "forceipv4": True,
 
-    # ОТКЛЮЧАЕМ внешнего качальщика для YouTube/HLS
-    # "external_downloader": "aria2c",  # <-- убери для YouTube
+    # Не используем внешнего качальщика для YouTube/HLS
+    # "external_downloader": "aria2c",  # отключено для YouTube
 
-    # Даём yt-dlp самому разрулить HLS через ffmpeg
-    "hls_prefer_native": False,  # по умолчанию ок; главное — без aria2c
+    # Пускай yt-dlp использует ffmpeg для HLS
+    "hls_prefer_native": False,
 
-    # Журнал для отладки
-    "verbose": True,
-
-    # Anti-SABR: другой клиент
     "extractor_args": {
         "youtube": {
-            # Вариант 1: android
-            "player_client": ["android"]
-            # Вариант 2 (если android не заходит): ["tv_simply","default","-tv"]
+            # Порядок важен: сначала клиент, который понимает cookies и реже попадает в SABR
+            "player_client": ["tv_embedded", "android", "default"],
+            # Убираем web/web_safari, чтобы не словить SABR
+            "player_skip": ["web_safari", "web"]
         }
     },
 
     "retries": 5,
     "fragment_retries": 5,
     "socket_timeout": 15,
+    "verbose": True,
 }
+
 
 LOUDNESS_NORMALIZATION_FILTER = "loudnorm=I=-14:LRA=11:TP=-1.5"
 

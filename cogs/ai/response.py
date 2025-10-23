@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Awaitable, Callable, List, Optional, TYPE_CHECKING
+import random
+from typing import Awaitable, Callable, List, Optional, Sequence, TYPE_CHECKING
 
 from google.genai import types
 
@@ -21,22 +22,71 @@ class ResponseGenerator:
         tools: List[types.Tool],
         system_instruction: str,
         temperature: float = 1.0,
+        *,
+        top_p: Optional[float] = None,
+        frequency_penalty: Optional[float] = None,
+        presence_penalty: Optional[float] = None,
+        max_temperature: Optional[float] = None,
+        style_instructions: Optional[Sequence[str]] = None,
         thinking_budget: int = 2048,
     ) -> None:
         self._client = client
         self._model_name = model_name
         self._tools = tools
-        self._system_instruction = system_instruction
+        self._base_instruction = system_instruction
         self._temperature = temperature
+        self._top_p = top_p
+        self._frequency_penalty = frequency_penalty
+        self._presence_penalty = presence_penalty
+        self._max_temperature = max_temperature if max_temperature is not None else min(
+            temperature + 0.4,
+            1.4,
+        )
+        self._style_variants = list(style_instructions or [])
+        self._last_style_index: Optional[int] = None
         self._thinking_budget = thinking_budget
 
-    def build_generation_config(self) -> types.GenerateContentConfig:
-        return types.GenerateContentConfig(
-            tools=self._tools,
-            thinking_config=types.ThinkingConfig(thinking_budget=self._thinking_budget),
-            system_instruction=self._system_instruction,
-            temperature=self._temperature,
-        )
+    def build_generation_config(self, history_length: int) -> types.GenerateContentConfig:
+        cfg_kwargs = {
+            "tools": self._tools,
+            "thinking_config": types.ThinkingConfig(thinking_budget=self._thinking_budget),
+            "system_instruction": self._compose_system_instruction(),
+            "temperature": self._compute_temperature(history_length),
+        }
+        if self._top_p is not None:
+            cfg_kwargs["top_p"] = self._top_p
+        if self._frequency_penalty is not None:
+            cfg_kwargs["frequency_penalty"] = self._frequency_penalty
+        if self._presence_penalty is not None:
+            cfg_kwargs["presence_penalty"] = self._presence_penalty
+        return types.GenerateContentConfig(**cfg_kwargs)
+
+    def _compose_system_instruction(self) -> str:
+        if not self._style_variants:
+            return self._base_instruction
+        if len(self._style_variants) == 1:
+            return f"{self._base_instruction}\n\n{self._style_variants[0]}"
+
+        available_indexes = [
+            idx for idx in range(len(self._style_variants)) if idx != self._last_style_index
+        ]
+        chosen_index = random.choice(available_indexes) if available_indexes else 0
+        self._last_style_index = chosen_index
+        modifier = self._style_variants[chosen_index].strip()
+        if not modifier:
+            return self._base_instruction
+        return f"{self._base_instruction}\n\n{modifier}"
+
+    def _compute_temperature(self, history_length: int) -> float:
+        if history_length <= 15:
+            return self._temperature
+
+        ramp = max(self._max_temperature - self._temperature, 0.0)
+        if ramp == 0.0:
+            return self._temperature
+
+        factor = min(1.0, (history_length - 15) / 40)
+        return self._temperature + ramp * factor
 
     async def generate_reply(
         self,
@@ -44,7 +94,7 @@ class ResponseGenerator:
         user_text: str,
         tool_callback: ToolCallback,
     ) -> Optional[str]:
-        config = self.build_generation_config()
+        config = self.build_generation_config(len(history))
         attempts = 3
         response: Optional[types.GenerateContentResponse] = None
 
