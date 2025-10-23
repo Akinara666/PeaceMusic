@@ -127,18 +127,22 @@ YTDL_OPTIONS = {
     "http_chunk_size": 1_048_576,
     "forceipv4": True,
 
+    "http_headers": {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
+        "Referer": "https://www.youtube.com/",
+        "Origin":  "https://www.youtube.com",
+        "Accept-Language": "en-US,en;q=0.9"
+    },
+
     # Не используем внешнего качальщика для YouTube/HLS
     # "external_downloader": "aria2c",  # отключено для YouTube
 
-    # Пускай yt-dlp использует ffmpeg для HLS
-    "hls_prefer_native": False,
+    "hls_prefer_native": True,
 
     "extractor_args": {
         "youtube": {
-            # Порядок важен: сначала клиент, который понимает cookies и реже попадает в SABR
-            "player_client": ["tv_embedded", "android", "default"],
-            # Убираем web/web_safari, чтобы не словить SABR
-            "player_skip": ["web_safari", "web"]
+            "player_client": ["tv_embedded", "default"],
+            "player_skip":   ["web_safari", "web"]
         }
     },
 
