@@ -99,8 +99,6 @@ class GeminiChatCog(commands.Cog):
             system_instruction=BOT_PROMPT_TEXT,
             temperature=1.0,
             top_p=0.92,
-            frequency_penalty=0.3,
-            presence_penalty=0.35,
             max_temperature=1.3,
             style_instructions=style_variants,
             thinking_budget=2048,
