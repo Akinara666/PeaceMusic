@@ -185,8 +185,10 @@ def _clean_progress_text(value: str) -> str:
     return " ".join(cleaned.strip().split())
 
 
-def build_ffmpeg_options(stream: bool) -> dict[str, str]:
+def build_ffmpeg_options(stream: bool, *, seek: Optional[int] = None) -> dict[str, str]:
     before = FFMPEG_BEFORE_STREAM if stream else FFMPEG_BEFORE_FILE
+    if seek is not None and seek > 0:
+        before = f"-ss {seek} {before}"
     return {
         "before_options": before,
         "options": FFMPEG_COMMON_OPTIONS,
@@ -207,6 +209,7 @@ class YTDLSource(discord.PCMVolumeTransformer):
         stream: bool,
         local_path: Optional[Path] = None,
         volume: float = 1.0,
+        on_chunk: Optional[Callable[[], None]] = None,
     ):
         super().__init__(source, volume)
         self.data = data
@@ -218,6 +221,14 @@ class YTDLSource(discord.PCMVolumeTransformer):
         self.duration = data.get("duration")
         self.local_path = local_path
         self.is_stream = stream
+        self._on_chunk = on_chunk
+
+    def read(self) -> bytes:
+        data = super().read()
+        if data and self._on_chunk:
+            with contextlib.suppress(Exception):
+                self._on_chunk()
+        return data
 
     @classmethod
     async def from_url(
@@ -227,6 +238,8 @@ class YTDLSource(discord.PCMVolumeTransformer):
         loop: Optional[asyncio.AbstractEventLoop] = None,
         stream: bool = False,
         progress_hook: Optional[Callable[[dict], None]] = None,
+        on_chunk: Optional[Callable[[], None]] = None,
+        start_at: Optional[int] = None,
     ) -> list["YTDLSource"]:
         loop = loop or asyncio.get_event_loop()
         cache_key = f"{int(stream)}:{url}"
@@ -257,9 +270,9 @@ class YTDLSource(discord.PCMVolumeTransformer):
                 filename = ytdl_client.prepare_filename(entry)
                 local_path = Path(filename)
                 playback_target = str(local_path)
-            ffmpeg_args = build_ffmpeg_options(stream)
+            ffmpeg_args = build_ffmpeg_options(stream, seek=start_at)
             audio_source = discord.FFmpegPCMAudio(playback_target, **ffmpeg_args)
-            sources.append(cls(audio_source, data=entry, stream=stream, local_path=local_path))
+            sources.append(cls(audio_source, data=entry, stream=stream, local_path=local_path, on_chunk=on_chunk))
         return sources
 
 
@@ -289,8 +302,12 @@ class Music(commands.Cog):
         self.current: Optional[QueuedTrack] = None
         self._play_lock = asyncio.Lock()
         self._last_audio_time: Optional[datetime.datetime] = None
+        self._track_start_monotonic: Optional[float] = None
+        self._restart_lock = asyncio.Lock()
+        self._skip_after_callback = False
 
         self.check_for_inactivity.start()
+        self.monitor_stalled_playback.start()
 
     async def _download_progress_worker(
         self,
@@ -376,6 +393,9 @@ class Music(commands.Cog):
             self._cleanup_track_file(track)
         self.queue.clear()
 
+    def _touch_audio_heartbeat(self) -> None:
+        self._last_audio_time = discord.utils.utcnow()
+
     # ------------------------------------------------------------------
     # Queue helpers
     # ------------------------------------------------------------------
@@ -403,17 +423,63 @@ class Music(commands.Cog):
 
         self.current = self.queue.popleft()
         logger.info("Now playing: %s", self.current.title)
-        self.voice_client.play(self.current.source, after=self._after_playback)
+        self._track_start_monotonic = time.monotonic()
         self._last_audio_time = discord.utils.utcnow()
+        self.voice_client.play(self.current.source, after=self._after_playback)
 
     def _after_playback(self, error: Optional[Exception]) -> None:
+        if self._skip_after_callback:
+            self._skip_after_callback = False
+            return
         finished_track = self.current
         if error:
             logger.error("Playback error", exc_info=error)
         if finished_track:
             self._cleanup_track_file(finished_track)
         self.current = None
+        self._track_start_monotonic = None
         self.bot.loop.call_soon_threadsafe(asyncio.create_task, self._start_next_track())
+
+    async def _restart_current_stream(self) -> None:
+        if not self.voice_client or not self.current or not self.current.stream_url:
+            return
+        if self.current.local_path:
+            return  # локальный файл — пусть завершится штатно
+        async with self._restart_lock:
+            target_url = self.current.webpage_url or self.current.stream_url
+            if not target_url:
+                return
+            seek_seconds: Optional[int] = None
+            if self._track_start_monotonic:
+                seek_seconds = max(0, int(time.monotonic() - self._track_start_monotonic) - 2)
+            logger.warning("Playback stalled, attempting to restart stream for %s", target_url)
+            try:
+                sources = await YTDLSource.from_url(
+                    target_url,
+                    loop=self.bot.loop,
+                    stream=True,
+                    on_chunk=self._touch_audio_heartbeat,
+                    start_at=seek_seconds,
+                )
+            except DownloadError as exc:
+                logger.warning("Failed to restart stream %s: %s", target_url, exc)
+                return
+            except Exception:
+                logger.exception("Unexpected error during stream restart for %s", target_url)
+                return
+
+            if not sources:
+                return
+
+            new_source = sources[0]
+            self._skip_after_callback = True
+            self.voice_client.stop()
+            self.current.source = new_source
+            self.current.stream_url = new_source.url
+            self.current.duration = new_source.duration
+            self._track_start_monotonic = time.monotonic()
+            self._touch_audio_heartbeat()
+            self.voice_client.play(self.current.source, after=self._after_playback)
 
     def _build_track_embed(self, track: QueuedTrack, *, color: discord.Color) -> discord.Embed:
         embed = discord.Embed(
@@ -474,6 +540,7 @@ class Music(commands.Cog):
                     loop=self.bot.loop,
                     stream=should_stream,
                     progress_hook=progress_hook_fn,
+                    on_chunk=self._touch_audio_heartbeat,
                 )
             except DownloadError as exc:
                 logger.warning("Failed to download track %s: %s", normalized_query, exc)
@@ -646,6 +713,23 @@ class Music(commands.Cog):
     # ------------------------------------------------------------------
     # Housekeeping
     # ------------------------------------------------------------------
+    @tasks.loop(seconds=20)
+    async def monitor_stalled_playback(self) -> None:
+        if not self.voice_client or not self.current:
+            return
+        if not self.voice_client.is_playing():
+            return
+        if self.current.local_path:
+            return
+        now = discord.utils.utcnow()
+        last = self._last_audio_time or now
+        if (now - last).total_seconds() > 25:
+            await self._restart_current_stream()
+
+    @monitor_stalled_playback.before_loop
+    async def before_monitor_stalled_playback(self) -> None:
+        await self.bot.wait_until_ready()
+
     @tasks.loop(minutes=5)
     async def check_for_inactivity(self) -> None:
         now = discord.utils.utcnow()
