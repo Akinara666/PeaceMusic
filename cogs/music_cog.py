@@ -140,7 +140,8 @@ YTDL_OPTIONS = {
     # Не используем внешнего качальщика для YouTube/HLS
     # "external_downloader": "aria2c",  # отключено для YouTube
 
-    "hls_prefer_native": True,
+    # Для длинных HLS потоков лучше доверить ffmpeg, у него лучше переподключение
+    "hls_prefer_native": False,
 
     "extractor_args": {
         "youtube": {
@@ -149,8 +150,8 @@ YTDL_OPTIONS = {
         }
     },
 
-    "retries": 5,
-    "fragment_retries": 5,
+    "retries": 10,
+    "fragment_retries": 15,
     "socket_timeout": 15,
     "verbose": True,
 }
@@ -160,7 +161,8 @@ LOUDNESS_NORMALIZATION_FILTER = "loudnorm=I=-14:LRA=11:TP=-1.5"
 
 FFMPEG_BEFORE_STREAM = (
     "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 "
-    "-reconnect_at_eof 1 -reconnect_on_network_error 1 -rw_timeout 15000000 -nostdin"
+    "-reconnect_at_eof 1 -reconnect_on_network_error 1 -reconnect_on_http_error 4xx,5xx "
+    "-rw_timeout 15000000 -nostdin"
 )
 FFMPEG_BEFORE_FILE = "-nostdin"
 FFMPEG_COMMON_OPTIONS = (
