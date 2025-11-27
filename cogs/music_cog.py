@@ -127,7 +127,7 @@ YTDL_OPTIONS = {
     "nopart": True,
     "default_search": "ytsearch1",
     "outtmpl": str(MUSIC_DIRECTORY_PATH / "%(extractor)s-%(id)s.%(ext)s"),
-    "http_chunk_size": 1_048_576,
+    "http_chunk_size": 5_242_880,               # больше размер чанка — меньше перезапросов на длинных треках
     "forceipv4": True,
 
     "http_headers": {
@@ -158,13 +158,15 @@ YTDL_OPTIONS = {
 
 LOUDNESS_NORMALIZATION_FILTER = "loudnorm=I=-14:LRA=11:TP=-1.5"
 
-FFMPEG_BEFORE_STREAM = "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -nostdin"
+FFMPEG_BEFORE_STREAM = (
+    "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 "
+    "-reconnect_at_eof 1 -reconnect_on_network_error 1 -rw_timeout 15000000 -nostdin"
+)
 FFMPEG_BEFORE_FILE = "-nostdin"
 FFMPEG_COMMON_OPTIONS = (
     "-vn -sn -dn "
-    "-bufsize 64k "
-    "-probesize 32k "
-    "-analyzeduration 0 "
+    "-bufsize 256k "
+    "-probesize 256k "
     "-flags low_delay "
     "-threads 1 "
     "-loglevel warning "
@@ -241,6 +243,7 @@ class YTDLSource(discord.PCMVolumeTransformer):
             logger.debug("yt_dlp extract_info took %.2fs for %s", elapsed, url)
 
         entries = data.get("entries", [data])
+
         sources: list[YTDLSource] = []
         for entry in entries:
             if not entry:
