@@ -198,6 +198,23 @@ ytdl = youtube_dl.YoutubeDL(YTDL_OPTIONS)
 
 INFO_CACHE_TTL_SECONDS = 900
 _info_cache: dict[str, tuple[float, dict]] = {}
+LONG_VIDEO_DOWNLOAD_THRESHOLD = 1800  # 30 минут: длинные ролики лучше скачать
+
+
+async def _probe_info(url: str, *, loop: Optional[asyncio.AbstractEventLoop] = None) -> dict:
+    """Быстрое получение метаданных без скачивания, с кэшем."""
+    loop = loop or asyncio.get_event_loop()
+    cache_key = f"probe:{url}"
+    cached = _info_cache.get(cache_key)
+    now = time.monotonic()
+    if cached and (now - cached[0]) < INFO_CACHE_TTL_SECONDS:
+        return cached[1]
+
+    start = time.monotonic()
+    data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=False))
+    _info_cache[cache_key] = (time.monotonic(), data)
+    logger.debug("yt_dlp probe took %.2fs for %s", time.monotonic() - start, url)
+    return data
 
 
 class YTDLSource(discord.PCMVolumeTransformer):
@@ -510,6 +527,18 @@ class Music(commands.Cog):
             tracks: list[QueuedTrack]
             normalized_query = normalize_audio_query(song_name)
             should_stream = not is_soundcloud_query(normalized_query)
+            if should_stream:
+                try:
+                    probe = await _probe_info(normalized_query, loop=self.bot.loop)
+                    probe_entries = probe.get("entries", [probe])
+                    longest_duration = max(
+                        int(entry.get("duration") or 0) for entry in probe_entries if entry
+                    ) if probe_entries else 0
+                    has_live = any(entry and entry.get("is_live") for entry in probe_entries)
+                    if not has_live and longest_duration >= LONG_VIDEO_DOWNLOAD_THRESHOLD:
+                        should_stream = False  # длинные видео качаем заранее
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Failed to probe track duration for %s", normalized_query, exc_info=exc)
             if normalized_query != song_name:
                 logger.debug("Normalized audio query from %s to %s", song_name, normalized_query)
 
