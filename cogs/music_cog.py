@@ -198,7 +198,7 @@ ytdl = youtube_dl.YoutubeDL(YTDL_OPTIONS)
 
 INFO_CACHE_TTL_SECONDS = 900
 _info_cache: dict[str, tuple[float, dict]] = {}
-LONG_VIDEO_DOWNLOAD_THRESHOLD = 1800  # 30 минут: длинные ролики лучше скачать
+LONG_VIDEO_DOWNLOAD_THRESHOLD = 3600  # 60 минут: длинные ролики лучше скачать
 
 
 async def _probe_info(url: str, *, loop: Optional[asyncio.AbstractEventLoop] = None) -> dict:
