@@ -154,6 +154,7 @@ YTDL_OPTIONS = {
     "fragment_retries": 15,
     "socket_timeout": 15,
     "verbose": True,
+    'remote_components': ['ejs:npm']
 }
 
 
@@ -711,11 +712,9 @@ class Music(commands.Cog):
             return "Перемотка недоступна"
 
         source_url = self.current.stream_url or str(self.current.local_path)
-        new_source = discord.FFmpegPCMAudio(
-            source_url,
-            before_options=f"-ss {seconds} -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
-            options=f"-vn -sn -dn -bufsize 64k -af {LOUDNESS_NORMALIZATION_FILTER}",
-        )
+        is_stream = self.current.stream_url is not None
+        ffmpeg_args = build_ffmpeg_options(is_stream, seek=seconds)
+        new_source = discord.FFmpegPCMAudio(source_url, **ffmpeg_args)
         wrapped = discord.PCMVolumeTransformer(new_source)
         self.voice_client.stop()
         self.current.source = wrapped
