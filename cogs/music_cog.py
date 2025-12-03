@@ -153,12 +153,10 @@ YTDL_OPTIONS = {
     "retries": 10,
     "fragment_retries": 15,
     "socket_timeout": 15,
-    "verbose": True,
+    "verbose": False,
     'remote_components': ['ejs:npm']
 }
 
-
-LOUDNESS_NORMALIZATION_FILTER = "loudnorm=I=-14:LRA=11:TP=-1.5"
 
 FFMPEG_BEFORE_STREAM = (
     "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 "
@@ -168,12 +166,11 @@ FFMPEG_BEFORE_STREAM = (
 FFMPEG_BEFORE_FILE = "-nostdin"
 FFMPEG_COMMON_OPTIONS = (
     "-vn -sn -dn "
-    "-bufsize 256k "
-    "-probesize 256k "
+    "-bufsize 512k "
+    "-probesize 512k "
     "-flags low_delay "
     "-threads 1 "
     "-loglevel warning "
-    f"-af {LOUDNESS_NORMALIZATION_FILTER}"
 )
 
 ANSI_ESCAPE_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
