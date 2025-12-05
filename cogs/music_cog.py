@@ -6,6 +6,7 @@ import contextlib
 import datetime
 import logging
 import re
+import shutil
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -137,8 +138,17 @@ YTDL_OPTIONS = {
         "Accept-Language": "en-US,en;q=0.9"
     },
 
-    # Не используем внешнего качальщика для YouTube/HLS
-    # "external_downloader": "aria2c",  # отключено для YouTube
+    # Используем внешнего качальщика для YouTube/HLS (если установлен aria2c)
+    "external_downloader": {"default": "aria2c"},
+    "external_downloader_args": {
+        "aria2c": [
+            "--min-split-size=1M",
+            "--max-connection-per-server=10",
+            "--split=10",
+            "--continue=true",
+            "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
+        ]
+    },
 
     # Для длинных HLS потоков лучше доверить ffmpeg, у него лучше переподключение
     "hls_prefer_native": False,
@@ -156,6 +166,18 @@ YTDL_OPTIONS = {
     "verbose": False,
     'remote_components': ['ejs:npm']
 }
+
+if shutil.which("aria2c"):
+    YTDL_OPTIONS["external_downloader"] = {"default": "aria2c"}
+    YTDL_OPTIONS["external_downloader_args"] = {
+        "aria2c": [
+            "--min-split-size=1M",
+            "--max-connection-per-server=10",
+            "--split=10",
+            "--continue=true",
+            "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
+        ]
+    }
 
 
 FFMPEG_BEFORE_STREAM = (
