@@ -162,6 +162,12 @@ class GeminiChatCog(commands.Cog):
         if CHATBOT_CHANNEL_ID and message.channel.id != CHATBOT_CHANNEL_ID:
             return
 
+        if message.attachments and self.music_cog:
+            audio_att = next((a for a in message.attachments if a.content_type and a.content_type.startswith("audio/")), None)
+            if audio_att:
+                await self.music_cog.play_attachment_func(message, audio_att)
+                return
+
         async with self._lock:
             history = self._history_manager.get_history(message.channel.id)
             base_text = (message.content or "").strip()

@@ -667,6 +667,49 @@ class Music(commands.Cog):
             queued_titles = ", ".join(track.title for track in tracks)
             return f"Добавлено в очередь: {queued_titles}"
 
+    async def play_attachment_func(self, message: discord.Message, attachment: discord.Attachment) -> str:
+        async with self._play_lock:
+            voice_client = await self._ensure_voice_client(message)
+            if not voice_client:
+                return "Пользователь не в голосовом канале"
+
+            # Save file with unique name
+            safe_filename = Path(attachment.filename).name
+            file_path = MUSIC_DIRECTORY_PATH / f"{int(time.time())}_{safe_filename}"
+            
+            try:
+                await attachment.save(file_path)
+            except Exception as exc:
+                logger.warning("Failed to save attachment %s: %s", safe_filename, exc)
+                return "Ошибка сохранения файла"
+
+            ffmpeg_args = build_ffmpeg_options(stream=False)
+            try:
+                audio_source = discord.FFmpegPCMAudio(str(file_path), **ffmpeg_args)
+            except Exception as exc:
+                logger.error("Failed to create audio source for %s: %s", safe_filename, exc)
+                with contextlib.suppress(OSError):
+                    file_path.unlink()
+                return "Ошибка обработки аудиофайла"
+
+            track = QueuedTrack(
+                source=audio_source,
+                title=safe_filename,
+                requester=message.author,
+                local_path=file_path,
+                webpage_url=attachment.url,
+            )
+
+            self.queue.append(track)
+
+            embed = self._build_track_embed(track, color=discord.Color.green())
+            await message.reply(embed=embed)
+
+            if voice_client.is_connected() and not voice_client.is_playing():
+                await self._start_next_track()
+
+            return f"Добавлено в очередь: {track.title}"
+
     async def skip_func(self, message: discord.Message) -> str:
         if not self.voice_client or not self.voice_client.is_playing():
             await message.reply("Сейчас ничего не играет.")
