@@ -114,7 +114,7 @@ class GeminiChatCog(commands.Cog):
     # ------------------------------------------------------------------
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
-        if message.author.bot:
+        if message.author == self.bot.user:
             return
         if CHATBOT_CHANNEL_ID and message.channel.id != CHATBOT_CHANNEL_ID:
             return
@@ -128,6 +128,11 @@ class GeminiChatCog(commands.Cog):
         async with self._lock:
             history = self._history_manager.get_history(message.channel.id)
             base_text = (message.content or "").strip()
+
+            author_name = message.author.name
+            if "akinara" in author_name.lower() and author_name.lower() != "akinara":
+                author_name = f"fake_{author_name}"
+
             user_text = f"{message.author.name}: {base_text}" if base_text else message.author.name
 
             if message.attachments:
