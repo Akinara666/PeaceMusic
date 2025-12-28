@@ -133,7 +133,7 @@ class GeminiChatCog(commands.Cog):
             if "akinara" in author_name.lower() and author_name.lower() != "akinara":
                 author_name = f"fake_{author_name}"
 
-            user_text = f"{message.author.name}: {base_text}" if base_text else message.author.name
+            user_text = f"{author_name}: {base_text}" if base_text else author_name
 
             if message.attachments:
                 content, prompt_text = await self._attachment_processor.to_content(message, user_text)
