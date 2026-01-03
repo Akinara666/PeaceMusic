@@ -143,8 +143,8 @@ YTDL_OPTIONS = {
     "external_downloader_args": {
         "aria2c": [
             "--min-split-size=1M",
-            "--max-connection-per-server=10",
-            "--split=10",
+            "--max-connection-per-server=4",
+            "--split=4",
             "--continue=true",
             "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
         ]
@@ -172,8 +172,8 @@ if shutil.which("aria2c"):
     YTDL_OPTIONS["external_downloader_args"] = {
         "aria2c": [
             "--min-split-size=1M",
-            "--max-connection-per-server=10",
-            "--split=10",
+            "--max-connection-per-server=4",
+            "--split=4",
             "--continue=true",
             "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
         ]
@@ -188,8 +188,8 @@ FFMPEG_BEFORE_STREAM = (
 FFMPEG_BEFORE_FILE = "-nostdin"
 FFMPEG_COMMON_OPTIONS = (
     "-vn -sn -dn "
-    "-bufsize 512k "
-    "-probesize 512k "
+    "-bufsize 2048k "
+    "-probesize 2048k "
     "-flags low_delay "
     "-threads 1 "
     "-loglevel warning "
@@ -352,7 +352,7 @@ class Music(commands.Cog):
         queue: asyncio.Queue[object],
         sentinel: object,
         *,
-        update_interval: float = 0.5,
+        update_interval: float = 2.0,
     ) -> None:
         last_content: Optional[str] = None
         last_update = 0.0
