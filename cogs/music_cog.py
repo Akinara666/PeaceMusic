@@ -123,7 +123,7 @@ def is_soundcloud_query(query: str) -> bool:
 
 YTDL_OPTIONS = {
     "cookiefile": str(COOKIES_PATH),            # оставляем, если нужно обходить ограничения/возраст/регион
-    "format": "bestaudio[acodec=opus]/bestaudio[ext=webm]/bestaudio/best[acodec!=none]",
+    "format": "bestaudio[abr<=96][acodec=opus]/bestaudio[abr<=96][ext=webm]/bestaudio[acodec=opus]/bestaudio[ext=webm]/bestaudio/best[acodec!=none]",
     "noplaylist": True,
     "nopart": True,
     "default_search": "ytsearch1",
