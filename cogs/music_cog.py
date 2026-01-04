@@ -138,17 +138,9 @@ YTDL_OPTIONS = {
         "Accept-Language": "en-US,en;q=0.9"
     },
 
-    # Используем внешнего качальщика для YouTube/HLS (если установлен aria2c)
-    "external_downloader": {"default": "aria2c"},
-    "external_downloader_args": {
-        "aria2c": [
-            "--min-split-size=1M",
-            "--max-connection-per-server=4",
-            "--split=4",
-            "--continue=true",
-            "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
-        ]
-    },
+    # aria2c disabled for low-end optimization
+    # "external_downloader": {"default": "aria2c"},
+    # "external_downloader_args": { ... },
 
     # Для длинных HLS потоков лучше доверить ffmpeg, у него лучше переподключение
     "hls_prefer_native": False,
@@ -167,17 +159,10 @@ YTDL_OPTIONS = {
     'remote_components': ['ejs:npm']
 }
 
-if shutil.which("aria2c"):
-    YTDL_OPTIONS["external_downloader"] = {"default": "aria2c"}
-    YTDL_OPTIONS["external_downloader_args"] = {
-        "aria2c": [
-            "--min-split-size=1M",
-            "--max-connection-per-server=4",
-            "--split=4",
-            "--continue=true",
-            "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
-        ]
-    }
+# aria2c check disabled
+# if shutil.which("aria2c"):
+#     YTDL_OPTIONS["external_downloader"] = {"default": "aria2c"}
+#     YTDL_OPTIONS["external_downloader_args"] = { ... }
 
 
 FFMPEG_BEFORE_STREAM = (
@@ -188,9 +173,8 @@ FFMPEG_BEFORE_STREAM = (
 FFMPEG_BEFORE_FILE = "-nostdin"
 FFMPEG_COMMON_OPTIONS = (
     "-vn -sn -dn "
-    "-bufsize 2048k "
-    "-probesize 2048k "
-    "-flags low_delay "
+    "-bufsize 4096k "
+    "-probesize 4096k "
     "-threads 1 "
     "-loglevel warning "
 )
