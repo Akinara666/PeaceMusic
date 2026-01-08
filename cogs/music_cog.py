@@ -309,6 +309,7 @@ class QueuedTrack:
     uploader: Optional[str] = None
     duration: Optional[int] = None
     local_path: Optional[Path] = None
+    channel: Optional[discord.abc.Messageable] = None
 
 
 # ----------------------------------------------------------------------------
@@ -449,6 +450,15 @@ class Music(commands.Cog):
         self._last_audio_time = discord.utils.utcnow()
         self.voice_client.play(self.current.source, after=self._after_playback)
 
+        # Notify "Now Playing"
+        if self.current.channel:
+            embed = self._build_track_embed(
+                self.current, 
+                color=discord.Color.green(), 
+                description="Сейчас играет"
+            )
+            self.bot.loop.create_task(self.current.channel.send(embed=embed))
+
     def _after_playback(self, error: Optional[Exception]) -> None:
         if self._skip_after_callback:
             self._skip_after_callback = False
@@ -503,11 +513,11 @@ class Music(commands.Cog):
             self._touch_audio_heartbeat()
             self.voice_client.play(self.current.source, after=self._after_playback)
 
-    def _build_track_embed(self, track: QueuedTrack, *, color: discord.Color) -> discord.Embed:
+    def _build_track_embed(self, track: QueuedTrack, *, color: discord.Color, description: str = "Трек добавлен в очередь") -> discord.Embed:
         embed = discord.Embed(
             title=track.title,
             url=track.webpage_url or discord.Embed.Empty,
-            description="Трек добавлен в очередь",
+            description=description,
             color=color,
         )
         if track.thumbnail:
@@ -628,6 +638,7 @@ class Music(commands.Cog):
                     uploader=src.uploader,
                     duration=src.duration,
                     local_path=src.local_path,
+                    channel=message.channel,
                 )
                 for src in sources
             ]
@@ -685,6 +696,7 @@ class Music(commands.Cog):
                 requester=message.author,
                 local_path=file_path,
                 webpage_url=attachment.url,
+                channel=message.channel,
             )
 
             self.queue.append(track)
