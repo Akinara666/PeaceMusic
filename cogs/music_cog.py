@@ -124,7 +124,8 @@ def is_soundcloud_query(query: str) -> bool:
 YTDL_OPTIONS = {
     "cookiefile": str(COOKIES_PATH),            # оставляем, если нужно обходить ограничения/возраст/регион
     "format": "bestaudio[abr<=96][acodec=opus]/bestaudio[abr<=96][ext=webm]/bestaudio[acodec=opus]/bestaudio[ext=webm]/bestaudio/best[acodec!=none]",
-    "noplaylist": True,
+    "noplaylist": False,
+    "playlistend": 10,
     "nopart": True,
     "default_search": "ytsearch1",
     "outtmpl": str(MUSIC_DIRECTORY_PATH / "%(extractor)s-%(id)s.%(ext)s"),
@@ -649,6 +650,8 @@ class Music(commands.Cog):
                 await self._start_next_track()
 
             queued_titles = ", ".join(track.title for track in tracks)
+            if len(tracks) > 1:
+                return f"Добавлено {len(tracks)} треков из плейлиста."
             return f"Добавлено в очередь: {queued_titles}"
 
     async def play_attachment_func(self, message: discord.Message, attachment: discord.Attachment) -> str:
