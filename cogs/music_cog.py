@@ -209,7 +209,7 @@ LONG_VIDEO_DOWNLOAD_THRESHOLD = 3600  # 60 минут: длинные ролик
 async def _probe_info(url: str, *, loop: Optional[asyncio.AbstractEventLoop] = None) -> dict:
     """Быстрое получение метаданных без скачивания, с кэшем."""
     loop = loop or asyncio.get_event_loop()
-    cache_key = f"probe:{url}"
+    cache_key = f"1:{url}"
     cached = _info_cache.get(cache_key)
     now = time.monotonic()
     if cached and (now - cached[0]) < INFO_CACHE_TTL_SECONDS:
