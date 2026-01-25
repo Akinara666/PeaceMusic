@@ -180,9 +180,9 @@ class QueuedTrack:
     thumbnail: Optional[str] = None
     uploader: Optional[str] = None
 
-class YTDLSource(discord.PCMVolumeTransformer):
-    def __init__(self, source: discord.AudioSource, *, data: dict, volume: float = 0.5):
-        super().__init__(source, volume)
+class YTDLSource(discord.FFmpegPCMAudio):
+    def __init__(self, source: str, *, data: dict):
+        super().__init__(source, **FFMPEG_OPTIONS)
         self.data = data
         self.title = data.get("title")
         self.url = data.get("url")
@@ -204,7 +204,7 @@ class YTDLSource(discord.PCMVolumeTransformer):
             data = data["entries"][0]
 
         filename = data["url"]
-        return cls(discord.FFmpegPCMAudio(filename, **FFMPEG_OPTIONS), data=data)
+        return cls(filename, data=data)
 
 
 class Music(commands.Cog):
@@ -337,12 +337,12 @@ class Music(commands.Cog):
             
             self.queue.append(track)
             
-            # If not playing, start immediately
+            # If not playing, start immediately (Async)
             if not self.voice_client.is_playing():
-                await self._start_next_track()
-                return f"Включаю: {song_name}"
+                asyncio.create_task(self._start_next_track())
+                return f"🔍 Поиск и воспроизведение: {song_name}"
             else:
-                return f"Добавлено в очередь: {song_name} (Позиция: {len(self.queue)})"
+                return f"✅ Добавлено в очередь: {song_name} (Позиция: {len(self.queue)})"
 
     async def play_attachment_func(self, message: discord.Message, attachment: discord.Attachment) -> str:
         # For attachments, since we can't 'stream' them easily without URL expiry or downloading,
@@ -365,10 +365,10 @@ class Music(commands.Cog):
             self.queue.append(track)
              
             if not self.voice_client.is_playing():
-                await self._start_next_track()
-                return f"Включаю файл: {attachment.filename}"
+                asyncio.create_task(self._start_next_track())
+                return f"▶️ Включаю файл: {attachment.filename}"
             else:
-                return f"Файл добавлен в очередь: {attachment.filename}"
+                return f"✅ Файл добавлен в очередь: {attachment.filename}"
 
     async def skip_func(self, message: discord.Message) -> str:
         if not self.voice_client or not self.voice_client.is_playing():
@@ -401,10 +401,4 @@ class Music(commands.Cog):
         return "Перемотка недоступна в режиме онлайн-стриминга."
 
     async def set_volume_func(self, message: discord.Message, level: float) -> str:
-        if not self.voice_client or not self.voice_client.source:
-            return "Нечего регулировать."
-        
-        if 0.0 <= level <= 2.0:
-            self.voice_client.source.volume = level
-            return f"Громкость: {int(level*100)}%"
-        return "0.0 - 2.0"
+        return "⚠️ Регулировка громкости отключена для повышения производительности."
