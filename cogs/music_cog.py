@@ -121,7 +121,7 @@ def is_soundcloud_query(query: str) -> bool:
 YTDL_OPTIONS = {
     # Low resource optimization: fast extraction, no downloads
     "cookiefile": str(COOKIES_PATH),
-    "format": "bestaudio/best",
+    "format": "bestaudio[abr<=96]/worst", # Low bitrate for stability
     "noplaylist": True,
     "nopart": True,
     "default_search": "ytsearch1",
@@ -156,8 +156,8 @@ FFMPEG_OPTIONS = {
     ),
     "options": (
         "-vn -sn -dn "
-        "-bufsize 512k "   # Very small buffer for instant start/low RAM
-        "-probesize 128k " # Fast probe
+        "-bufsize 4M "     # Larger buffer to prevent stuttering
+        "-probesize 1M "   # Larger probe size for better format detection
         "-ac 2 "           # Force stereo
         "-ar 48000 "
         "-threads 1 "      # Limit threads
