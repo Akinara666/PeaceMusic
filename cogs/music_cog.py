@@ -379,6 +379,40 @@ class Music(commands.Cog):
         await message.reply(f"Пропущен трек: {skipped}")
         return f"Пропущен: {skipped}"
 
+    async def skip_by_name_func(self, message: discord.Message, song_name: str) -> str:
+        if not self.queue:
+            return "Очередь пуста."
+
+        # Case-insensitive partial match
+        lowered_name = song_name.lower()
+        
+        # We need to iterate and remove. modifying deque while iterating is tricky, 
+        # so we'll look for index or rebuild. 
+        # Since queue is small, rebuilding is fine or just rotating? 
+        # Actually, let's just find the first match and remove it.
+        
+        removed_track = None
+        for track in self.queue:
+            # track.title might be "Загрузка..." if it's not processed yet, 
+            # but track.query (URL or search term) is always there.
+            # Best to check both or just title? User probably knows the title they asked for.
+            # But if it's still "Загрузка...", searching by title might fail.
+            # Let's search query too if title is placeholder.
+            
+            title_check = track.title.lower() if track.title else ""
+            query_check = track.query.lower()
+            
+            if lowered_name in title_check or lowered_name in query_check:
+                removed_track = track
+                break
+        
+        if removed_track:
+            self.queue.remove(removed_track)
+            display_name = removed_track.title if removed_track.title != "Загрузка..." else removed_track.query
+            return f"🗑️ Удалено из очереди: {display_name}"
+        
+        return f"Не найдено в очереди: {song_name}"
+
     async def stop_func(self, message: discord.Message) -> str:
         self.queue.clear()
         if self.voice_client:
