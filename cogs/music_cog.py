@@ -224,12 +224,11 @@ class YTDLSource(discord.PCMVolumeTransformer):
         url: str,
         *,
         loop: Optional[asyncio.AbstractEventLoop] = None,
+        stream: bool = True,
         on_chunk: Optional[Callable[[], None]] = None,
         start_at: Optional[int] = None,
     ) -> list["YTDLSource"]:
         loop = loop or asyncio.get_event_loop()
-        # Always stream
-        stream = True
         
         cache_key = f"{int(stream)}:{url}"
         cached = _info_cache.get(cache_key)
@@ -240,8 +239,7 @@ class YTDLSource(discord.PCMVolumeTransformer):
             logger.debug("yt_dlp extract_info cache hit for %s", url)
         else:
             start_time = time.monotonic()
-            # download=False forces extraction of info only without downloading file
-            data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=False))
+            data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=not stream))
             elapsed = time.monotonic() - start_time
             _info_cache[cache_key] = (time.monotonic(), data)
             logger.debug("yt_dlp extract_info took %.2fs for %s", elapsed, url)
@@ -253,11 +251,17 @@ class YTDLSource(discord.PCMVolumeTransformer):
             if not entry:
                 continue
             
-            playback_target = entry["url"]
+            local_path: Optional[Path] = None
+            if stream:
+                playback_target = entry["url"]
+            else:
+                filename = ytdl.prepare_filename(entry)
+                local_path = Path(filename)
+                playback_target = str(local_path)
                 
             ffmpeg_args = build_ffmpeg_options(stream, seek=start_at)
             audio_source = discord.FFmpegPCMAudio(playback_target, **ffmpeg_args)
-            sources.append(cls(audio_source, data=entry, stream=stream, local_path=None, on_chunk=on_chunk))
+            sources.append(cls(audio_source, data=entry, stream=stream, local_path=local_path, on_chunk=on_chunk))
         return sources
 
 
@@ -440,12 +444,15 @@ class Music(commands.Cog):
             if normalized_query != song_name:
                 logger.debug("Normalized audio query from %s to %s", song_name, normalized_query)
 
+            # SoundCloud plays better when downloaded
+            should_stream = not is_soundcloud_query(normalized_query)
             msg = await message.reply("Ищу трек...")
 
             try:
                 sources = await YTDLSource.from_url(
                     normalized_query,
                     loop=self.bot.loop,
+                    stream=should_stream,
                     on_chunk=self._touch_audio_heartbeat,
                 )
             except DownloadError as exc:
