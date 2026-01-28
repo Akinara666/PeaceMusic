@@ -140,9 +140,9 @@ YTDL_OPTIONS = {
 
 
 FFMPEG_BEFORE_STREAM = (
-    "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 "
+    "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 10 "
     "-reconnect_at_eof 1 -reconnect_on_network_error 1 -reconnect_on_http_error 4xx,5xx "
-    "-rw_timeout 15000000 -nostdin"
+    "-rw_timeout 30000000 -user_agent \"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\" -nostdin"
 )
 FFMPEG_BEFORE_FILE = "-nostdin"
 FFMPEG_COMMON_OPTIONS = (
