@@ -122,7 +122,7 @@ def is_soundcloud_query(query: str) -> bool:
 
 YTDL_OPTIONS = {
     "cookiefile": str(COOKIES_PATH),
-    "format": "bestaudio/best",
+    "format": "bestaudio[abr<=96][acodec=opus]/bestaudio[abr<=96][ext=webm]/bestaudio[acodec=opus]/bestaudio[ext=webm]/bestaudio/best[acodec!=none]",
     "noplaylist": True,
     "nocheckcertificate": True,
     "ignoreerrors": False,
@@ -133,6 +133,8 @@ YTDL_OPTIONS = {
     "source_address": "0.0.0.0",
     "forceipv4": True,
     "cachedir": False,
+    "outtmpl": str(MUSIC_DIRECTORY_PATH / "%(extractor)s-%(id)s.%(ext)s"),
+    "http_chunk_size": 10_485_760,
     "http_headers": {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     },
@@ -444,9 +446,9 @@ class Music(commands.Cog):
             if normalized_query != song_name:
                 logger.debug("Normalized audio query from %s to %s", song_name, normalized_query)
 
-            # SoundCloud plays better when downloaded
-            should_stream = not is_soundcloud_query(normalized_query)
-            msg = await message.reply("Ищу трек...")
+            # Download by default for stability (prevents TLS/IO errors)
+            should_stream = False
+            msg = await message.reply("Ищу и загружаю трек...")
 
             try:
                 sources = await YTDLSource.from_url(
