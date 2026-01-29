@@ -121,8 +121,8 @@ def is_soundcloud_query(query: str) -> bool:
 
 
 YTDL_OPTIONS = {
-    # "cookiefile": str(COOKIES_PATH),
-    "format": "best",
+    "cookiefile": str(COOKIES_PATH),
+    "format": "bestaudio/best",
     "noplaylist": True,
     "nocheckcertificate": True,
     "ignoreerrors": False,
