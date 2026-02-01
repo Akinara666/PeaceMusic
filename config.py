@@ -128,17 +128,29 @@ def _build_ytdl_options(music_dir: Path) -> dict:
         "logtostderr": False,
         "default_search": "auto",
         "source_address": "0.0.0.0",
-        "forceipv4": True,
+        
+        # IPv6 often mitigates YouTube blocking on VPS IPv4 ranges.
+        "forceipv4": False,
+        
         "cachedir": False,
         "outtmpl": str(music_dir / "%(extractor)s-%(id)s.%(ext)s"),
         # Limits to prevent long hangs:
-        "max_filesize": 50_000_000,  # ~50MB limit (approx 60 mins at 96kbps)
+        "max_filesize": 50_000_000,
         
-        # Optimized buffer/network settings
-        "http_chunk_size": 1048576,  # 1MB chunks (lower RAM spikes)
-        "socket_timeout": 15,
+        # Optimized buffer/network settings for flaky connections
+        "http_chunk_size": 10485760, # Increased chunk size (10MB) to reduce request frequency
+        "socket_timeout": 30,        # Increased timeout to wait out throttles
         "retries": 10,
-        "fragment_retries": 10,
+        "fragment_retries": 15,
+        
+        # Mimic mobile client to avoid web-client throttling
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["ios", "android", "web"],
+                "player_skip": ["webpage", "configs", "js"],
+            }
+        },
+        
         "http_headers": {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         },
