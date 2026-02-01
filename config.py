@@ -132,11 +132,20 @@ def _build_ytdl_options(music_dir: Path) -> dict:
         # Limits to prevent long hangs:
         "max_filesize": 50_000_000,
         
-        # Optimized buffer/network settings for flaky connections
-        "http_chunk_size": 10485760, # Increased chunk size (10MB) to reduce request frequency
-        "socket_timeout": 30,        # Increased timeout to wait out throttles
-        "retries": 10,
-        "fragment_retries": 15,
+        # Optimized buffer/network settings
+        "http_chunk_size": 10485760, 
+        "socket_timeout": 60,        # Explicitly set to 60s
+        "retries": 20,
+        "fragment_retries": 20,
+        
+        # Use aria2c for robust downloading (multi-connection)
+        # This is the best fix for throttling.
+        "external_downloader": "aria2c",
+        "external_downloader_args": [
+            "-x", "8",   # 8 connections
+            "-s", "8",   # 8 servers
+            "-k", "1M"   # 1MB split
+        ],
         
         "http_headers": {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
