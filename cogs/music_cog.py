@@ -120,42 +120,45 @@ def is_soundcloud_query(query: str) -> bool:
         )
     return False
 
+USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 
 YTDL_OPTIONS = {
-    'format': 'bestaudio/best', # Выбираем лучшее качество звука
+    'format': 'bestaudio/best',
     'outtmpl': '%(extractor)s-%(id)s-%(title)s.%(ext)s',
     'restrictfilenames': True,
-    'noplaylist': True,         # Если True, скачивает только 1 видео, даже если ссылка на плейлист
+    'noplaylist': True,
     'nocheckcertificate': True,
     'ignoreerrors': False,
     'logtostderr': False,
     'quiet': True,
     'no_warnings': True,
-    'default_search': 'auto',   # Позволяет искать видео по названию, если не дана ссылка
-    'source_address': '0.0.0.0', # Использует IPv4 (решает проблемы с IPv6 на некоторых хостингах)
-    'force-ipv4': True,
-    'preferredquality': '192',
-    'cachedir': False,          # Отключаем кэш, чтобы экономить место и память
+    'default_search': 'auto',
+    'source_address': '0.0.0.0',
+    'user_agent': USER_AGENT,
+    'cookiefile': 'cookies.txt',
+    'http_chunk_size': 10485760,
 }
-
-# aria2c check disabled
-# if shutil.which("aria2c"):
-#     YTDL_OPTIONS["external_downloader"] = {"default": "aria2c"}
-#     YTDL_OPTIONS["external_downloader_args"] = { ... }
 
 
 FFMPEG_BEFORE_STREAM = (
     "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 "
-    "-reconnect_at_eof 1 -reconnect_on_network_error 1 -reconnect_on_http_error 4xx,5xx "
-    "-rw_timeout 15000000 -nostdin"
+    "-reconnect_at_eof 1 "
+    "-reconnect_on_network_error 1 "
+    f'-user_agent "{USER_AGENT}" '
+    "-rw_timeout 15000000 "
 )
+
 FFMPEG_BEFORE_FILE = "-nostdin"
+
 FFMPEG_COMMON_OPTIONS = (
     "-vn -sn -dn "
-    "-bufsize 4096k "
-    "-probesize 4096k "
-    "-threads 1 "
+    "-bufsize 6000k "
+    "-probesize 10M "
+    "-analyzeduration 0 " 
+    "-threads 2 "          # 1 поток иногда мало для декодирования аудио высокого качества
     "-loglevel warning "
+    "-ac 2 "               # Принудительно стерео (Discord любит 2 канала)
+    "-ar 48000 "           # Принудительно 48kHz (стандарт Discord, снижает нагрузку на CPU)
 )
 
 ANSI_ESCAPE_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
