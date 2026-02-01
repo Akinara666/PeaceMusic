@@ -132,7 +132,6 @@ YTDL_OPTIONS = {
     'logtostderr': False,
     'default_search': 'auto',
     'source_address': '0.0.0.0',
-    'user_agent': USER_AGENT,
     'cookiefile': 'cogs/cookies.txt',
     'http_chunk_size': 10485760,
 }
@@ -167,8 +166,19 @@ def _clean_progress_text(value: str) -> str:
     return " ".join(cleaned.strip().split())
 
 
-def build_ffmpeg_options(stream: bool, *, seek: Optional[int] = None) -> dict[str, str]:
+def build_ffmpeg_options(stream: bool, *, seek: Optional[int] = None, user_agent: Optional[str] = None) -> dict[str, str]:
     before = FFMPEG_BEFORE_STREAM if stream else FFMPEG_BEFORE_FILE
+
+    # Если мы стримим и есть динамический User-Agent от yt-dlp — используем его
+    if stream and user_agent:
+        before = (
+            "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 "
+            "-reconnect_at_eof 1 "
+            "-reconnect_on_network_error 1 "
+            f'-user_agent "{user_agent}" '
+            "-rw_timeout 15000000 "
+        )
+
     if seek is not None and seek > 0:
         before = f"-ss {seek} {before}"
     return {
@@ -269,7 +279,12 @@ class YTDLSource(discord.PCMVolumeTransformer):
                 filename = ytdl_client.prepare_filename(entry)
                 local_path = Path(filename)
                 playback_target = str(local_path)
-            ffmpeg_args = build_ffmpeg_options(stream, seek=start_at)
+
+            # Extract dynamic User-Agent from yt-dlp info
+            http_headers = entry.get('http_headers', {})
+            dynamic_user_agent = http_headers.get('User-Agent')
+
+            ffmpeg_args = build_ffmpeg_options(stream, seek=start_at, user_agent=dynamic_user_agent)
             audio_source = discord.FFmpegPCMAudio(playback_target, **ffmpeg_args)
             sources.append(cls(audio_source, data=entry, stream=stream, local_path=local_path, on_chunk=on_chunk))
         return sources
@@ -286,6 +301,7 @@ class QueuedTrack:
     uploader: Optional[str] = None
     duration: Optional[int] = None
     local_path: Optional[Path] = None
+    user_agent: Optional[str] = None
 
 
 # ----------------------------------------------------------------------------
@@ -476,6 +492,7 @@ class Music(commands.Cog):
             self.current.source = new_source
             self.current.stream_url = new_source.url
             self.current.duration = new_source.duration
+            self.current.user_agent = new_source.data.get("http_headers", {}).get("User-Agent")
             self._track_start_monotonic = time.monotonic()
             self._touch_audio_heartbeat()
             self.voice_client.play(self.current.source, after=self._after_playback)
@@ -605,6 +622,7 @@ class Music(commands.Cog):
                     uploader=src.uploader,
                     duration=src.duration,
                     local_path=src.local_path,
+                    user_agent=src.data.get("http_headers", {}).get("User-Agent"),
                 )
                 for src in sources
             ]
@@ -737,7 +755,7 @@ class Music(commands.Cog):
 
         source_url = self.current.stream_url or str(self.current.local_path)
         is_stream = self.current.stream_url is not None
-        ffmpeg_args = build_ffmpeg_options(is_stream, seek=seconds)
+        ffmpeg_args = build_ffmpeg_options(is_stream, seek=seconds, user_agent=self.current.user_agent)
         new_source = discord.FFmpegPCMAudio(source_url, **ffmpeg_args)
         wrapped = discord.PCMVolumeTransformer(new_source)
         self.voice_client.stop()
