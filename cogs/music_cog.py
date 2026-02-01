@@ -18,14 +18,12 @@ import yt_dlp as youtube_dl
 from discord.ext import commands, tasks
 from yt_dlp.utils import DownloadError
 
-from config import MUSIC_DIRECTORY
+from config import MUSIC_DIRECTORY, YTDL_OPTIONS, FFMPEG_OPTIONS
 
 logger = logging.getLogger(__name__)
 
 MUSIC_DIRECTORY_PATH = Path(MUSIC_DIRECTORY)
 MUSIC_DIRECTORY_PATH.mkdir(parents=True, exist_ok=True)
-
-COOKIES_PATH = Path(__file__).resolve().parent / "cookies.txt"
 
 
 # ----------------------------------------------------------------------------
@@ -120,54 +118,13 @@ def is_soundcloud_query(query: str) -> bool:
     return False
 
 
-YTDL_OPTIONS = {
-    "cookiefile": str(COOKIES_PATH),
-    "format": "bestaudio/best",
-    "noplaylist": True,
-    "nocheckcertificate": True,
-    "ignoreerrors": False,
-    "logtostderr": False,
-    "quiet": True,
-    "no_warnings": True,
-    "default_search": "auto",
-    "source_address": "0.0.0.0",
-    "forceipv4": True,
-    "cachedir": False,
-    "outtmpl": str(MUSIC_DIRECTORY_PATH / "%(extractor)s-%(id)s.%(ext)s"),
-    "http_chunk_size": 10_485_760,
-    "http_headers": {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    },
-    "retries": 20,
-    "fragment_retries": 20,
-    "socket_timeout": 300,
-}
-
-
-FFMPEG_BEFORE_STREAM = (
-    "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 10 "
-    "-reconnect_at_eof 1 -reconnect_on_network_error 1 -reconnect_on_http_error 4xx,5xx "
-    "-rw_timeout 30000000 -user_agent \"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\" -nostdin"
-)
-FFMPEG_BEFORE_FILE = "-nostdin"
-FFMPEG_COMMON_OPTIONS = (
-    "-vn -sn -dn "
-    "-bufsize 2048k "
-    "-probesize 2048k "
-    "-threads 1 "
-    "-loglevel warning "
-)
-
-
-
-
 def build_ffmpeg_options(stream: bool, *, seek: Optional[int] = None) -> dict[str, str]:
-    before = FFMPEG_BEFORE_STREAM if stream else FFMPEG_BEFORE_FILE
+    before = FFMPEG_OPTIONS["before_options_stream"] if stream else FFMPEG_OPTIONS["before_options_file"]
     if seek is not None and seek > 0:
         before = f"-ss {seek} {before}"
     return {
         "before_options": before,
-        "options": FFMPEG_COMMON_OPTIONS,
+        "options": FFMPEG_OPTIONS["options"],
     }
 
 ytdl = youtube_dl.YoutubeDL(YTDL_OPTIONS)
@@ -449,9 +406,10 @@ class Music(commands.Cog):
             if normalized_query != song_name:
                 logger.debug("Normalized audio query from %s to %s", song_name, normalized_query)
 
-            # Download by default for stability (prevents TLS/IO errors)
-            should_stream = False
-            msg = await message.reply("Ищу и загружаю трек...")
+            # Streaming by default for 1 CPU / 2 GB RAM optimization
+            # Avoids disk IO and startup delays.
+            should_stream = True
+            msg = await message.reply("Ищу и готовлю трек...")
 
             try:
                 sources = await YTDLSource.from_url(

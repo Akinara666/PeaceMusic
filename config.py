@@ -83,10 +83,17 @@ class MiscSettings:
 
 
 @dataclass(frozen=True)
+class AudioSettings:
+    ytdl_options: dict
+    ffmpeg_options: dict
+
+
+@dataclass(frozen=True)
 class AppSettings:
     discord: DiscordSettings
     gemini: GeminiSettings
     misc: MiscSettings
+    audio: AudioSettings
 
 
 def _build_intents() -> discord.Intents:
@@ -97,6 +104,63 @@ def _build_intents() -> discord.Intents:
     intents.messages = True
     intents.voice_states = True
     return intents
+
+
+def _build_ytdl_options(music_dir: Path) -> dict:
+    """
+    Optimized for 1 vCPU / 2GB RAM.
+    - format: Prefer opus/webm (less transcoding).
+    - quality: Cap at 96k (opus is transparent enough, saves CPU/Bandwidth).
+    - buffers: Modest chunk sizes to avoid OOM but sufficient for stability.
+    """
+    cookies_path = REPO_ROOT / "cogs" / "cookies.txt"
+    return {
+        "cookiefile": str(cookies_path),
+        "format": "bestaudio[acodec=opus][abr<=96]/bestaudio[ext=webm][abr<=96]/bestaudio[abr<=96]/bestaudio[acodec=opus]/bestaudio",
+        "noplaylist": True,
+        "nocheckcertificate": True,
+        "ignoreerrors": False,
+        "logtostderr": False,
+        "default_search": "auto",
+        "source_address": "0.0.0.0",
+        "forceipv4": True,
+        "cachedir": False,
+        "outtmpl": str(music_dir / "%(extractor)s-%(id)s.%(ext)s"),
+        # Optimized buffer/network settings
+        "http_chunk_size": 1048576,  # 1MB chunks (lower RAM spikes)
+        "socket_timeout": 15,
+        "retries": 10,
+        "fragment_retries": 10,
+        "http_headers": {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        },
+    }
+
+
+def _build_ffmpeg_options() -> dict:
+    """
+    Optimized for 1 vCPU / 2GB RAM.
+    - threads 1: Prevent thread contention on single core.
+    - bufsize/probesize: Increased to 4MB/2MB to handle network jitter.
+    - reconnect: Aggressive reconnection strategy.
+    """
+    reconnect_args = (
+        "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 "
+        "-reconnect_at_eof 1 -reconnect_on_network_error 1 -reconnect_on_http_error 4xx,5xx "
+        "-rw_timeout 15000000"  # 15s timeout
+    )
+    
+    return {
+        "before_options_stream": f"{reconnect_args} -nostdin",
+        "before_options_file": "-nostdin",
+        "options": (
+            "-vn -sn -dn "
+            "-bufsize 4096k "   # 4MB buffer (affordable with 2GB RAM)
+            "-probesize 2048k "
+            "-threads 1 "       # Critical for single core
+            "-loglevel warning"
+        ),
+    }
 
 
 def load_settings() -> AppSettings:
@@ -132,6 +196,11 @@ def load_settings() -> AppSettings:
         prompt_file=prompt_file,
         prompt_text=prompt_text,
     )
+    
+    audio_settings = AudioSettings(
+        ytdl_options=_build_ytdl_options(music_directory),
+        ffmpeg_options=_build_ffmpeg_options(),
+    )
 
     return AppSettings(
         discord=DiscordSettings(
@@ -141,6 +210,7 @@ def load_settings() -> AppSettings:
         ),
         gemini=GeminiSettings(api_key=gemini_key),
         misc=misc_settings,
+        audio=audio_settings,
     )
 
 
@@ -156,6 +226,8 @@ CONTEXT_FILE = str(_settings.misc.context_file)
 DISCORD_STATUS_MESSAGE = _settings.misc.status_message
 BOT_PROMPT_FILE = str(_settings.misc.prompt_file) if _settings.misc.prompt_file else None
 BOT_PROMPT_TEXT = _settings.misc.prompt_text
+YTDL_OPTIONS = _settings.audio.ytdl_options
+FFMPEG_OPTIONS = _settings.audio.ffmpeg_options
 
 
 def get_settings() -> AppSettings:
