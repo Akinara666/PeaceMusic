@@ -406,10 +406,10 @@ class Music(commands.Cog):
             if normalized_query != song_name:
                 logger.debug("Normalized audio query from %s to %s", song_name, normalized_query)
 
-            # Streaming by default for 1 CPU / 2 GB RAM optimization
-            # Avoids disk IO and startup delays.
-            should_stream = True
-            msg = await message.reply("Ищу и готовлю трек...")
+            # Download-first strategy for maximum stability on VPS
+            # Prevents TLS/IO errors by avoiding real-time streaming issues.
+            should_stream = False
+            msg = await message.reply("Скачиваю трек...")
 
             try:
                 sources = await YTDLSource.from_url(
