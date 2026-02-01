@@ -122,41 +122,20 @@ def is_soundcloud_query(query: str) -> bool:
 
 
 YTDL_OPTIONS = {
-    "cookiefile": str(COOKIES_PATH),            # оставляем, если нужно обходить ограничения/возраст/регион
-    "format": "bestaudio[abr<=96][acodec=opus]/bestaudio[abr<=96][ext=webm]/bestaudio[acodec=opus]/bestaudio[ext=webm]/bestaudio/best[acodec!=none]",
-    "noplaylist": True,
-    "nopart": True,
-    "default_search": "ytsearch1",
-    "outtmpl": str(MUSIC_DIRECTORY_PATH / "%(extractor)s-%(id)s.%(ext)s"),
-    "http_chunk_size": 5_242_880,               # больше размер чанка — меньше перезапросов на длинных треках
-    "forceipv4": True,
-
-    "http_headers": {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
-        "Referer": "https://www.youtube.com/",
-        "Origin":  "https://www.youtube.com",
-        "Accept-Language": "en-US,en;q=0.9"
-    },
-
-    # aria2c disabled for low-end optimization
-    # "external_downloader": {"default": "aria2c"},
-    # "external_downloader_args": { ... },
-
-    # Для длинных HLS потоков лучше доверить ffmpeg, у него лучше переподключение
-    "hls_prefer_native": False,
-
-    "extractor_args": {
-        "youtube": {
-            "player_client": ["tv_embedded", "default"],
-            "player_skip":   ["web_safari", "web"]
-        }
-    },
-
-    "retries": 10,
-    "fragment_retries": 15,
-    "socket_timeout": 15,
-    "verbose": False,
-    'remote_components': ['ejs:npm']
+    'format': 'bestaudio/best', # Выбираем лучшее качество звука
+    'outtmpl': '%(extractor)s-%(id)s-%(title)s.%(ext)s',
+    'restrictfilenames': True,
+    'noplaylist': True,         # Если True, скачивает только 1 видео, даже если ссылка на плейлист
+    'nocheckcertificate': True,
+    'ignoreerrors': False,
+    'logtostderr': False,
+    'quiet': True,
+    'no_warnings': True,
+    'default_search': 'auto',   # Позволяет искать видео по названию, если не дана ссылка
+    'source_address': '0.0.0.0', # Использует IPv4 (решает проблемы с IPv6 на некоторых хостингах)
+    'force-ipv4': True,
+    'preferredquality': '192',
+    'cachedir': False,          # Отключаем кэш, чтобы экономить место и память
 }
 
 # aria2c check disabled
