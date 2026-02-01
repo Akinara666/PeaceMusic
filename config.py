@@ -116,12 +116,7 @@ def _build_ytdl_options(music_dir: Path) -> dict:
     cookies_path = REPO_ROOT / "cogs" / "cookies.txt"
     return {
         "cookiefile": str(cookies_path),
-        # Optimizing for speed and size:
-        # 1. Prefer Opus/WebM at <= 96kbps (Good quality, small size)
-        # 2. Fallback to any audio <= 96kbps
-        # 3. Fallback to Opus/WebM <= 128kbps
-        # 4. Final fallback: just 'worstaudio' to avoid accidentally downloading 320kbps/FLAC chunks
-        "format": "bestaudio[acodec=opus][abr<=96]/bestaudio[ext=webm][abr<=96]/bestaudio[abr<=96]/bestaudio[acodec=opus][abr<=128]/worstaudio",
+        "format": "bestaudio/best",
         "noplaylist": True,
         "nocheckcertificate": True,
         "ignoreerrors": False,
