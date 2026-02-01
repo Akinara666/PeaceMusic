@@ -133,22 +133,10 @@ def _build_ytdl_options(music_dir: Path) -> dict:
         "max_filesize": 50_000_000,
         
         # Optimized buffer/network settings
-        "http_chunk_size": 10485760, 
         "socket_timeout": 60,
         "retries": 20,
         "fragment_retries": 20,
-        
-        # Use aria2c for robust downloading (multi-connection)
-        "external_downloader": "aria2c",
-        "external_downloader_args": {
-            "aria2c": [
-                "-c",        # Continue
-                "-x", "8",   # 8 connections
-                "-s", "8",   # 8 servers
-                "--min-split-size=1M",
-                "--max-connection-per-server=8"
-            ]
-        },
+        "concurrent_fragment_downloads": 3,
     }
 
 
