@@ -148,7 +148,6 @@ def _build_ffmpeg_options() -> dict:
         "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 "
         "-reconnect_at_eof 1 -reconnect_on_network_error 1 -reconnect_on_http_error 4xx,5xx "
         "-rw_timeout 15000000 "
-        "-http_persistent 0 "  # Prevent TLS errors on reusable connections
         "-err_detect ignore_err "
         "-user_agent \"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\""
     )
