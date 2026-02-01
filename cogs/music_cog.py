@@ -133,7 +133,7 @@ YTDL_OPTIONS = {
     'default_search': 'auto',
     'source_address': '0.0.0.0',
     'user_agent': USER_AGENT,
-    'cookiefile': 'cookies.txt',
+    'cookiefile': 'cogs/cookies.txt',
     'http_chunk_size': 10485760,
 }
 
