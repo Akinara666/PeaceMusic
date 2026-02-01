@@ -143,14 +143,6 @@ def _build_ytdl_options(music_dir: Path) -> dict:
         "retries": 10,
         "fragment_retries": 15,
         
-        # Mimic mobile client to avoid web-client throttling
-        "extractor_args": {
-            "youtube": {
-                "player_client": ["ios", "android", "web"],
-                "player_skip": ["webpage", "configs", "js"],
-            }
-        },
-        
         "http_headers": {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         },
