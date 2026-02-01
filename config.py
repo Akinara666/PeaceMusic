@@ -149,10 +149,6 @@ def _build_ytdl_options(music_dir: Path) -> dict:
                 "--max-connection-per-server=8"
             ]
         },
-        
-        "http_headers": {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
-        },
     }
 
 
@@ -168,7 +164,6 @@ def _build_ffmpeg_options() -> dict:
         "-reconnect_at_eof 1 -reconnect_on_network_error 1 -reconnect_on_http_error 4xx,5xx "
         "-rw_timeout 15000000 "
         "-err_detect ignore_err "
-        "-user_agent \"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36\""
     )
     
     return {
