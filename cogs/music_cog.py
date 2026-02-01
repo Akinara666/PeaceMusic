@@ -130,8 +130,6 @@ YTDL_OPTIONS = {
     'nocheckcertificate': True,
     'ignoreerrors': False,
     'logtostderr': False,
-    'quiet': True,
-    'no_warnings': True,
     'default_search': 'auto',
     'source_address': '0.0.0.0',
     'user_agent': USER_AGENT,
@@ -157,8 +155,6 @@ FFMPEG_COMMON_OPTIONS = (
     "-analyzeduration 0 " 
     "-threads 2 "          # 1 поток иногда мало для декодирования аудио высокого качества
     "-loglevel warning "
-    "-ac 2 "               # Принудительно стерео (Discord любит 2 канала)
-    "-ar 48000 "           # Принудительно 48kHz (стандарт Discord, снижает нагрузку на CPU)
 )
 
 ANSI_ESCAPE_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
