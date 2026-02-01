@@ -452,14 +452,24 @@ class Music(commands.Cog):
             for track in tracks:
                 self.queue.append(track)
 
-            embed = self._build_track_embed(tracks[0], color=discord.Color.blue())
-            try:
-                await msg.edit(content=None, embed=embed)
-            except discord.HTTPException:
-                pass
+            # Check if we are starting playback immediately
+            will_play_immediately = voice_client.is_connected() and not voice_client.is_playing()
 
-            if voice_client.is_connected() and not voice_client.is_playing():
+            if will_play_immediately:
+                # If playing immediately, `_start_next_track` will send the "Now Playing" embed.
+                # We can delete the "Downloading..." temporary message to avoid double notifications.
+                try:
+                    await msg.delete()
+                except discord.HTTPException:
+                    pass
                 await self._start_next_track()
+            else:
+                # If adding to queue, show the "Added to queue" embed
+                embed = self._build_track_embed(tracks[0], color=discord.Color.blue())
+                try:
+                    await msg.edit(content=None, embed=embed)
+                except discord.HTTPException:
+                    pass
 
             queued_titles = ", ".join(track.title for track in tracks)
             if len(tracks) > 1:
@@ -502,11 +512,15 @@ class Music(commands.Cog):
 
             self.queue.append(track)
 
-            embed = self._build_track_embed(track, color=discord.Color.green())
-            await message.reply(embed=embed)
+            self.queue.append(track)
 
-            if voice_client.is_connected() and not voice_client.is_playing():
+            will_play_immediately = voice_client.is_connected() and not voice_client.is_playing()
+
+            if will_play_immediately:
                 await self._start_next_track()
+            else:
+                embed = self._build_track_embed(track, color=discord.Color.green())
+                await message.reply(embed=embed)
 
             return f"Добавлено в очередь: {track.title}"
 
