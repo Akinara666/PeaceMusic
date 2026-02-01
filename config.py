@@ -147,7 +147,10 @@ def _build_ffmpeg_options() -> dict:
     reconnect_args = (
         "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 "
         "-reconnect_at_eof 1 -reconnect_on_network_error 1 -reconnect_on_http_error 4xx,5xx "
-        "-rw_timeout 15000000"  # 15s timeout
+        "-rw_timeout 15000000 "
+        "-http_persistent 0 "  # Prevent TLS errors on reusable connections
+        "-err_detect ignore_err "
+        "-user_agent \"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\""
     )
     
     return {
@@ -155,9 +158,10 @@ def _build_ffmpeg_options() -> dict:
         "before_options_file": "-nostdin",
         "options": (
             "-vn -sn -dn "
-            "-bufsize 4096k "   # 4MB buffer (affordable with 2GB RAM)
+            "-bufsize 4096k "   # 4MB buffer
             "-probesize 2048k "
-            "-threads 1 "       # Critical for single core
+            "-analyzeduration 0 " # Speed up startup
+            "-threads 1 "
             "-loglevel warning"
         ),
     }
