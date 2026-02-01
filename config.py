@@ -124,8 +124,8 @@ def _build_ytdl_options(music_dir: Path) -> dict:
         "default_search": "auto",
         "source_address": "0.0.0.0",
         
-        # IPv6 often mitigates YouTube blocking on VPS IPv4 ranges.
-        "forceipv4": False,
+        # Revert to IPv4 for stability (IPv6 on VPS can be flaky/stalled)
+        "forceipv4": True,
         
         "cachedir": False,
         "outtmpl": str(music_dir / "%(extractor)s-%(id)s.%(ext)s"),
@@ -134,18 +134,21 @@ def _build_ytdl_options(music_dir: Path) -> dict:
         
         # Optimized buffer/network settings
         "http_chunk_size": 10485760, 
-        "socket_timeout": 60,        # Explicitly set to 60s
+        "socket_timeout": 60,
         "retries": 20,
         "fragment_retries": 20,
         
         # Use aria2c for robust downloading (multi-connection)
-        # This is the best fix for throttling.
         "external_downloader": "aria2c",
-        "external_downloader_args": [
-            "-x", "8",   # 8 connections
-            "-s", "8",   # 8 servers
-            "-k", "1M"   # 1MB split
-        ],
+        "external_downloader_args": {
+            "aria2c": [
+                "-c",        # Continue
+                "-x", "8",   # 8 connections
+                "-s", "8",   # 8 servers
+                "--min-split-size=1M",
+                "--max-connection-per-server=8"
+            ]
+        },
         
         "http_headers": {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
