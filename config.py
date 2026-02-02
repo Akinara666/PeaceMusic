@@ -122,8 +122,7 @@ def _build_ytdl_options(music_dir: Path) -> dict:
         "ignoreerrors": False,
         "logtostderr": False,
         "default_search": "auto",
-        "source_address": "0.0.0.0",
-        
+        "force_ipv4": False,
         "cachedir": False,
         "outtmpl": str(music_dir / "%(extractor)s-%(id)s.%(ext)s"),
         # Limits to prevent long hangs:
