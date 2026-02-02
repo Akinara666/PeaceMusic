@@ -116,7 +116,7 @@ def _build_ytdl_options(music_dir: Path) -> dict:
     cookies_path = REPO_ROOT / "cogs" / "cookies.txt"
     return {
         "cookiefile": str(cookies_path),
-        "format": "bestaudio[acodec=opus][abr<=96]/bestaudio[ext=webm][abr<=96]/bestaudio[abr<=96]/bestaudio[acodec=opus][abr<=128]/worstaudio",
+        "format": "bestaudio/best",
         "noplaylist": True,
         "nocheckcertificate": True,
         "ignoreerrors": False,
@@ -136,7 +136,6 @@ def _build_ytdl_options(music_dir: Path) -> dict:
         "socket_timeout": 60,
         "retries": 20,
         "fragment_retries": 20,
-        "concurrent_fragment_downloads": 3,
     }
 
 
