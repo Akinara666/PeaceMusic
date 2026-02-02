@@ -124,17 +124,14 @@ def _build_ytdl_options(music_dir: Path) -> dict:
         "default_search": "auto",
         "source_address": "0.0.0.0",
         
-        # Revert to IPv4 for stability (IPv6 on VPS can be flaky/stalled)
-        "forceipv4": True,
-        
         "cachedir": False,
         "outtmpl": str(music_dir / "%(extractor)s-%(id)s.%(ext)s"),
         # Limits to prevent long hangs:
         "max_filesize": 50_000_000,
         
         # Optimized buffer/network settings
-        "socket_timeout": 60,
-        "retries": 20,
+        "socket_timeout": 15,
+        "retries": 3,
         "fragment_retries": 20,
     }
 
