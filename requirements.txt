@@ -10,3 +10,4 @@ flake8
 black
 isort
 PyNaCl
+yt-dlp-ejs
