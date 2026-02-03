@@ -46,6 +46,17 @@ cp .env.example .env  # Windows: copy .env.example .env
 python main.py
 ```
 
+## Running with Docker (Recommended for Server)
+
+1.  **Install Docker & Docker Compose** on your server.
+2.  **Configure .env** (as described above).
+3.  **Run**:
+    ```bash
+    docker-compose up -d --build
+    ```
+    The bot will start in the background and restart automatically on reboot.
+
+
 ## Environment Variables
 Configure them in `.env` (see `.env.example`).
 
