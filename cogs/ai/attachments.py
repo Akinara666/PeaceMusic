@@ -15,7 +15,9 @@ if TYPE_CHECKING:  # pragma: no cover - imported for type hints only
 class AttachmentProcessor:
     """Convert Discord attachments into Gemini-friendly content."""
 
-    def __init__(self, client: "genai.Client", image_name: Path, video_name: Path) -> None:
+    def __init__(
+        self, client: "genai.Client", image_name: Path, video_name: Path
+    ) -> None:
         self._client = client
         self._image_name = image_name
         self._video_name = video_name
@@ -30,10 +32,14 @@ class AttachmentProcessor:
 
         if "image" in content_type:
             file_path = self._image_name
-            fallback = f'[Image posted by "{message.author.name}". No caption provided.]'
+            fallback = (
+                f'[Image posted by "{message.author.name}". No caption provided.]'
+            )
         elif "video" in content_type:
             file_path = self._video_name
-            fallback = f'[Video posted by "{message.author.name}". No caption provided.]'
+            fallback = (
+                f'[Video posted by "{message.author.name}". No caption provided.]'
+            )
         else:
             text_content = types.Part.from_text(text=user_text)
             return types.Content(role="user", parts=[text_content]), user_text
@@ -50,7 +56,9 @@ class AttachmentProcessor:
         content = types.Content(role="user", parts=parts)
         return content, prompt_text
 
-    async def _download_attachment(self, attachment: discord.Attachment, target: Path) -> Path:
+    async def _download_attachment(
+        self, attachment: discord.Attachment, target: Path
+    ) -> Path:
         def _fetch() -> bytes:
             response = requests.get(attachment.url, timeout=30)
             response.raise_for_status()

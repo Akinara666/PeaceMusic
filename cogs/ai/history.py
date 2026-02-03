@@ -31,7 +31,7 @@ class HistoryManager:
         original_len = len(history)
 
         if len(history) > self._history_limit:
-            del history[:-self._history_limit]
+            del history[: -self._history_limit]
 
         def _has_part(content: types.Content, attr: str) -> bool:
             return any(getattr(part, attr, None) for part in content.parts)
@@ -40,17 +40,22 @@ class HistoryManager:
             history.pop()
 
         while history and (
-            _has_part(history[0], "function_call") or _has_part(history[0], "function_response")
+            _has_part(history[0], "function_call")
+            or _has_part(history[0], "function_response")
         ):
             history.pop(0)
 
         if len(history) != original_len:
-            logger.info("Trimmed chat history from %s to %s entries", original_len, len(history))
+            logger.info(
+                "Trimmed chat history from %s to %s entries", original_len, len(history)
+            )
 
     def snapshot(self) -> Dict[str, List[Dict[str, Any]]]:
         snapshot: Dict[str, List[Dict[str, Any]]] = {}
         for channel_id, history in self._histories.items():
-            serialized = [self._serialize_content(content) for content in history if content.parts]
+            serialized = [
+                self._serialize_content(content) for content in history if content.parts
+            ]
             if serialized:
                 snapshot[str(channel_id)] = serialized
         return snapshot
@@ -72,10 +77,15 @@ class HistoryManager:
             try:
                 channel_id = int(channel_id_str)
             except (TypeError, ValueError):
-                logger.warning("Skipping invalid channel id in context file: %s", channel_id_str)
+                logger.warning(
+                    "Skipping invalid channel id in context file: %s", channel_id_str
+                )
                 continue
             if not isinstance(contents, list):
-                logger.warning("Skipping context entry for channel %s: expected list", channel_id_str)
+                logger.warning(
+                    "Skipping context entry for channel %s: expected list",
+                    channel_id_str,
+                )
                 continue
             history: List[types.Content] = []
             for content_payload in contents:
@@ -111,7 +121,9 @@ class HistoryManager:
         try:
             await asyncio.to_thread(_write)
         except Exception:  # noqa: BLE001 - keep bot running even if persistence fails
-            logger.exception("Failed to persist chat histories to %s", self._context_file)
+            logger.exception(
+                "Failed to persist chat histories to %s", self._context_file
+            )
 
     def _serialize_content(self, content: types.Content) -> Dict[str, Any]:
         parts: List[Dict[str, Any]] = []
@@ -175,9 +187,13 @@ class HistoryManager:
                 args = part_payload.get("args") or {}
                 if name:
                     try:
-                        parts.append(types.Part.from_function_call(name=name, args=args))
+                        parts.append(
+                            types.Part.from_function_call(name=name, args=args)
+                        )
                     except Exception:  # noqa: BLE001 - fall back to text annotation
-                        parts.append(types.Part.from_text(text=f"[tool call] {name}({args})"))
+                        parts.append(
+                            types.Part.from_text(text=f"[tool call] {name}({args})")
+                        )
             elif kind == "function_response":
                 name = part_payload.get("name") or ""
                 response = part_payload.get("response") or {}
@@ -186,7 +202,9 @@ class HistoryManager:
                         types.Part.from_function_response(name=name, response=response)
                     )
                 except Exception:  # noqa: BLE001
-                    parts.append(types.Part.from_text(text=f"[tool response] {name}: {response}"))
+                    parts.append(
+                        types.Part.from_text(text=f"[tool response] {name}: {response}")
+                    )
             elif kind == "file_data":
                 uri = part_payload.get("uri")
                 if uri:

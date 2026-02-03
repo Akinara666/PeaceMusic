@@ -1,11 +1,9 @@
-
 from __future__ import annotations
 
 import asyncio
 import contextlib
 import datetime
 import logging
-import re
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -30,6 +28,7 @@ MUSIC_DIRECTORY_PATH.mkdir(parents=True, exist_ok=True)
 # Helpers
 # ----------------------------------------------------------------------------
 
+
 def format_duration(duration_seconds: float | int | None) -> str:
     if duration_seconds is None:
         return "00:00"
@@ -47,7 +46,7 @@ def format_duration(duration_seconds: float | int | None) -> str:
 
 
 def parse_time(time_str: str) -> int:
-    parts = time_str.split(':')
+    parts = time_str.split(":")
     if len(parts) == 1:
         return int(parts[0])
     if len(parts) == 2:
@@ -79,14 +78,14 @@ def normalize_audio_query(query: str) -> str:
 
     for prefix in SOUNDCLOUD_QUERY_PREFIXES:
         if lowered.startswith(prefix):
-            rest = query[len(prefix):].strip()
+            rest = query[len(prefix) :].strip()
             if rest:
                 return f"scsearch1:{rest}"
             return query
 
     for prefix in SOUNDCLOUD_QUERY_PREFIXES_WITH_COLON:
         if lowered.startswith(prefix):
-            rest = query[len(prefix):].strip()
+            rest = query[len(prefix) :].strip()
             if rest:
                 return f"scsearch1:{rest}"
             return query
@@ -96,7 +95,9 @@ def normalize_audio_query(query: str) -> str:
 
     if not _looks_like_url(query):
         stripped_query = query.lstrip("www.")
-        if " " not in stripped_query and any(domain in stripped_query.lower() for domain in SOUNDCLOUD_DOMAINS):
+        if " " not in stripped_query and any(
+            domain in stripped_query.lower() for domain in SOUNDCLOUD_DOMAINS
+        ):
             return f"https://{query}"
 
     return query
@@ -118,12 +119,14 @@ def is_soundcloud_query(query: str) -> bool:
     return False
 
 
-def build_ffmpeg_options(stream: bool, *, seek: Optional[int] = None, user_agent: Optional[str] = None) -> dict[str, str]:
+def build_ffmpeg_options(
+    stream: bool, *, seek: Optional[int] = None, user_agent: Optional[str] = None
+) -> dict[str, str]:
     if stream:
         before = FFMPEG_OPTIONS["before_options_stream"]
         # Inject dynamic user agent if provided
         if user_agent:
-             before += f' -user_agent "{user_agent}"'
+            before += f' -user_agent "{user_agent}"'
     else:
         before = FFMPEG_OPTIONS["before_options_file"]
 
@@ -134,6 +137,7 @@ def build_ffmpeg_options(stream: bool, *, seek: Optional[int] = None, user_agent
         "options": FFMPEG_OPTIONS["options"],
     }
 
+
 ytdl = youtube_dl.YoutubeDL(YTDL_OPTIONS)
 
 
@@ -141,7 +145,9 @@ INFO_CACHE_TTL_SECONDS = 900
 _info_cache: dict[str, tuple[float, dict]] = {}
 
 
-async def _probe_info(url: str, *, loop: Optional[asyncio.AbstractEventLoop] = None) -> dict:
+async def _probe_info(
+    url: str, *, loop: Optional[asyncio.AbstractEventLoop] = None
+) -> dict:
     """Быстрое получение метаданных без скачивания, с кэшем."""
     loop = loop or asyncio.get_event_loop()
     cache_key = f"1:{url}"
@@ -151,7 +157,9 @@ async def _probe_info(url: str, *, loop: Optional[asyncio.AbstractEventLoop] = N
         return cached[1]
 
     start = time.monotonic()
-    data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=False))
+    data = await loop.run_in_executor(
+        None, lambda: ytdl.extract_info(url, download=False)
+    )
     _info_cache[cache_key] = (time.monotonic(), data)
     logger.debug("yt_dlp probe took %.2fs for %s", time.monotonic() - start, url)
     return data
@@ -178,7 +186,7 @@ class YTDLSource(discord.PCMVolumeTransformer):
         self.duration = data.get("duration")
         self.local_path = local_path
         self.is_stream = stream
-        self.user_agent = data.get('http_headers', {}).get('User-Agent')
+        self.user_agent = data.get("http_headers", {}).get("User-Agent")
         self._on_chunk = on_chunk
 
     def read(self) -> bytes:
@@ -199,17 +207,19 @@ class YTDLSource(discord.PCMVolumeTransformer):
         start_at: Optional[int] = None,
     ) -> list["YTDLSource"]:
         loop = loop or asyncio.get_event_loop()
-        
+
         cache_key = f"{int(stream)}:{url}"
         cached = _info_cache.get(cache_key)
         now = time.monotonic()
-        
+
         if cached and (now - cached[0]) < INFO_CACHE_TTL_SECONDS:
             data = cached[1]
             logger.debug("yt_dlp extract_info cache hit for %s", url)
         else:
             start_time = time.monotonic()
-            data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=not stream))
+            data = await loop.run_in_executor(
+                None, lambda: ytdl.extract_info(url, download=not stream)
+            )
             elapsed = time.monotonic() - start_time
             _info_cache[cache_key] = (time.monotonic(), data)
             logger.debug("yt_dlp extract_info took %.2fs for %s", elapsed, url)
@@ -220,24 +230,34 @@ class YTDLSource(discord.PCMVolumeTransformer):
         for entry in entries:
             if not entry:
                 continue
-            
+
             local_path: Optional[Path] = None
             if stream:
                 playback_target = entry["url"]
                 # 2. !!! МАГИЯ ЗДЕСЬ !!!
                 # Мы достаем заголовки, которые yt-dlp использовал для ЭТОЙ ссылки
-                http_headers = entry.get('http_headers', {})
+                http_headers = entry.get("http_headers", {})
                 # Берем именно тот User-Agent, который нужен для этой ссылки
-                dynamic_user_agent = http_headers.get('User-Agent')
+                dynamic_user_agent = http_headers.get("User-Agent")
             else:
                 filename = ytdl.prepare_filename(entry)
                 local_path = Path(filename)
                 playback_target = str(local_path)
                 dynamic_user_agent = None
-                
-            ffmpeg_args = build_ffmpeg_options(stream, seek=start_at, user_agent=dynamic_user_agent)
+
+            ffmpeg_args = build_ffmpeg_options(
+                stream, seek=start_at, user_agent=dynamic_user_agent
+            )
             audio_source = discord.FFmpegPCMAudio(playback_target, **ffmpeg_args)
-            sources.append(cls(audio_source, data=entry, stream=stream, local_path=local_path, on_chunk=on_chunk))
+            sources.append(
+                cls(
+                    audio_source,
+                    data=entry,
+                    stream=stream,
+                    local_path=local_path,
+                    on_chunk=on_chunk,
+                )
+            )
         return sources
 
 
@@ -276,8 +296,6 @@ class Music(commands.Cog):
         self.check_for_inactivity.start()
         self.monitor_stalled_playback.start()
 
-
-
     def _cleanup_track_file(self, track: Optional[QueuedTrack]) -> None:
         if not track or not track.local_path:
             return
@@ -286,7 +304,9 @@ class Music(commands.Cog):
         except FileNotFoundError:
             pass
         except OSError:
-            logger.warning("Failed to delete downloaded track %s", track.local_path, exc_info=True)
+            logger.warning(
+                "Failed to delete downloaded track %s", track.local_path, exc_info=True
+            )
         track.local_path = None
 
     def _cleanup_queue(self) -> None:
@@ -300,7 +320,9 @@ class Music(commands.Cog):
     # ------------------------------------------------------------------
     # Queue helpers
     # ------------------------------------------------------------------
-    async def _ensure_voice_client(self, message: discord.Message) -> Optional[discord.VoiceClient]:
+    async def _ensure_voice_client(
+        self, message: discord.Message
+    ) -> Optional[discord.VoiceClient]:
         author = message.author
         if not author.voice or not author.voice.channel:
             await message.reply("Ты не подключен к голосовому каналу.")
@@ -331,9 +353,7 @@ class Music(commands.Cog):
         # Notify "Now Playing"
         if self.current.channel:
             embed = self._build_track_embed(
-                self.current, 
-                color=discord.Color.green(), 
-                description="Сейчас играет"
+                self.current, color=discord.Color.green(), description="Сейчас играет"
             )
             self.bot.loop.create_task(self.current.channel.send(embed=embed))
 
@@ -348,7 +368,9 @@ class Music(commands.Cog):
             self._cleanup_track_file(finished_track)
         self.current = None
         self._track_start_monotonic = None
-        self.bot.loop.call_soon_threadsafe(asyncio.create_task, self._start_next_track())
+        self.bot.loop.call_soon_threadsafe(
+            asyncio.create_task, self._start_next_track()
+        )
 
     async def _restart_current_stream(self) -> None:
         if not self.voice_client or not self.current or not self.current.stream_url:
@@ -361,8 +383,12 @@ class Music(commands.Cog):
                 return
             seek_seconds: Optional[int] = None
             if self._track_start_monotonic:
-                seek_seconds = max(0, int(time.monotonic() - self._track_start_monotonic) - 2)
-            logger.warning("Playback stalled, attempting to restart stream for %s", target_url)
+                seek_seconds = max(
+                    0, int(time.monotonic() - self._track_start_monotonic) - 2
+                )
+            logger.warning(
+                "Playback stalled, attempting to restart stream for %s", target_url
+            )
             try:
                 sources = await YTDLSource.from_url(
                     target_url,
@@ -374,7 +400,9 @@ class Music(commands.Cog):
                 logger.warning("Failed to restart stream %s: %s", target_url, exc)
                 return
             except Exception:
-                logger.exception("Unexpected error during stream restart for %s", target_url)
+                logger.exception(
+                    "Unexpected error during stream restart for %s", target_url
+                )
                 return
 
             if not sources:
@@ -391,7 +419,13 @@ class Music(commands.Cog):
             self._touch_audio_heartbeat()
             self.voice_client.play(self.current.source, after=self._after_playback)
 
-    def _build_track_embed(self, track: QueuedTrack, *, color: discord.Color, description: str = "Трек добавлен в очередь") -> discord.Embed:
+    def _build_track_embed(
+        self,
+        track: QueuedTrack,
+        *,
+        color: discord.Color,
+        description: str = "Трек добавлен в очередь",
+    ) -> discord.Embed:
         embed = discord.Embed(
             title=track.title,
             url=track.webpage_url or discord.Embed.Empty,
@@ -401,11 +435,16 @@ class Music(commands.Cog):
         if track.thumbnail:
             embed.set_thumbnail(url=track.thumbnail)
         if track.requester:
-            embed.set_author(name=track.requester.display_name, icon_url=track.requester.display_avatar.url)
+            embed.set_author(
+                name=track.requester.display_name,
+                icon_url=track.requester.display_avatar.url,
+            )
         if track.uploader:
             embed.add_field(name="Автор", value=track.uploader, inline=True)
         if track.duration:
-            embed.add_field(name="Длительность", value=format_duration(track.duration), inline=True)
+            embed.add_field(
+                name="Длительность", value=format_duration(track.duration), inline=True
+            )
         embed.set_footer(text="Приятного прослушивания!")
         return embed
 
@@ -420,7 +459,9 @@ class Music(commands.Cog):
             tracks: list[QueuedTrack]
             normalized_query = normalize_audio_query(song_name)
             if normalized_query != song_name:
-                logger.debug("Normalized audio query from %s to %s", song_name, normalized_query)
+                logger.debug(
+                    "Normalized audio query from %s to %s", song_name, normalized_query
+                )
 
             # Download-first strategy for maximum stability on VPS
             # Prevents TLS/IO errors by avoiding real-time streaming issues.
@@ -441,7 +482,9 @@ class Music(commands.Cog):
             except Exception as exc:  # noqa: BLE001
                 if isinstance(exc, asyncio.CancelledError):
                     raise
-                logger.exception("Unexpected error while fetching track %s", normalized_query)
+                logger.exception(
+                    "Unexpected error while fetching track %s", normalized_query
+                )
                 await msg.edit(content="Произошла непредвиденная ошибка.")
                 return "Ошибка поиска"
 
@@ -470,7 +513,9 @@ class Music(commands.Cog):
                 self.queue.append(track)
 
             # Check if we are starting playback immediately
-            will_play_immediately = voice_client.is_connected() and not voice_client.is_playing()
+            will_play_immediately = (
+                voice_client.is_connected() and not voice_client.is_playing()
+            )
 
             if will_play_immediately:
                 # If playing immediately, `_start_next_track` will send the "Now Playing" embed.
@@ -493,7 +538,9 @@ class Music(commands.Cog):
                 return f"Добавлено {len(tracks)} треков из плейлиста."
             return f"Добавлено в очередь: {queued_titles}"
 
-    async def play_attachment_func(self, message: discord.Message, attachment: discord.Attachment) -> str:
+    async def play_attachment_func(
+        self, message: discord.Message, attachment: discord.Attachment
+    ) -> str:
         async with self._play_lock:
             voice_client = await self._ensure_voice_client(message)
             if not voice_client:
@@ -502,7 +549,7 @@ class Music(commands.Cog):
             # Save file with unique name
             safe_filename = Path(attachment.filename).name
             file_path = MUSIC_DIRECTORY_PATH / f"{int(time.time())}_{safe_filename}"
-            
+
             try:
                 await attachment.save(file_path)
             except Exception as exc:
@@ -513,7 +560,9 @@ class Music(commands.Cog):
             try:
                 audio_source = discord.FFmpegPCMAudio(str(file_path), **ffmpeg_args)
             except Exception as exc:
-                logger.error("Failed to create audio source for %s: %s", safe_filename, exc)
+                logger.error(
+                    "Failed to create audio source for %s: %s", safe_filename, exc
+                )
                 with contextlib.suppress(OSError):
                     file_path.unlink()
                 return "Ошибка обработки аудиофайла"
@@ -531,7 +580,9 @@ class Music(commands.Cog):
 
             self.queue.append(track)
 
-            will_play_immediately = voice_client.is_connected() and not voice_client.is_playing()
+            will_play_immediately = (
+                voice_client.is_connected() and not voice_client.is_playing()
+            )
 
             if will_play_immediately:
                 await self._start_next_track()
@@ -590,7 +641,11 @@ class Music(commands.Cog):
         return "Бот отключён"
 
     async def seek_func(self, message: discord.Message, time: str) -> str:
-        if not self.voice_client or not self.voice_client.is_playing() or not self.current:
+        if (
+            not self.voice_client
+            or not self.voice_client.is_playing()
+            or not self.current
+        ):
             await message.reply("Сейчас ничего не играет.")
             return "Нет трека для перемотки"
 
@@ -606,7 +661,9 @@ class Music(commands.Cog):
 
         source_url = self.current.stream_url or str(self.current.local_path)
         is_stream = self.current.stream_url is not None
-        ffmpeg_args = build_ffmpeg_options(is_stream, seek=seconds, user_agent=self.current.user_agent)
+        ffmpeg_args = build_ffmpeg_options(
+            is_stream, seek=seconds, user_agent=self.current.user_agent
+        )
         new_source = discord.FFmpegPCMAudio(source_url, **ffmpeg_args)
         wrapped = discord.PCMVolumeTransformer(new_source)
         self.voice_client.stop()

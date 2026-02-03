@@ -1,0 +1,12 @@
+[tool.black]
+line-length = 88
+exclude = '''
+/(
+    \.git
+  | \.venv
+  | \.venv_ci
+  | __pycache__
+  | build
+  | dist
+)/
+'''

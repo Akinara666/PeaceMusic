@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import os
@@ -25,9 +24,9 @@ def _load_env_file(path: Path = DEFAULT_ENV_FILE) -> None:
 
     for raw_line in path.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
-        if not line or line.startswith('#') or '=' not in line:
+        if not line or line.startswith("#") or "=" not in line:
             continue
-        key, value = line.split('=', 1)
+        key, value = line.split("=", 1)
         key = key.strip()
         if not key:
             continue
@@ -38,9 +37,11 @@ def _load_env_file(path: Path = DEFAULT_ENV_FILE) -> None:
 _load_env_file()
 
 
-def _get_env(name: str, default: Optional[str] = None, *, required: bool = False) -> Optional[str]:
+def _get_env(
+    name: str, default: Optional[str] = None, *, required: bool = False
+) -> Optional[str]:
     value = os.getenv(name, default)
-    if required and (value is None or value == ''):
+    if required and (value is None or value == ""):
         raise RuntimeError(
             f"Required environment variable '{name}' is missing. "
             "Populate it via environment or a .env file at the project root."
@@ -127,7 +128,6 @@ def _build_ytdl_options(music_dir: Path) -> dict:
         "outtmpl": str(music_dir / "%(extractor)s-%(id)s.%(ext)s"),
         # Limits to prevent long hangs:
         "max_filesize": 50_000_000,
-        
         # Optimized buffer/network settings
         "socket_timeout": 15,
         "retries": 3,
@@ -148,15 +148,15 @@ def _build_ffmpeg_options() -> dict:
         "-rw_timeout 15000000 "
         "-err_detect ignore_err "
     )
-    
+
     return {
         "before_options_stream": f"{reconnect_args} -nostdin",
         "before_options_file": "-nostdin",
         "options": (
             "-vn -sn -dn "
-            "-bufsize 4096k "   # 4MB buffer
+            "-bufsize 4096k "  # 4MB buffer
             "-probesize 2048k "
-            "-analyzeduration 0 " # Speed up startup
+            "-analyzeduration 0 "  # Speed up startup
             "-threads 1 "
             "-loglevel warning"
         ),
@@ -164,17 +164,23 @@ def _build_ffmpeg_options() -> dict:
 
 
 def load_settings() -> AppSettings:
-    discord_token = _get_env('DISCORD_BOT_TOKEN', required=True)
-    chatbot_channel_id_raw = _get_env('CHATBOT_CHANNEL_ID')
+    discord_token = _get_env("DISCORD_BOT_TOKEN", required=True)
+    chatbot_channel_id_raw = _get_env("CHATBOT_CHANNEL_ID")
     chatbot_channel_id = int(chatbot_channel_id_raw) if chatbot_channel_id_raw else None
 
-    gemini_key = _get_env('GEMINI_API_KEY', required=True)
+    gemini_key = _get_env("GEMINI_API_KEY", required=True)
 
-    music_directory = Path(_get_env('MUSIC_DIRECTORY', default='music_files') or 'music_files')
-    context_file = Path(_get_env('CONTEXT_FILE', default='chat_context.json') or 'chat_context.json')
-    status_message = _get_env('DISCORD_STATUS_MESSAGE', default='PeaceMusic') or 'PeaceMusic'
+    music_directory = Path(
+        _get_env("MUSIC_DIRECTORY", default="music_files") or "music_files"
+    )
+    context_file = Path(
+        _get_env("CONTEXT_FILE", default="chat_context.json") or "chat_context.json"
+    )
+    status_message = (
+        _get_env("DISCORD_STATUS_MESSAGE", default="PeaceMusic") or "PeaceMusic"
+    )
 
-    prompt_file_raw = _get_env('BOT_PROMPT_FILE')
+    prompt_file_raw = _get_env("BOT_PROMPT_FILE")
     prompt_file: Optional[Path] = None
     prompt_text = _load_default_prompt()
     if prompt_file_raw:
@@ -196,7 +202,7 @@ def load_settings() -> AppSettings:
         prompt_file=prompt_file,
         prompt_text=prompt_text,
     )
-    
+
     audio_settings = AudioSettings(
         ytdl_options=_build_ytdl_options(music_directory),
         ffmpeg_options=_build_ffmpeg_options(),
@@ -224,7 +230,9 @@ GEMINI_API_KEY = _settings.gemini.api_key
 MUSIC_DIRECTORY = _settings.misc.music_directory
 CONTEXT_FILE = str(_settings.misc.context_file)
 DISCORD_STATUS_MESSAGE = _settings.misc.status_message
-BOT_PROMPT_FILE = str(_settings.misc.prompt_file) if _settings.misc.prompt_file else None
+BOT_PROMPT_FILE = (
+    str(_settings.misc.prompt_file) if _settings.misc.prompt_file else None
+)
 BOT_PROMPT_TEXT = _settings.misc.prompt_text
 YTDL_OPTIONS = _settings.audio.ytdl_options
 FFMPEG_OPTIONS = _settings.audio.ffmpeg_options

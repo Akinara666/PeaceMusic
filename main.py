@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import logging
@@ -10,7 +9,9 @@ from cogs.ai_cog import GeminiChatCog
 from cogs.music_cog import Music
 from config import DISCORD_BOT_TOKEN, DISCORD_STATUS_MESSAGE, INTENTS
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+)
 
 
 class PeaceMusicBot(commands.Bot):
@@ -30,7 +31,9 @@ bot = PeaceMusicBot(command_prefix="!", intents=INTENTS)
 @bot.event
 async def on_ready() -> None:
     await bot.change_presence(
-        activity=discord.Activity(type=discord.ActivityType.listening, name=DISCORD_STATUS_MESSAGE)
+        activity=discord.Activity(
+            type=discord.ActivityType.listening, name=DISCORD_STATUS_MESSAGE
+        )
     )
     logging.info("Logged in as %s (%s)", bot.user, bot.user.id)
 
@@ -42,6 +45,7 @@ def main() -> None:
 if __name__ == "__main__":
     try:
         import uvloop
+
         uvloop.install()
     except ImportError:
         pass

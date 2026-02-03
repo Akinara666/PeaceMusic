@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import random
-from typing import Awaitable, Callable, List, Optional, Sequence, TYPE_CHECKING
+from typing import Awaitable, Callable, List, Optional, TYPE_CHECKING
 
 from google.genai import errors, types
 
@@ -41,7 +40,9 @@ class ResponseGenerator:
     def build_generation_config(self) -> types.GenerateContentConfig:
         cfg_kwargs = {
             "tools": self._tools,
-            "thinking_config": types.ThinkingConfig(thinking_budget=self._thinking_budget),
+            "thinking_config": types.ThinkingConfig(
+                thinking_budget=self._thinking_budget
+            ),
             "system_instruction": self._base_instruction,
             "temperature": self._temperature,
         }
@@ -72,7 +73,10 @@ class ResponseGenerator:
                     config=config,
                 )
             except errors.ServerError as exc:
-                if getattr(exc, "status_code", None) == 503 or "overloaded" in str(exc).lower():
+                if (
+                    getattr(exc, "status_code", None) == 503
+                    or "overloaded" in str(exc).lower()
+                ):
                     attempts -= 1
                     if not attempts:
                         raise
