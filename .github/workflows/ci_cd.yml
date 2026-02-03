@@ -61,7 +61,7 @@ jobs:
             git pull
             
             # Rebuild and restart containers
-            docker compose up -d --build
+            docker-compose up -d --build
             
             # Prune unused images to save space
             docker image prune -f
