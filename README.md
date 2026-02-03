@@ -12,6 +12,7 @@ Russian documentation is available in [README.ru.md](README.ru.md).
 ## Requirements
 - Python 3.10 or newer.
 - FFmpeg available in `PATH` (required by `discord.FFmpegPCMAudio`).
+- **Deno** or **Node.js** (required by `yt-dlp` for YouTube signature handling).
 - Secrets for external services: Discord Bot Token and Gemini API Key.
 
 ## Project Structure
