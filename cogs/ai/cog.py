@@ -71,7 +71,9 @@ class GeminiChatCog(commands.Cog):
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
-    async def process_tool_call(self, tool_call: types.FunctionCall, message: discord.Message) -> types.Part:
+    async def process_tool_call(
+        self, tool_call: types.FunctionCall, message: discord.Message
+    ) -> types.Part:
         """Execute a music tool call requested by Gemini."""
         tool_name = tool_call.name
         tool_args = dict(tool_call.args)
@@ -80,7 +82,9 @@ class GeminiChatCog(commands.Cog):
         if not self.music_cog:
             error_msg = "Music controls are not available right now."
             await message.channel.send(error_msg)
-            return types.Part.from_function_response(name=tool_name, response={"error": error_msg})
+            return types.Part.from_function_response(
+                name=tool_name, response={"error": error_msg}
+            )
 
         dispatch_map = {
             "play_music": self.music_cog.play_func,
@@ -97,14 +101,19 @@ class GeminiChatCog(commands.Cog):
         if handler is None:
             error_msg = f"Error calling tool '{tool_name}'"
             logger.warning(error_msg)
-            return types.Part.from_function_response(name=tool_name, response={"error": error_msg})
+            return types.Part.from_function_response(
+                name=tool_name, response={"error": error_msg}
+            )
 
         try:
             result = await handler(message, **tool_args)
         except Exception as exc:  # noqa: BLE001 - surface every failure to the model
             logger.exception("Error while executing tool '%s'", tool_name)
             await message.channel.send("Failed to run the requested music command.")
-            return types.Part.from_function_response(name=tool_name, response={"error": str(exc) if str(exc) else "Unknown error"})
+            return types.Part.from_function_response(
+                name=tool_name,
+                response={"error": str(exc) if str(exc) else "Unknown error"},
+            )
 
         payload = {"result": str(result)} if result is not None else {"result": "ok"}
         return types.Part.from_function_response(name=tool_name, response=payload)
@@ -120,7 +129,14 @@ class GeminiChatCog(commands.Cog):
             return
 
         if message.attachments and self.music_cog:
-            audio_att = next((a for a in message.attachments if a.content_type and a.content_type.startswith("audio/")), None)
+            audio_att = next(
+                (
+                    a
+                    for a in message.attachments
+                    if a.content_type and a.content_type.startswith("audio/")
+                ),
+                None,
+            )
             if audio_att:
                 await self.music_cog.play_attachment_func(message, audio_att)
                 return
@@ -136,9 +152,13 @@ class GeminiChatCog(commands.Cog):
             user_text = f"{author_name}: {base_text}" if base_text else author_name
 
             if message.attachments:
-                content, prompt_text = await self._attachment_processor.to_content(message, user_text)
+                content, prompt_text = await self._attachment_processor.to_content(
+                    message, user_text
+                )
             else:
-                content = types.Content(role="user", parts=[types.Part.from_text(text=user_text)])
+                content = types.Content(
+                    role="user", parts=[types.Part.from_text(text=user_text)]
+                )
                 prompt_text = user_text
 
             history.append(content)

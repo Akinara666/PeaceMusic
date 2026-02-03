@@ -1,0 +1,10 @@
+services:
+  peacemusic:
+    build: .
+    restart: always
+    env_file:
+      - .env
+    volumes:
+      - ./music_files:/app/music_files
+      # Persist cookies if they exist
+      - ./cogs/cookies.txt:/app/cogs/cookies.txt

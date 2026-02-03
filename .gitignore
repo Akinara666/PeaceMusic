@@ -19,4 +19,6 @@ cogs/ai/__pycache__/cog.cpython-310.pyc
 cogs/ai/__pycache__/history.cpython-310.pyc
 cogs/ai/__pycache__/response.cpython-310.pyc
 cogs/chat_context.json
-cogs/__pycache__/music_cog.cpython-312.pyc
+__pycache__/
+.venv_ci/
+.vscode/

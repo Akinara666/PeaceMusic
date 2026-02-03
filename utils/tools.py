@@ -1,6 +1,4 @@
-
 from google.genai import types
-
 
 tools = [
     types.Tool(
