@@ -33,6 +33,9 @@ jobs:
         run: flake8 .
         
       - name: Test with pytest
+        env:
+          DISCORD_BOT_TOKEN: "dummy_token_for_ci"
+          GEMINI_API_KEY: "dummy_key_for_ci"
         run: pytest
 
       - name: Build Docker image
