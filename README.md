@@ -56,6 +56,11 @@ python main.py
     ```
     The bot will start in the background and restart automatically on reboot.
 
+### Useful Commands
+- **Restart**: `docker-compose restart` (e.g. after changing .env)
+- **Logs**: `docker-compose logs -f --tail=100`
+- **Stop**: `docker-compose down`
+
 
 ## Environment Variables
 Configure them in `.env` (see `.env.example`).
