@@ -1,6 +1,7 @@
 services:
   peacemusic:
     build: .
+    network_mode: "host" # Enables IPv6 (on Linux) and better performance
     restart: always
     env_file:
       - .env
