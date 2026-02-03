@@ -4,8 +4,12 @@ FROM python:3.12-slim
 # ffmpeg: required for audio playback
 # git: required if installing deps from git (not currently used)
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ffmpeg nodejs && \
+    apt-get install -y --no-install-recommends ffmpeg curl unzip && \
     rm -rf /var/lib/apt/lists/*
+
+# Install Deno (specifically requested)
+RUN curl -fsSL https://deno.land/install.sh | sh && \
+    mv /root/.deno/bin/deno /usr/local/bin/deno
 
 WORKDIR /app
 
