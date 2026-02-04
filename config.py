@@ -132,6 +132,11 @@ def _build_ytdl_options(music_dir: Path) -> dict:
         "socket_timeout": 15,
         "retries": 3,
         "fragment_retries": 20,
+        "extractor_args": {
+            "youtube": {
+                "player_js_variant": ["tv"],
+            },
+        },
     }
 
 
