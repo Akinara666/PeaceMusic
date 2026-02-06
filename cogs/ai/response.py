@@ -103,8 +103,12 @@ class ResponseGenerator:
         if content:
             history.append(content)
 
+        tool_calls_count = 0
         for part in content.parts if content else []:
             if part.function_call:
+                if tool_calls_count >= 2:
+                    continue
+                tool_calls_count += 1
                 feedback = await tool_callback(part.function_call)
                 history.append(types.Content(role="user", parts=[feedback]))
             elif part.text:
