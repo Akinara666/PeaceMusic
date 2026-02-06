@@ -9,3 +9,5 @@ services:
       - ./music_files:/app/music_files
       # Persist cookies if they exist
       - ./cogs/cookies.txt:/app/cogs/cookies.txt
+      # Persist AI chat history
+      - ./chat_context.json:/app/chat_context.json
