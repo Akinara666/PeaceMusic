@@ -465,8 +465,8 @@ class Music(commands.Cog):
 
             # Download-first strategy for maximum stability on VPS
             # Prevents TLS/IO errors by avoiding real-time streaming issues.
-            should_stream = False
-            msg = await message.reply("Скачиваю трек...")
+            should_stream = True
+            msg = await message.reply("Ищу трек...")
 
             try:
                 sources = await YTDLSource.from_url(
