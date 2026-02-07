@@ -167,7 +167,6 @@ class GeminiChatCog(commands.Cog):
             try:
                 reply = await self._response_generator.generate_reply(
                     history,
-                    prompt_text,
                     lambda call: self.process_tool_call(call, message),
                 )
                 if reply is not None:
