@@ -463,10 +463,16 @@ class Music(commands.Cog):
                     "Normalized audio query from %s to %s", song_name, normalized_query
                 )
 
-            # Download-first strategy for maximum stability on VPS
-            # Prevents TLS/IO errors by avoiding real-time streaming issues.
-            should_stream = True
-            msg = await message.reply("Ищу трек...")
+            # Hybrid strategy:
+            # - SoundCloud: Download (stability)
+            # - YouTube/Others: Stream (speed)
+            is_soundcloud = is_soundcloud_query(normalized_query)
+            should_stream = not is_soundcloud
+
+            if is_soundcloud:
+                msg = await message.reply("Скачиваю трек с SoundCloud...")
+            else:
+                msg = await message.reply("Ищу трек...")
 
             try:
                 sources = await YTDLSource.from_url(
