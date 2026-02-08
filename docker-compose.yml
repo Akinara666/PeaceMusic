@@ -10,4 +10,4 @@ services:
       # Persist cookies if they exist
       - ./cogs/cookies.txt:/app/cogs/cookies.txt
       # Persist AI chat history
-      - ./chat_context.json:/app/chat_context.json
+      - ./cogs/chat_context.json:/app/cogs/chat_context.json
