@@ -111,12 +111,11 @@ class HistoryManager:
                     except FileNotFoundError:
                         pass
                 return
-            tmp_path = self._context_file.with_name(self._context_file.name + ".tmp")
-            tmp_path.write_text(
+
+            self._context_file.write_text(
                 json.dumps(snapshot, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
-            tmp_path.replace(self._context_file)
 
         try:
             await asyncio.to_thread(_write)
