@@ -1,12 +1,14 @@
-from __future__ import annotations
-
 import asyncio
+import logging
 from typing import Awaitable, Callable, List, Optional, TYPE_CHECKING
 
 from google.genai import errors, types
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from google import genai
+
+logger = logging.getLogger(__name__)
+
 
 ToolCallback = Callable[[types.FunctionCall], Awaitable[types.Part]]
 
@@ -76,6 +78,7 @@ class ResponseGenerator:
 
         async def _check_uri(uri: str) -> None:
             async with sem:
+                name = uri
                 try:
                     if "/files/" in uri:
                         name = "files/" + uri.split("/files/")[-1]
@@ -83,10 +86,22 @@ class ResponseGenerator:
                         return
                     await self._client.aio.files.get(name=name)
                 except errors.ClientError as exc:
-                    if exc.code in {403, 404}:
+                    # Log the error for debugging
+                    logger.warning("Checking file %s failed: %s", name, exc)
+                    
+                    code = getattr(exc, "code", None)
+                    if code is None:
+                         code = getattr(exc, "status_code", None)
+                    
+                    # Check code if available
+                    if code in {403, 404}:
                         invalid_uris.add(uri)
-                except Exception:  # noqa: BLE001
-                    # Do not remove on unknown errors (like network issues/429)
+                    # Fallback: check string representation for keywords
+                    elif "403" in str(exc) or "404" in str(exc) or "PERMISSION_DENIED" in str(exc) or "NOT_FOUND" in str(exc):
+                         invalid_uris.add(uri)
+                         
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Unexpected error checking file %s: %s", name, exc)
                     pass
 
         await asyncio.gather(*(_check_uri(uri) for uri in uris_to_check))
