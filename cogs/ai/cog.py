@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 import logging
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING
@@ -149,7 +150,8 @@ class GeminiChatCog(commands.Cog):
             if "akinara" in author_name.lower() and author_name.lower() != "akinara":
                 author_name = f"fake_{author_name}"
 
-            user_text = f"{author_name}: {base_text}" if base_text else author_name
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            user_text = f"[{timestamp}] {author_name}: {base_text}" if base_text else f"[{timestamp}] {author_name}"
 
             if message.attachments:
                 content, prompt_text = await self._attachment_processor.to_content(
