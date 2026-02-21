@@ -144,25 +144,28 @@ class ResponseGenerator:
                     contents=history,
                     config=config,
                 )
-            except errors.ClientError:
-                # If we get a client error (like 400/404 on a file URI), try sanitize history
-                if await self._sanitize_history(history):
-                    attempts -= 1
-                    if not attempts:
-                        raise
-                    continue
-                raise
-            except errors.ServerError as exc:
-                if (
-                    getattr(exc, "status_code", None) == 503
-                    or "overloaded" in str(exc).lower()
-                ):
+            except Exception as exc:
+                err_str = str(exc)
+                code = getattr(exc, "code", getattr(exc, "status_code", None))
+                
+                # Check for file permission / not found errors (like expired videos)
+                if code in {400, 403, 404} or "403" in err_str or "404" in err_str or "PERMISSION_DENIED" in err_str or "NOT_FOUND" in err_str:
+                    logger.warning("Caught file permission error generating reply: %s", err_str)
+                    if await self._sanitize_history(history):
+                        attempts -= 1
+                        if not attempts:
+                            raise
+                        continue
+                
+                # Check for ServerError / Overloaded
+                if isinstance(exc, errors.ServerError) or "503" in err_str or "overloaded" in err_str.lower():
                     attempts -= 1
                     if not attempts:
                         raise
                     await asyncio.sleep(delay)
                     delay = min(delay * 1.5, 10.0)
                     continue
+                
                 raise
 
             if response.candidates and response.candidates[0].content:
