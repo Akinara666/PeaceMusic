@@ -18,7 +18,6 @@ class PeaceMusicBot(commands.Bot):
     async def setup_hook(self) -> None:
         music_cog = Music(self)
         chat_cog = GeminiChatCog(self)
-        chat_cog.set_music_cog(music_cog)
 
         await self.add_cog(music_cog)
         await self.add_cog(chat_cog)

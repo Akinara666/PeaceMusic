@@ -584,8 +584,6 @@ class Music(commands.Cog):
 
             self.queue.append(track)
 
-            self.queue.append(track)
-
             will_play_immediately = (
                 voice_client.is_connected() and not voice_client.is_playing()
             )
@@ -610,6 +608,13 @@ class Music(commands.Cog):
 
     async def skip_by_name_func(self, message: discord.Message, song_name: str) -> str:
         lowercase_query = song_name.lower()
+        if self.current and lowercase_query in self.current.title.lower():
+            skipped_title = self.current.title
+            if self.voice_client:
+                self.voice_client.stop()
+            await message.reply(f"Пропущен текущий трек: {skipped_title}")
+            return f"Пропущен текущий трек: {skipped_title}"
+
         for track in list(self.queue):
             if lowercase_query in track.title.lower():
                 self.queue.remove(track)

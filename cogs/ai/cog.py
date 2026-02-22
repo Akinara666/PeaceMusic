@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 import logging
 from pathlib import Path
@@ -34,8 +35,7 @@ class GeminiChatCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.client = genai.Client(api_key=GEMINI_API_KEY)
-        self.music_cog: Optional["Music"] = None
-        self._lock = asyncio.Lock()
+        self._locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
 
         base_dir = Path(__file__).resolve().parent.parent
         context_path = Path(CONTEXT_FILE)
@@ -65,9 +65,9 @@ class GeminiChatCog(commands.Cog):
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
-    def set_music_cog(self, music_cog: "Music") -> None:
-        self.music_cog = music_cog
-        logger.info("Gemini chat cog linked with Music cog")
+    @property
+    def music_cog(self) -> Optional["Music"]:
+        return self.bot.get_cog("Music")  # type: ignore
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -76,8 +76,8 @@ class GeminiChatCog(commands.Cog):
         self, tool_call: types.FunctionCall, message: discord.Message
     ) -> types.Part:
         """Execute a music tool call requested by Gemini."""
-        tool_name = tool_call.name
-        tool_args = dict(tool_call.args)
+        tool_name = tool_call.name or ""
+        tool_args = dict(tool_call.args if tool_call.args is not None else {})
         logger.info("Gemini invoked tool '%s' with args %s", tool_name, tool_args)
 
         if not self.music_cog:
@@ -142,7 +142,7 @@ class GeminiChatCog(commands.Cog):
                 await self.music_cog.play_attachment_func(message, audio_att)
                 return
 
-        async with self._lock:
+        async with self._locks[message.channel.id]:
             history = self._history_manager.get_history(message.channel.id)
             base_text = (message.content or "").strip()
 
