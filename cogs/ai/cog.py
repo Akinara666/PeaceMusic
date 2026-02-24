@@ -139,12 +139,14 @@ class GeminiChatCog(commands.Cog):
                 None,
             )
             if audio_att:
-                await self.music_cog.play_attachment_func(message, audio_att)
+                async with message.channel.typing():
+                    await self.music_cog.play_attachment_func(message, audio_att)
                 return
 
         async with self._locks[message.channel.id]:
-            history = self._history_manager.get_history(message.channel.id)
-            base_text = (message.content or "").strip()
+            async with message.channel.typing():
+                history = self._history_manager.get_history(message.channel.id)
+                base_text = (message.content or "").strip()
 
             author_name = message.author.name
             if "akinara" in author_name.lower() and author_name.lower() != "akinara":
