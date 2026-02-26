@@ -34,7 +34,10 @@ class GeminiChatCog(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.client = genai.Client(api_key=GEMINI_API_KEY)
+        self.client = genai.Client(
+            api_key=GEMINI_API_KEY,
+            http_options=types.HttpOptions(timeout=24000)
+        )
         self._locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
 
         base_dir = Path(__file__).resolve().parent.parent
