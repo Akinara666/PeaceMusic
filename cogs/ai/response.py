@@ -85,24 +85,18 @@ class ResponseGenerator:
                     else:
                         return
                     await self._client.aio.files.get(name=name)
-                except errors.ClientError as exc:
-                    # Log the error for debugging
-                    logger.warning("Checking file %s failed: %s", name, exc)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Checking file %s. Result or error: %s", name, exc)
                     
                     code = getattr(exc, "code", None)
                     if code is None:
                          code = getattr(exc, "status_code", None)
                     
-                    # Check code if available
-                    if code in {403, 404}:
+                    err_str = str(exc)
+                    if code in {400, 403, 404}:
                         invalid_uris.add(uri)
-                    # Fallback: check string representation for keywords
-                    elif "403" in str(exc) or "404" in str(exc) or "PERMISSION_DENIED" in str(exc) or "NOT_FOUND" in str(exc):
+                    elif "403" in err_str or "404" in err_str or "PERMISSION_DENIED" in err_str or "NOT_FOUND" in err_str:
                          invalid_uris.add(uri)
-                         
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("Unexpected error checking file %s: %s", name, exc)
-                    pass
 
         await asyncio.gather(*(_check_uri(uri) for uri in uris_to_check))
 
