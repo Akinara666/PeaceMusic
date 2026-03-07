@@ -83,6 +83,17 @@ class GeminiChatCog(commands.Cog):
         tool_args = dict(tool_call.args if tool_call.args is not None else {})
         logger.info("Gemini invoked tool '%s' with args %s", tool_name, tool_args)
 
+        if tool_name == "react_to_message":
+            emoji = tool_args.get("emoji")
+            if emoji:
+                try:
+                    await message.add_reaction(emoji)
+                    return types.Part.from_function_response(name=tool_name, response={"result": f"Reacted with {emoji}"})
+                except discord.HTTPException as e:
+                    logger.warning("Failed to add reaction %s: %s", emoji, e)
+                    return types.Part.from_function_response(name=tool_name, response={"error": f"Failed to react: {e}"})
+            return types.Part.from_function_response(name=tool_name, response={"error": "Emoji parameter missing"})
+
         if not self.music_cog:
             error_msg = "Music controls are not available right now."
             await message.channel.send(error_msg)

@@ -189,4 +189,22 @@ tools = [
             )
         ],
     ),
+    types.Tool(
+        function_declarations=[
+            types.FunctionDeclaration(
+                name="react_to_message",
+                description="Adds an emoji reaction to the user's current message.",
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "emoji": types.Schema(
+                            type=types.Type.STRING,
+                            description="The standard unicode emoji to react with (e.g., '😂', '👍', '❤️').",
+                        ),
+                    },
+                    required=["emoji"],
+                ),
+            )
+        ],
+    ),
 ]
