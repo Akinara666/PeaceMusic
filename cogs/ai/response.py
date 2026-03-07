@@ -181,7 +181,8 @@ class ResponseGenerator:
             history.append(content)
 
         tool_calls_count = 0
-        for part in content.parts if content else []:
+        parts = content.parts if content and content.parts else []
+        for part in parts:
             if part.function_call:
                 if tool_calls_count >= 2:
                     continue
