@@ -292,6 +292,8 @@ class Music(commands.Cog):
         self._track_start_monotonic: Optional[float] = None
         self._restart_lock = asyncio.Lock()
         self._skip_after_callback = False
+        self.loop_mode = "off"
+        self._replay_track: Optional[QueuedTrack] = None
 
         self.check_for_inactivity.start()
         self.monitor_stalled_playback.start()
@@ -340,6 +342,42 @@ class Music(commands.Cog):
             return
         if self.voice_client.is_playing() or self.voice_client.is_paused():
             return
+            
+        if self._replay_track:
+            track = self._replay_track
+            self._replay_track = None
+            url = track.webpage_url or track.stream_url or (str(track.local_path) if track.local_path else None)
+            if url:
+                try:
+                    is_stream = track.local_path is None
+                    if is_stream:
+                        sources = await YTDLSource.from_url(
+                            url, loop=self.bot.loop, stream=True, on_chunk=self._touch_audio_heartbeat
+                        )
+                        if sources:
+                            new_source = sources[0]
+                            track.source = new_source
+                            track.stream_url = new_source.url
+                            track.user_agent = new_source.user_agent
+                            track.duration = new_source.duration
+                    else:
+                        ffmpeg_args = build_ffmpeg_options(stream=False)
+                        new_source = discord.FFmpegPCMAudio(url, **ffmpeg_args)
+                        track.source = discord.PCMVolumeTransformer(new_source)
+                        
+                    self.current = track
+                    logger.info("Looping playing: %s", self.current.title)
+                    self._track_start_monotonic = time.monotonic()
+                    self._last_audio_time = discord.utils.utcnow()
+                    self.voice_client.play(self.current.source, after=self._after_playback)
+                    if self.current.channel:
+                        embed = self._build_track_embed(self.current, color=discord.Color.purple(), description="Повтор трека")
+                        self.bot.loop.create_task(self.current.channel.send(embed=embed))
+                    return
+                except Exception as e:
+                    logger.warning("Failed to loop replay: %s", e)
+                    self._cleanup_track_file(track)
+                    
         if not self.queue:
             self.current = None
             return
@@ -364,13 +402,46 @@ class Music(commands.Cog):
         finished_track = self.current
         if error:
             logger.error("Playback error", exc_info=error)
-        if finished_track:
-            self._cleanup_track_file(finished_track)
+            
+        if finished_track and not error:
+            if self.loop_mode == "track":
+                self._replay_track = finished_track
+            elif self.loop_mode == "queue":
+                if finished_track.webpage_url or finished_track.stream_url:
+                    self.bot.loop.call_soon_threadsafe(
+                        asyncio.create_task, self._requeue_lazy(finished_track)
+                    )
+                self._cleanup_track_file(finished_track)
+                self._replay_track = None
+            else:
+                self._cleanup_track_file(finished_track)
+                self._replay_track = None
+        else:
+            if finished_track:
+                self._cleanup_track_file(finished_track)
+            self._replay_track = None
+
         self.current = None
         self._track_start_monotonic = None
         self.bot.loop.call_soon_threadsafe(
             asyncio.create_task, self._start_next_track()
         )
+
+    async def _requeue_lazy(self, track: QueuedTrack) -> None:
+        url = track.webpage_url or track.stream_url
+        if not url: return
+        try:
+            sources = await YTDLSource.from_url(url, loop=self.bot.loop, stream=True, on_chunk=self._touch_audio_heartbeat)
+            for src in sources:
+                new_track = QueuedTrack(
+                    source=src, title=src.title, requester=track.requester,
+                    stream_url=src.url if src.is_stream else None, webpage_url=src.webpage_url,
+                    thumbnail=src.thumbnail, uploader=src.uploader, duration=src.duration,
+                    local_path=src.local_path, user_agent=src.user_agent, channel=track.channel
+                )
+                self.queue.append(new_track)
+        except Exception as e:
+            logger.warning("Failed to requeue for loop: %s", e)
 
     async def _restart_current_stream(self) -> None:
         if not self.voice_client or not self.current or not self.current.stream_url:
@@ -682,6 +753,87 @@ class Music(commands.Cog):
         self.voice_client.play(self.current.source, after=self._after_playback)
         await message.reply(f"Перемотала на {format_duration(seconds)}")
         return f"Перемотала на {format_duration(seconds)}"
+
+    async def pause_func(self, message: discord.Message) -> str:
+        if self.voice_client and self.voice_client.is_playing():
+            self.voice_client.pause()
+            await message.reply("Воспроизведение приостановлено.")
+            return "Воспроизведение на паузе"
+        return "Ничего не играет"
+
+    async def resume_func(self, message: discord.Message) -> str:
+        if self.voice_client and self.voice_client.is_paused():
+            self.voice_client.resume()
+            await message.reply("Воспроизведение продолжено.")
+            return "Воспроизведение продолжено"
+        return "Нечего продолжать"
+
+    async def now_playing_func(self, message: discord.Message) -> str:
+        if not self.voice_client or (not self.voice_client.is_playing() and not self.voice_client.is_paused()) or not self.current:
+            return "Сейчас ничего не играет."
+        
+        progress = 0
+        if self._track_start_monotonic:
+            progress = int(time.monotonic() - self._track_start_monotonic)
+            
+        dur = self.current.duration
+        dur_str = format_duration(dur) if dur else "Неизвестно"
+        prog_str = format_duration(progress)
+        
+        return f"Сейчас играет: {self.current.title} (Прогресс: {prog_str} / {dur_str})"
+
+    async def get_queue_func(self, message: discord.Message) -> str:
+        if not self.queue:
+            return "Очередь пуста."
+        
+        lines = []
+        for i, track in enumerate(self.queue, start=1):
+            dur = format_duration(track.duration) if track.duration else "?:??"
+            lines.append(f"{i}. {track.title} ({dur})")
+            if i >= 20:
+                lines.append("... и еще треки")
+                break
+        return "\n".join(lines)
+
+    async def shuffle_queue_func(self, message: discord.Message) -> str:
+        if not self.queue:
+            return "Очередь пуста, нечего перемешивать."
+        import random
+        queue_list = list(self.queue)
+        random.shuffle(queue_list)
+        self.queue.clear()
+        self.queue.extend(queue_list)
+        await message.reply("Очередь перемешана.")
+        return "Очередь перемешана"
+
+    async def clear_queue_func(self, message: discord.Message) -> str:
+        if not self.queue:
+            return "Очередь и так пуста."
+        self._cleanup_queue()
+        await message.reply("Очередь очищена (текущий трек продолжает играть).")
+        return "Очередь очищена"
+
+    async def remove_from_queue_func(self, message: discord.Message, index: int) -> str:
+        if not self.queue:
+            return "Очередь пуста."
+        if index < 1 or index > len(self.queue):
+            return f"Неверный индекс. В очереди {len(self.queue)} треков."
+        
+        track = self.queue[index - 1]
+        self.queue.remove(track)
+        self._cleanup_track_file(track)
+        await message.reply(f"Удалено из очереди: {track.title}")
+        return f"Удален трек: {track.title}"
+        
+    async def set_loop_mode_func(self, message: discord.Message, mode: str) -> str:
+        mode = mode.lower()
+        if mode not in ("off", "track", "queue"):
+            return "Неизвестный режим. Используйте 'off', 'track' или 'queue'."
+        
+        self.loop_mode = mode
+        modes_tr = {"off": "Выключен", "track": "Текущий трек", "queue": "Вся очередь"}
+        await message.reply(f"Режим повтора установлен на: {modes_tr[mode]}.")
+        return f"Режим повтора: {mode}"
 
     async def set_volume_func(self, message: discord.Message, level: float) -> str:
         if not self.voice_client or not self.voice_client.is_playing():

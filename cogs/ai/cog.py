@@ -99,6 +99,14 @@ class GeminiChatCog(commands.Cog):
             "seek": self.music_cog.seek_func,
             "summon": self.music_cog.summon_func,
             "disconnect": self.music_cog.disconnect_func,
+            "pause_music": self.music_cog.pause_func,
+            "resume_music": self.music_cog.resume_func,
+            "now_playing": self.music_cog.now_playing_func,
+            "get_queue": self.music_cog.get_queue_func,
+            "shuffle_queue": self.music_cog.shuffle_queue_func,
+            "clear_queue": self.music_cog.clear_queue_func,
+            "remove_from_queue": self.music_cog.remove_from_queue_func,
+            "loop_mode": self.music_cog.set_loop_mode_func,
         }
 
         handler = dispatch_map.get(tool_name)

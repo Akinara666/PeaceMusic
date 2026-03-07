@@ -105,4 +105,88 @@ tools = [
             )
         ],
     ),
+    types.Tool(
+        function_declarations=[
+            types.FunctionDeclaration(
+                name="pause_music",
+                description="Pauses the currently playing track.",
+            )
+        ],
+    ),
+    types.Tool(
+        function_declarations=[
+            types.FunctionDeclaration(
+                name="resume_music",
+                description="Resumes playback if it was paused.",
+            )
+        ],
+    ),
+    types.Tool(
+        function_declarations=[
+            types.FunctionDeclaration(
+                name="now_playing",
+                description="Returns information about the currently playing track (title, duration, current progress).",
+            )
+        ],
+    ),
+    types.Tool(
+        function_declarations=[
+            types.FunctionDeclaration(
+                name="get_queue",
+                description="Returns the list of tracks currently in the queue.",
+            )
+        ],
+    ),
+    types.Tool(
+        function_declarations=[
+            types.FunctionDeclaration(
+                name="shuffle_queue",
+                description="Randomly shuffles the tracks currently in the queue.",
+            )
+        ],
+    ),
+    types.Tool(
+        function_declarations=[
+            types.FunctionDeclaration(
+                name="clear_queue",
+                description="Clears all tracks from the queue but leaves the currently playing track running.",
+            )
+        ],
+    ),
+    types.Tool(
+        function_declarations=[
+            types.FunctionDeclaration(
+                name="remove_from_queue",
+                description="Removes a specific track from the queue by its index (1-based).",
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "index": types.Schema(
+                            type=types.Type.INTEGER,
+                            description="The position of the track in the queue (e.g., 1 for the next track).",
+                        ),
+                    },
+                    required=["index"],
+                ),
+            )
+        ],
+    ),
+    types.Tool(
+        function_declarations=[
+            types.FunctionDeclaration(
+                name="loop_mode",
+                description="Sets the loop mode for the player.",
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "mode": types.Schema(
+                            type=types.Type.STRING,
+                            description="The loop mode. Options: 'off', 'track' (repeat current song), 'queue' (repeat entire queue).",
+                        ),
+                    },
+                    required=["mode"],
+                ),
+            )
+        ],
+    ),
 ]
