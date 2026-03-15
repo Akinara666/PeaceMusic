@@ -157,7 +157,7 @@ def _build_ffmpeg_options() -> dict:
     Optimized for 1 vCPU / 2GB RAM.
     - threads 1: Prevent thread contention on single core.
     - bufsize/probesize: Increased to 4MB/2MB to handle network jitter.
-    - reconnect: Aggressive reconnection strategy.
+    - reconnect: Separate policies for generic streams and YouTube HLS.
     """
     reconnect_args = (
         "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 "
@@ -165,9 +165,18 @@ def _build_ffmpeg_options() -> dict:
         "-rw_timeout 15000000 "
         "-err_detect ignore_err "
     )
+    youtube_hls_reconnect_args = (
+        "-reconnect 1 -reconnect_delay_max 2 "
+        "-reconnect_on_network_error 1 "
+        "-rw_timeout 15000000 "
+        "-err_detect ignore_err "
+    )
 
     return {
         "before_options_stream": f"{reconnect_args} -nostdin",
+        "before_options_stream_youtube_hls": (
+            f"{youtube_hls_reconnect_args} -nostdin"
+        ),
         "before_options_file": "-nostdin",
         "options": (
             "-vn -sn -dn "

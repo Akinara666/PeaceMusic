@@ -71,11 +71,40 @@ def parse_time(time_str: str) -> int:
 SOUNDCLOUD_DOMAINS = ("soundcloud.com", "on.soundcloud.com")
 SOUNDCLOUD_QUERY_PREFIXES = ("sc ", "soundcloud ")
 SOUNDCLOUD_QUERY_PREFIXES_WITH_COLON = ("sc:", "soundcloud:")
+YOUTUBE_DOMAINS = ("youtube.com", "youtu.be", "music.youtube.com")
 
 
 def _looks_like_url(query: str) -> bool:
     lowered = query.lower()
     return lowered.startswith(("http://", "https://"))
+
+
+def _is_youtube_url(url: str) -> bool:
+    if not _looks_like_url(url):
+        return False
+    parsed = urlparse(url)
+    hostname = (parsed.hostname or "").lower()
+    return any(
+        hostname == domain or hostname.endswith(f".{domain}")
+        for domain in YOUTUBE_DOMAINS
+    )
+
+
+def _is_youtube_hls_entry(entry: dict) -> bool:
+    webpage_url = entry.get("webpage_url", "")
+    extractor = (entry.get("extractor") or "").lower()
+    protocol = (entry.get("protocol") or "").lower()
+    manifest_url = (entry.get("manifest_url") or "").lower()
+    playback_url = (entry.get("url") or "").lower()
+
+    is_youtube = _is_youtube_url(webpage_url) or extractor in {"youtube", "youtube:tab"}
+    if not is_youtube:
+        return False
+    return any(
+        marker in value
+        for value in (protocol, manifest_url, playback_url)
+        for marker in ("m3u8", ".m3u8", "playlist/index.m3u8")
+    )
 
 
 def normalize_audio_query(query: str) -> str:
@@ -130,10 +159,19 @@ def is_soundcloud_query(query: str) -> bool:
 
 
 def build_ffmpeg_options(
-    stream: bool, *, seek: Optional[int] = None, user_agent: Optional[str] = None
+    stream: bool,
+    *,
+    seek: Optional[int] = None,
+    user_agent: Optional[str] = None,
+    youtube_hls: bool = False,
 ) -> dict[str, str]:
     if stream:
-        before = FFMPEG_OPTIONS["before_options_stream"]
+        before_key = (
+            "before_options_stream_youtube_hls"
+            if youtube_hls
+            else "before_options_stream"
+        )
+        before = FFMPEG_OPTIONS[before_key]
         # Inject dynamic user agent if provided
         if user_agent:
             before += f" -user_agent {shlex.quote(user_agent)}"
@@ -203,6 +241,7 @@ class YTDLSource(discord.PCMVolumeTransformer):
         self.duration = data.get("duration")
         self.local_path = local_path
         self.is_stream = stream
+        self.is_youtube_hls = _is_youtube_hls_entry(data)
         self.user_agent = data.get("http_headers", {}).get("User-Agent")
         self._on_chunk = on_chunk
 
@@ -265,7 +304,10 @@ class YTDLSource(discord.PCMVolumeTransformer):
                 dynamic_user_agent = None
 
             ffmpeg_args = build_ffmpeg_options(
-                stream, seek=start_at, user_agent=dynamic_user_agent
+                stream,
+                seek=start_at,
+                user_agent=dynamic_user_agent,
+                youtube_hls=_is_youtube_hls_entry(entry),
             )
             audio_source = discord.FFmpegPCMAudio(playback_target, **ffmpeg_args)
             sources.append(
@@ -296,6 +338,7 @@ class QueuedTrack:
     channel: Optional[discord.abc.Messageable] = None
     reload_query: Optional[str] = None
     should_stream: bool = True
+    is_youtube_hls: bool = False
     prepared_at_monotonic: float = field(default_factory=time.monotonic)
 
 
@@ -403,6 +446,7 @@ class Music(commands.Cog):
             channel=channel,
             reload_query=src.webpage_url or fallback_query,
             should_stream=should_stream,
+            is_youtube_hls=src.is_youtube_hls,
         )
 
     # ------------------------------------------------------------------
@@ -466,6 +510,7 @@ class Music(commands.Cog):
         track.uploader = new_source.uploader or track.uploader
         track.duration = new_source.duration or track.duration
         track.local_path = new_source.local_path
+        track.is_youtube_hls = new_source.is_youtube_hls
         track.user_agent = new_source.user_agent
         track.prepared_at_monotonic = time.monotonic()
 
@@ -616,6 +661,7 @@ class Music(commands.Cog):
                     channel=track.channel,
                     reload_query=track.reload_query,
                     should_stream=track.should_stream,
+                    is_youtube_hls=track.is_youtube_hls,
                 )
                 self.queue.append(new_track)
                 track.local_path = None
