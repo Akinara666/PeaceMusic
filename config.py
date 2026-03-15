@@ -129,16 +129,14 @@ def _build_intents() -> discord.Intents:
 def _build_ytdl_options(music_dir: Path) -> dict:
     """
     Optimized for 1 vCPU / 2GB RAM.
-    - format: Prefer opus/webm (less transcoding).
-    - quality: Cap at 96k (opus is transparent enough, saves CPU/Bandwidth).
+    - format: Prefer opus/webm when available to reduce transcoding overhead.
     - buffers: Modest chunk sizes to avoid OOM but sufficient for stability.
     """
     cookies_path = REPO_ROOT / "cogs" / "cookies.txt"
     return {
         "cookiefile": str(cookies_path),
-        "format": "bestaudio/best",
+        "format": "bestaudio[acodec=opus]/bestaudio[ext=webm]/bestaudio/best",
         "noplaylist": True,
-        "nocheckcertificate": True,
         "ignoreerrors": False,
         "logtostderr": False,
         "default_search": "auto",
@@ -151,11 +149,6 @@ def _build_ytdl_options(music_dir: Path) -> dict:
         "socket_timeout": 15,
         "retries": 3,
         "fragment_retries": 20,
-        "extractor_args": {
-            "youtube": {
-                "player_js_variant": ["tv"],
-            },
-        },
     }
 
 
