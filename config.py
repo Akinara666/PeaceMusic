@@ -71,7 +71,25 @@ class DiscordSettings:
 @dataclass(frozen=True)
 class GeminiSettings:
     api_key: str
-    default_model: str = "gemini-2.5-flash"
+    response_model: str = "gemini-3.1-flash-lite"
+    summary_model: str = "gemini-3.1-flash-lite"
+    embedding_model: str = "gemini-embedding-2-preview"
+    embedding_dimensions: int = 768
+    thinking_budget: int = 8192
+
+    @property
+    def default_model(self) -> str:
+        return self.response_model
+
+
+@dataclass(frozen=True)
+class MemorySettings:
+    db_file: Path
+    recent_messages_limit: int
+    semantic_results_limit: int
+    semantic_min_score: float
+    summary_trigger_messages: int
+    summary_window_messages: int
 
 
 @dataclass(frozen=True)
@@ -93,6 +111,7 @@ class AudioSettings:
 class AppSettings:
     discord: DiscordSettings
     gemini: GeminiSettings
+    memory: MemorySettings
     misc: MiscSettings
     audio: AudioSettings
 
@@ -174,6 +193,23 @@ def load_settings() -> AppSettings:
     chatbot_channel_id = int(chatbot_channel_id_raw) if chatbot_channel_id_raw else None
 
     gemini_key = _get_env("GEMINI_API_KEY", required=True)
+    gemini_response_model = (
+        _get_env("GEMINI_RESPONSE_MODEL")
+        or _get_env("GEMINI_MODEL")
+        or "gemini-3.1-flash-lite"
+    )
+    gemini_summary_model = (
+        _get_env("GEMINI_SUMMARY_MODEL") or "gemini-3.1-flash-lite"
+    )
+    gemini_embedding_model = (
+        _get_env("GEMINI_EMBEDDING_MODEL") or "gemini-embedding-2-preview"
+    )
+    gemini_embedding_dimensions = int(
+        _get_env("GEMINI_EMBEDDING_DIMENSIONS", default="768") or "768"
+    )
+    gemini_thinking_budget = int(
+        _get_env("GEMINI_THINKING_BUDGET", default="8192") or "8192"
+    )
 
     music_directory = Path(
         _get_env("MUSIC_DIRECTORY", default="music_files") or "music_files"
@@ -181,8 +217,27 @@ def load_settings() -> AppSettings:
     context_file = Path(
         _get_env("CONTEXT_FILE", default="chat_context.json") or "chat_context.json"
     )
+    memory_db_file = Path(
+        _get_env("CHAT_MEMORY_DB", default="chat_memory.sqlite3")
+        or "chat_memory.sqlite3"
+    )
     status_message = (
         _get_env("DISCORD_STATUS_MESSAGE", default="PeaceMusic") or "PeaceMusic"
+    )
+    recent_messages_limit = int(
+        _get_env("MEMORY_RECENT_MESSAGES", default="12") or "12"
+    )
+    semantic_results_limit = int(
+        _get_env("MEMORY_SEMANTIC_RESULTS", default="6") or "6"
+    )
+    semantic_min_score = float(
+        _get_env("MEMORY_SEMANTIC_MIN_SCORE", default="0.35") or "0.35"
+    )
+    summary_trigger_messages = int(
+        _get_env("MEMORY_SUMMARY_TRIGGER", default="30") or "30"
+    )
+    summary_window_messages = int(
+        _get_env("MEMORY_SUMMARY_WINDOW", default="40") or "40"
     )
 
     prompt_file_raw = _get_env("BOT_PROMPT_FILE")
@@ -208,6 +263,15 @@ def load_settings() -> AppSettings:
         prompt_text=prompt_text,
     )
 
+    memory_settings = MemorySettings(
+        db_file=memory_db_file,
+        recent_messages_limit=recent_messages_limit,
+        semantic_results_limit=semantic_results_limit,
+        semantic_min_score=semantic_min_score,
+        summary_trigger_messages=summary_trigger_messages,
+        summary_window_messages=summary_window_messages,
+    )
+
     audio_settings = AudioSettings(
         ytdl_options=_build_ytdl_options(music_directory),
         ffmpeg_options=_build_ffmpeg_options(),
@@ -219,7 +283,15 @@ def load_settings() -> AppSettings:
             chatbot_channel_id=chatbot_channel_id,
             intents=_build_intents(),
         ),
-        gemini=GeminiSettings(api_key=gemini_key),
+        gemini=GeminiSettings(
+            api_key=gemini_key,
+            response_model=gemini_response_model,
+            summary_model=gemini_summary_model,
+            embedding_model=gemini_embedding_model,
+            embedding_dimensions=gemini_embedding_dimensions,
+            thinking_budget=gemini_thinking_budget,
+        ),
+        memory=memory_settings,
         misc=misc_settings,
         audio=audio_settings,
     )
@@ -232,8 +304,19 @@ DISCORD_BOT_TOKEN = _settings.discord.token
 CHATBOT_CHANNEL_ID = _settings.discord.chatbot_channel_id
 INTENTS = _settings.discord.intents
 GEMINI_API_KEY = _settings.gemini.api_key
+GEMINI_MODEL = _settings.gemini.response_model
+GEMINI_SUMMARY_MODEL = _settings.gemini.summary_model
+GEMINI_EMBEDDING_MODEL = _settings.gemini.embedding_model
+GEMINI_EMBEDDING_DIMENSIONS = _settings.gemini.embedding_dimensions
+GEMINI_THINKING_BUDGET = _settings.gemini.thinking_budget
 MUSIC_DIRECTORY = _settings.misc.music_directory
 CONTEXT_FILE = str(_settings.misc.context_file)
+CHAT_MEMORY_DB = str(_settings.memory.db_file)
+MEMORY_RECENT_MESSAGES = _settings.memory.recent_messages_limit
+MEMORY_SEMANTIC_RESULTS = _settings.memory.semantic_results_limit
+MEMORY_SEMANTIC_MIN_SCORE = _settings.memory.semantic_min_score
+MEMORY_SUMMARY_TRIGGER = _settings.memory.summary_trigger_messages
+MEMORY_SUMMARY_WINDOW = _settings.memory.summary_window_messages
 DISCORD_STATUS_MESSAGE = _settings.misc.status_message
 BOT_PROMPT_FILE = (
     str(_settings.misc.prompt_file) if _settings.misc.prompt_file else None

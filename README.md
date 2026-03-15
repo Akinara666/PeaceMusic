@@ -7,7 +7,7 @@ Russian documentation is available in [README.ru.md](README.ru.md).
 ## Features
 - Gemini-based AI chat suitable for free-form conversation and music commands.
 - Music commands: `play` (search or direct URL), `skip`, `stop`, `seek`, `set_volume`, `summon`, `disconnect`.
-- Conversation history with persistent context stored on disk.
+- SQLite-backed chat memory with recent context, semantic recall, and rolling global summaries.
 
 ## Requirements
 - Python 3.10 or newer.
@@ -68,6 +68,10 @@ Configure them in `.env` (see `.env.example`).
 - `DISCORD_BOT_TOKEN` - your Discord bot token.
 - `CHATBOT_CHANNEL_ID` - channel ID for AI chat (optional; omit to respond in any channel).
 - `GEMINI_API_KEY` - Google Gemini Developer API key.
+- `CHAT_MEMORY_DB` - path to the SQLite memory database (defaults to `chat_memory.sqlite3`).
+- `GEMINI_RESPONSE_MODEL` - response generation model (defaults to `gemini-3.1-flash-lite`).
+- `GEMINI_SUMMARY_MODEL` - background summary model (defaults to `gemini-3.1-flash-lite`).
+- `GEMINI_EMBEDDING_MODEL` - embedding model for semantic memory (defaults to `gemini-embedding-2-preview`).
 - `MUSIC_DIRECTORY` - path for downloaded/cached tracks (defaults to `music_files`).
 
 ## Sample Prompts (in chat)

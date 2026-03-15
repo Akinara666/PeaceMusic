@@ -23,6 +23,14 @@ def test_load_settings_smoke():
 
         assert settings.discord.token == "test_token"
         assert settings.gemini.api_key == "test_key"
+        assert settings.gemini.response_model == "gemini-2.5-flash"
+        assert settings.gemini.summary_model == "gemini-3.1-flash-lite"
+        assert settings.gemini.embedding_model == "gemini-embedding-2-preview"
+        assert settings.gemini.embedding_dimensions == 768
         assert str(settings.misc.music_directory) == "test_music_dir"
         assert str(settings.misc.context_file) == "test_context.json"
+        assert str(settings.memory.db_file) == "chat_memory.sqlite3"
+        assert settings.memory.recent_messages_limit == 12
+        assert settings.memory.semantic_results_limit == 6
+        assert settings.memory.summary_trigger_messages == 30
         assert settings.misc.status_message == "Test Bot"

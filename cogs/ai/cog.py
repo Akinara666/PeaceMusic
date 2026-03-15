@@ -1,21 +1,29 @@
 from __future__ import annotations
 
 import asyncio
-from collections import defaultdict
-from datetime import datetime, timezone, timedelta
 import logging
+from collections import defaultdict
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 import discord
 from discord.ext import commands
 from google import genai
 from google.genai import types
 
-from config import BOT_PROMPT_TEXT, CHATBOT_CHANNEL_ID, CONTEXT_FILE, GEMINI_API_KEY
+from config import BOT_PROMPT_TEXT, CHATBOT_CHANNEL_ID, get_settings
 from utils.tools import tools
 from .attachments import AttachmentProcessor
-from .history import HistoryManager
+from .embeddings import GeminiEmbeddingService
+from .memory import (
+    ChatState,
+    MemoryStore,
+    SemanticMatch,
+    StoredMessage,
+    format_memory_block,
+)
 from .response import ResponseGenerator
 
 if TYPE_CHECKING:  # pragma: no cover - only imported for typing
@@ -25,8 +33,37 @@ logger = logging.getLogger(__name__)
 
 _ATTACHMENT_IMAGE_NAME = Path("uploaded_image.png")
 _ATTACHMENT_VIDEO_NAME = Path("uploaded_video.mp4")
-_GENERATION_MODEL = "gemini-3-flash-preview"
-_HISTORY_LIMIT = 300
+_MSK_TZ = timezone(timedelta(hours=3))
+_SUMMARY_SYSTEM_PROMPT = """
+Ты обновляешь долговременную память Discord-чата.
+
+Сохраняй только устойчивый контекст:
+- атмосфера и настроение компании;
+- роли, привычки и отношения участников;
+- текущие проекты, договоренности, незакрытые вопросы;
+- повторяющиеся шутки, конфликты и важные факты.
+
+Не тащи в summary шум:
+- случайные одноразовые мемы;
+- короткие музыкальные команды без долгосрочного смысла;
+- дословные цитаты, если можно сжать смысл.
+
+Ответ верни на русском языке в компактном виде, максимум 1200 символов.
+Структура:
+Атмосфера:
+Люди:
+Темы:
+Факты:
+Сейчас важно:
+""".strip()
+
+
+@dataclass(frozen=True)
+class PreparedIncomingMessage:
+    content: types.Content
+    memory_text: str
+    author_name: str
+    created_at: str
 
 
 class GeminiChatCog(commands.Cog):
@@ -34,36 +71,44 @@ class GeminiChatCog(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self._settings = get_settings()
         self.client = genai.Client(
-            api_key=GEMINI_API_KEY,
-            http_options=types.HttpOptions(timeout=24000)
+            api_key=self._settings.gemini.api_key,
+            http_options=types.HttpOptions(timeout=24000),
         )
         self._locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self._summary_tasks: dict[int, asyncio.Task[None]] = {}
 
-        base_dir = Path(__file__).resolve().parent.parent
-        context_path = Path(CONTEXT_FILE)
-        if not context_path.is_absolute():
-            context_path = (base_dir / context_path).resolve()
-        self._context_file = context_path
-        if not self._context_file.parent.exists():
-            self._context_file.parent.mkdir(parents=True, exist_ok=True)
+        base_dir = Path(__file__).resolve().parents[2]
+        db_path = self._settings.memory.db_file
+        if not db_path.is_absolute():
+            db_path = (base_dir / db_path).resolve()
+        self._memory_store = MemoryStore(db_path)
 
-        self._history_manager = HistoryManager(self._context_file, _HISTORY_LIMIT)
-        self._history_manager.load()
         self._attachment_processor = AttachmentProcessor(
             self.client,
             _ATTACHMENT_IMAGE_NAME,
             _ATTACHMENT_VIDEO_NAME,
         )
+        self._embedding_service = GeminiEmbeddingService(
+            self.client,
+            self._settings.gemini.embedding_model,
+            output_dimensionality=self._settings.gemini.embedding_dimensions,
+        )
         self._response_generator = ResponseGenerator(
             client=self.client,
-            model_name=_GENERATION_MODEL,
+            model_name=self._settings.gemini.response_model,
             tools=tools,
             system_instruction=BOT_PROMPT_TEXT,
             temperature=1.0,
             top_p=0.95,
-            thinking_budget=16384,
+            thinking_budget=self._settings.gemini.thinking_budget,
         )
+
+    def cog_unload(self) -> None:
+        for task in self._summary_tasks.values():
+            task.cancel()
+        self._summary_tasks.clear()
 
     # ------------------------------------------------------------------
     # Public API
@@ -75,6 +120,224 @@ class GeminiChatCog(commands.Cog):
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+    def _normalize_author_name(self, author_name: str) -> str:
+        if "akinara" in author_name.lower() and author_name.lower() != "akinara":
+            return f"fake_{author_name}"
+        return author_name
+
+    def _current_timestamp(self) -> str:
+        return datetime.now(_MSK_TZ).strftime("%Y-%m-%d %H:%M:%S")
+
+    def _assistant_name(self, message: discord.Message) -> str:
+        if message.guild and message.guild.me:
+            return self._normalize_author_name(message.guild.me.display_name)
+        if self.bot.user:
+            return self._normalize_author_name(self.bot.user.display_name)
+        return "PeaceMusic"
+
+    def _build_memory_instruction(
+        self,
+        *,
+        chat_state: ChatState,
+        semantic_matches: list[SemanticMatch],
+    ) -> str:
+        summary_block = chat_state.summary.strip() or "Память чата еще не сформирована."
+        semantic_block = (
+            format_memory_block(semantic_matches)
+            if semantic_matches
+            else "Подходящих воспоминаний по смыслу не найдено."
+        )
+        return (
+            f"{BOT_PROMPT_TEXT}\n\n"
+            "Ниже подключена многослойная память чата.\n"
+            "Используй ее как скрытый контекст, не пересказывай эти блоки "
+            "пользователям напрямую.\n\n"
+            "Level 0 - Глобальное состояние чата:\n"
+            f"{summary_block}\n\n"
+            "Level 1 - Семантически релевантные воспоминания:\n"
+            f"{semantic_block}\n\n"
+            "Level 2 - Последние реплики придут в самой истории диалога.\n"
+            "Приоритет интерпретации: текущая реплика пользователя > Level 2 > "
+            "Level 1 > Level 0.\n"
+            "Если старые воспоминания не помогают, игнорируй их."
+        )
+
+    def _build_recent_contents(
+        self,
+        recent_messages: list[StoredMessage],
+        current_message: PreparedIncomingMessage,
+    ) -> list[types.Content]:
+        contents: list[types.Content] = []
+        for stored in recent_messages:
+            role = stored.role if stored.role in {"user", "model"} else "user"
+            contents.append(
+                types.Content(
+                    role=role,
+                    parts=[types.Part.from_text(text=stored.formatted_text)],
+                )
+            )
+        contents.append(current_message.content)
+        return contents
+
+    async def _prepare_incoming_message(
+        self, message: discord.Message
+    ) -> PreparedIncomingMessage:
+        author_name = self._normalize_author_name(message.author.name)
+        created_at = self._current_timestamp()
+        base_text = (message.content or "").strip()
+        formatted_text = (
+            f"[{created_at}] {author_name}: {base_text}"
+            if base_text
+            else f"[{created_at}] {author_name}"
+        )
+
+        if message.attachments:
+            content, memory_text = await self._attachment_processor.to_content(
+                message,
+                formatted_text,
+                base_text,
+            )
+        else:
+            content = types.Content(
+                role="user",
+                parts=[types.Part.from_text(text=formatted_text)],
+            )
+            memory_text = base_text or "[Пустое сообщение]"
+
+        return PreparedIncomingMessage(
+            content=content,
+            memory_text=memory_text,
+            author_name=author_name,
+            created_at=created_at,
+        )
+
+    async def _safe_embed_query(self, text: str):
+        try:
+            return await self._embedding_service.embed_query(text)
+        except Exception:  # noqa: BLE001 - semantic recall should degrade gracefully
+            logger.exception("Failed to generate query embedding")
+            return None
+
+    async def _safe_embed_document(self, text: str):
+        try:
+            return await self._embedding_service.embed_document(text)
+        except Exception:  # noqa: BLE001 - persistence should still keep plain text
+            logger.exception("Failed to generate document embedding")
+            return None
+
+    async def _store_message(
+        self,
+        *,
+        channel_id: int,
+        discord_message_id: Optional[int],
+        role: str,
+        author_id: Optional[int],
+        author_name: str,
+        content_text: str,
+        created_at: str,
+        embedding,
+    ) -> StoredMessage:
+        return await self._memory_store.store_message(
+            channel_id=channel_id,
+            discord_message_id=discord_message_id,
+            role=role,
+            author_id=author_id,
+            author_name=author_name,
+            content_text=content_text,
+            created_at=created_at,
+            embedding=embedding,
+            embedding_model=(
+                self._embedding_service.model_name if embedding is not None else None
+            ),
+        )
+
+    async def _maybe_schedule_summary(self, channel_id: int) -> None:
+        active_task = self._summary_tasks.get(channel_id)
+        if active_task and not active_task.done():
+            return
+
+        chat_state = await self._memory_store.get_chat_state(channel_id)
+        unsummarized = await self._memory_store.count_unsummarized_messages(
+            channel_id, chat_state.last_summarized_message_id
+        )
+        if unsummarized < self._settings.memory.summary_trigger_messages:
+            return
+
+        task = asyncio.create_task(self._refresh_summary(channel_id))
+        self._summary_tasks[channel_id] = task
+        task.add_done_callback(lambda _: self._summary_tasks.pop(channel_id, None))
+
+    async def _refresh_summary(self, channel_id: int) -> None:
+        async with self._locks[channel_id]:
+            chat_state = await self._memory_store.get_chat_state(channel_id)
+            unsummarized = await self._memory_store.count_unsummarized_messages(
+                channel_id, chat_state.last_summarized_message_id
+            )
+            if unsummarized < self._settings.memory.summary_trigger_messages:
+                return
+
+            latest_message_id, messages = (
+                await self._memory_store.get_recent_summary_window(
+                    channel_id, self._settings.memory.summary_window_messages
+                )
+            )
+            if (
+                not messages
+                or latest_message_id <= chat_state.last_summarized_message_id
+            ):
+                return
+
+            transcript = format_memory_block(messages)
+            user_prompt = (
+                "Обнови summary на основе предыдущей памяти и свежего "
+                "фрагмента диалога.\n\n"
+                "Предыдущее summary:\n"
+                f"{chat_state.summary.strip() or '[пусто]'}\n\n"
+                "Новый фрагмент чата:\n"
+                f"{transcript}"
+            )
+
+            try:
+                response = await self.client.aio.models.generate_content(
+                    model=self._settings.gemini.summary_model,
+                    contents=user_prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=_SUMMARY_SYSTEM_PROMPT,
+                        temperature=0.2,
+                    ),
+                )
+            except Exception:  # noqa: BLE001 - keep chat responsive if summary fails
+                logger.exception(
+                    "Failed to refresh chat summary for channel %s", channel_id
+                )
+                return
+
+            summary_text = self._extract_text(response)
+            if not summary_text:
+                return
+
+            await self._memory_store.update_chat_state(
+                channel_id=channel_id,
+                summary=summary_text.strip(),
+                last_summarized_message_id=latest_message_id,
+            )
+
+    def _extract_text(self, response: types.GenerateContentResponse) -> str:
+        text = getattr(response, "text", None)
+        if text:
+            return text.strip()
+
+        if not response.candidates:
+            return ""
+
+        parts = (
+            response.candidates[0].content.parts
+            if response.candidates[0].content
+            else []
+        )
+        chunks = [part.text.strip() for part in parts if getattr(part, "text", None)]
+        return "\n".join(chunk for chunk in chunks if chunk).strip()
+
     async def process_tool_call(
         self, tool_call: types.FunctionCall, message: discord.Message
     ) -> types.Part:
@@ -88,11 +351,20 @@ class GeminiChatCog(commands.Cog):
             if emoji:
                 try:
                     await message.add_reaction(emoji)
-                    return types.Part.from_function_response(name=tool_name, response={"result": f"Reacted with {emoji}"})
-                except discord.HTTPException as e:
-                    logger.warning("Failed to add reaction %s: %s", emoji, e)
-                    return types.Part.from_function_response(name=tool_name, response={"error": f"Failed to react: {e}"})
-            return types.Part.from_function_response(name=tool_name, response={"error": "Emoji parameter missing"})
+                    return types.Part.from_function_response(
+                        name=tool_name,
+                        response={"result": f"Reacted with {emoji}"},
+                    )
+                except discord.HTTPException as exc:
+                    logger.warning("Failed to add reaction %s: %s", emoji, exc)
+                    return types.Part.from_function_response(
+                        name=tool_name,
+                        response={"error": f"Failed to react: {exc}"},
+                    )
+            return types.Part.from_function_response(
+                name=tool_name,
+                response={"error": "Emoji parameter missing"},
+            )
 
         if not self.music_cog:
             error_msg = "Music controls are not available right now."
@@ -154,9 +426,10 @@ class GeminiChatCog(commands.Cog):
         if message.attachments and self.music_cog:
             audio_att = next(
                 (
-                    a
-                    for a in message.attachments
-                    if a.content_type and a.content_type.startswith("audio/")
+                    attachment
+                    for attachment in message.attachments
+                    if attachment.content_type
+                    and attachment.content_type.startswith("audio/")
                 ),
                 None,
             )
@@ -167,43 +440,75 @@ class GeminiChatCog(commands.Cog):
 
         async with self._locks[message.channel.id]:
             async with message.channel.typing():
-                history = self._history_manager.get_history(message.channel.id)
-                base_text = (message.content or "").strip()
-
-            author_name = message.author.name
-            if "akinara" in author_name.lower() and author_name.lower() != "akinara":
-                author_name = f"fake_{author_name}"
-
-            msk_tz = timezone(timedelta(hours=3))
-            timestamp = datetime.now(msk_tz).strftime("%Y-%m-%d %H:%M:%S")
-            user_text = f"[{timestamp}] {author_name}: {base_text}" if base_text else f"[{timestamp}] {author_name}"
-
-            if message.attachments:
-                content, prompt_text = await self._attachment_processor.to_content(
-                    message, user_text
+                incoming = await self._prepare_incoming_message(message)
+                recent_messages = await self._memory_store.get_recent_messages(
+                    message.channel.id,
+                    self._settings.memory.recent_messages_limit,
                 )
-            else:
-                content = types.Content(
-                    role="user", parts=[types.Part.from_text(text=user_text)]
+                chat_state = await self._memory_store.get_chat_state(message.channel.id)
+                query_embedding, user_embedding = await asyncio.gather(
+                    self._safe_embed_query(incoming.memory_text),
+                    self._safe_embed_document(incoming.memory_text),
                 )
-                prompt_text = user_text
 
-            history.append(content)
-            self._history_manager.trim(history)
+                semantic_matches: list[SemanticMatch] = []
+                if query_embedding is not None:
+                    semantic_matches = await self._memory_store.get_semantic_matches(
+                        channel_id=message.channel.id,
+                        query_embedding=query_embedding,
+                        embedding_model=self._embedding_service.model_name,
+                        limit=self._settings.memory.semantic_results_limit,
+                        min_score=self._settings.memory.semantic_min_score,
+                        exclude_ids=[stored.id for stored in recent_messages],
+                    )
 
-            try:
-                reply = await self._response_generator.generate_reply(
-                    history,
-                    lambda call: self.process_tool_call(call, message),
+                reply_text: Optional[str] = None
+                sent_reply: Optional[discord.Message] = None
+                system_instruction = self._build_memory_instruction(
+                    chat_state=chat_state,
+                    semantic_matches=semantic_matches,
                 )
-                if reply is not None:
-                    await message.channel.send(reply or "I could not think of a reply.")
-            except Exception as exc:  # noqa: BLE001
-                logger.exception("Gemini response failed")
-                await message.channel.send(f"Failed to generate a response: {exc}")
-                if history and history[-1].role == "user":
-                    history.pop()
-            finally:
-                await self._history_manager.persist()
+                contents = self._build_recent_contents(recent_messages, incoming)
+
+                try:
+                    reply_text = await self._response_generator.generate_reply(
+                        contents,
+                        lambda call: self.process_tool_call(call, message),
+                        system_instruction=system_instruction,
+                    )
+                    if reply_text is not None:
+                        sent_reply = await message.channel.send(
+                            reply_text or "I could not think of a reply."
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    logger.exception("Gemini response failed")
+                    await message.channel.send(f"Failed to generate a response: {exc}")
+
+                await self._store_message(
+                    channel_id=message.channel.id,
+                    discord_message_id=message.id,
+                    role="user",
+                    author_id=message.author.id,
+                    author_name=incoming.author_name,
+                    content_text=incoming.memory_text,
+                    created_at=incoming.created_at,
+                    embedding=user_embedding,
+                )
+
+                if sent_reply is not None and reply_text:
+                    assistant_created_at = self._current_timestamp()
+                    assistant_embedding = await self._safe_embed_document(reply_text)
+                    await self._store_message(
+                        channel_id=message.channel.id,
+                        discord_message_id=sent_reply.id,
+                        role="model",
+                        author_id=self.bot.user.id if self.bot.user else None,
+                        author_name=self._assistant_name(message),
+                        content_text=reply_text,
+                        created_at=assistant_created_at,
+                        embedding=assistant_embedding,
+                    )
+
+            await self._maybe_schedule_summary(message.channel.id)
 
         await self.bot.process_commands(message)
