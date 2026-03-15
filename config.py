@@ -196,10 +196,10 @@ def load_settings() -> AppSettings:
     gemini_response_model = (
         _get_env("GEMINI_RESPONSE_MODEL")
         or _get_env("GEMINI_MODEL")
-        or "gemini-3.1-flash-lite"
+        or "gemini-3.1-flash-lite-preview"
     )
     gemini_summary_model = (
-        _get_env("GEMINI_SUMMARY_MODEL") or "gemini-3.1-flash-lite"
+        _get_env("GEMINI_SUMMARY_MODEL") or "gemini-3.1-flash-lite-preview"
     )
     gemini_embedding_model = (
         _get_env("GEMINI_EMBEDDING_MODEL") or "gemini-embedding-2-preview"
