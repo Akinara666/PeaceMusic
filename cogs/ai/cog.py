@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections import defaultdict
 from dataclasses import dataclass
@@ -63,6 +64,14 @@ class PreparedIncomingMessage:
     content: types.Content
     memory_text: str
     author_name: str
+    created_at: str
+
+
+@dataclass(frozen=True)
+class ToolExecutionEvent:
+    tool_name: str
+    args: dict[str, object]
+    response: dict[str, object]
     created_at: str
 
 
@@ -134,6 +143,38 @@ class GeminiChatCog(commands.Cog):
         if self.bot.user:
             return self._normalize_author_name(self.bot.user.display_name)
         return "PeaceMusic"
+
+    def _ensure_json_safe(self, payload: object) -> object:
+        try:
+            json.dumps(payload, ensure_ascii=False)
+            return payload
+        except TypeError:
+            try:
+                return json.loads(
+                    json.dumps(payload, ensure_ascii=False, default=str)
+                )
+            except Exception:  # noqa: BLE001 - defensive fallback for odd SDK payloads
+                return str(payload)
+
+    def _coerce_payload_dict(self, payload: object) -> dict[str, object]:
+        safe_payload = self._ensure_json_safe(payload)
+        if isinstance(safe_payload, dict):
+            return safe_payload
+        return {"value": safe_payload}
+
+    def _extract_tool_response_payload(self, feedback: types.Part) -> dict[str, object]:
+        function_response = getattr(feedback, "function_response", None)
+        payload = getattr(function_response, "response", None) or {}
+        return self._coerce_payload_dict(payload)
+
+    def _build_tool_memory_text(self, event: ToolExecutionEvent) -> str:
+        result_label = "error" if "error" in event.response else "result"
+        return (
+            f"[tool] {event.tool_name}\n"
+            f"args: {json.dumps(event.args, ensure_ascii=False, sort_keys=True)}\n"
+            f"{result_label}: "
+            f"{json.dumps(event.response, ensure_ascii=False, sort_keys=True)}"
+        )
 
     def _build_memory_instruction(
         self,
@@ -250,6 +291,31 @@ class GeminiChatCog(commands.Cog):
                 self._embedding_service.model_name if embedding is not None else None
             ),
         )
+
+    async def _persist_tool_events(
+        self,
+        channel_id: int,
+        tool_events: list[ToolExecutionEvent],
+    ) -> None:
+        if not tool_events:
+            return
+
+        memory_texts = [self._build_tool_memory_text(event) for event in tool_events]
+        embeddings = await asyncio.gather(
+            *(self._safe_embed_document(text) for text in memory_texts)
+        )
+
+        for event, memory_text, embedding in zip(tool_events, memory_texts, embeddings):
+            await self._store_message(
+                channel_id=channel_id,
+                discord_message_id=None,
+                role="tool",
+                author_id=None,
+                author_name=f"tool:{event.tool_name}",
+                content_text=memory_text,
+                created_at=event.created_at,
+                embedding=embedding,
+            )
 
     async def _maybe_schedule_summary(self, channel_id: int) -> None:
         active_task = self._summary_tasks.get(channel_id)
@@ -464,16 +530,29 @@ class GeminiChatCog(commands.Cog):
 
                 reply_text: Optional[str] = None
                 sent_reply: Optional[discord.Message] = None
+                tool_events: list[ToolExecutionEvent] = []
                 system_instruction = self._build_memory_instruction(
                     chat_state=chat_state,
                     semantic_matches=semantic_matches,
                 )
                 contents = self._build_recent_contents(recent_messages, incoming)
 
+                async def tool_callback(call: types.FunctionCall) -> types.Part:
+                    feedback = await self.process_tool_call(call, message)
+                    tool_events.append(
+                        ToolExecutionEvent(
+                            tool_name=call.name or "unknown_tool",
+                            args=self._coerce_payload_dict(call.args or {}),
+                            response=self._extract_tool_response_payload(feedback),
+                            created_at=self._current_timestamp(),
+                        )
+                    )
+                    return feedback
+
                 try:
                     reply_text = await self._response_generator.generate_reply(
                         contents,
-                        lambda call: self.process_tool_call(call, message),
+                        tool_callback,
                         system_instruction=system_instruction,
                     )
                     if reply_text is not None:
@@ -494,6 +573,7 @@ class GeminiChatCog(commands.Cog):
                     created_at=incoming.created_at,
                     embedding=user_embedding,
                 )
+                await self._persist_tool_events(message.channel.id, tool_events)
 
                 if sent_reply is not None and reply_text:
                     assistant_created_at = self._current_timestamp()

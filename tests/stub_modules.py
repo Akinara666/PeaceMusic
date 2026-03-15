@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import importlib
 import math
 import struct
 import sys
@@ -109,17 +110,36 @@ def _install_numpy_stub() -> None:
 
 def _install_discord_stub() -> None:
     discord_module = py_types.ModuleType("discord")
+    discord_ext_module = py_types.ModuleType("discord.ext")
+    commands_module = py_types.ModuleType("discord.ext.commands")
 
     class Intents:
         @classmethod
         def all(cls):
             return cls()
 
+    class Cog:
+        @classmethod
+        def listener(cls):
+            def decorator(func):
+                return func
+
+            return decorator
+
+    class Bot:
+        pass
+
     discord_module.Intents = Intents
     discord_module.Message = type("Message", (), {})
     discord_module.Attachment = type("Attachment", (), {})
     discord_module.HTTPException = type("HTTPException", (Exception,), {})
+    commands_module.Cog = Cog
+    commands_module.Bot = Bot
+    discord_ext_module.commands = commands_module
+    discord_module.ext = discord_ext_module
     sys.modules["discord"] = discord_module
+    sys.modules["discord.ext"] = discord_ext_module
+    sys.modules["discord.ext.commands"] = commands_module
 
 
 def _install_google_stub() -> None:
@@ -272,3 +292,12 @@ def load_project_module(module_name: str, relative_path: str):
     sys.modules[module_name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def import_project_package(module_name: str):
+    project_root_str = str(PROJECT_ROOT)
+    if project_root_str not in sys.path:
+        sys.path.insert(0, project_root_str)
+    if module_name in sys.modules:
+        del sys.modules[module_name]
+    return importlib.import_module(module_name)
