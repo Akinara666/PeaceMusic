@@ -66,7 +66,7 @@ python main.py
 - `DISCORD_BOT_TOKEN` — токен Discord‑бота
 - `CHATBOT_CHANNEL_ID` — ID текстового канала для общения с ассистентом (опционально; если пусто — слушает все)
 - `GEMINI_API_KEY` — ключ Gemini Developer API
-- `CHAT_MEMORY_DB` — путь к SQLite‑базе памяти (по умолчанию `chat_memory.sqlite3`)
+- `CHAT_MEMORY_DB` — путь к SQLite‑базе памяти (по умолчанию `chat_memory.sqlite3`; в Docker переопределяется на `/app/data/chat_memory.sqlite3`)
 - `GEMINI_RESPONSE_MODEL` — модель генерации ответов (по умолчанию `gemini-3.1-flash-lite`)
 - `GEMINI_SUMMARY_MODEL` — модель для фонового summary (по умолчанию `gemini-3.1-flash-lite`)
 - `GEMINI_EMBEDDING_MODEL` — модель эмбеддингов для семантической памяти (по умолчанию `gemini-embedding-2-preview`)

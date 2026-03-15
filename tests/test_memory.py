@@ -168,3 +168,22 @@ class MemoryStoreTests(unittest.IsolatedAsyncioTestCase):
         block = format_memory_block([match], include_scores=True)
 
         self.assertEqual(block, "(score=0.750) [2026-03-15 19:00:00] alice: hello")
+
+    async def test_directory_database_path_falls_back_to_nested_file(self) -> None:
+        db_dir = Path(self._tmpdir.name) / "chat_memory.sqlite3"
+        db_dir.mkdir()
+        store = MemoryStore(db_dir)
+
+        await store.store_message(
+            channel_id=9,
+            discord_message_id=41,
+            role="user",
+            author_id=1,
+            author_name="alice",
+            content_text="hello",
+            created_at="2026-03-15 20:00:00",
+            embedding=None,
+            embedding_model=None,
+        )
+
+        self.assertTrue((db_dir / "chat_memory.sqlite3").exists())

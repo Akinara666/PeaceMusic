@@ -5,9 +5,10 @@ services:
     restart: always
     env_file:
       - .env
+    environment:
+      CHAT_MEMORY_DB: /app/data/chat_memory.sqlite3
     volumes:
       - ./music_files:/app/music_files
+      - ./data:/app/data
       # Persist cookies if they exist
       - ./cogs/cookies.txt:/app/cogs/cookies.txt
-      # Persist AI memory database
-      - ./chat_memory.sqlite3:/app/chat_memory.sqlite3

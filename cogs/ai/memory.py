@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Optional, Sequence
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class StoredMessage:
@@ -45,6 +48,13 @@ class MemoryStore:
 
     def __init__(self, db_path: Path) -> None:
         self._db_path = db_path
+        if self._db_path.exists() and self._db_path.is_dir():
+            logger.warning(
+                "Memory database path %s is a directory; using %s instead",
+                self._db_path,
+                self._db_path / "chat_memory.sqlite3",
+            )
+            self._db_path = self._db_path / "chat_memory.sqlite3"
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._write_lock = asyncio.Lock()
         self._initialize()
