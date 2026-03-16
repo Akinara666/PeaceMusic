@@ -20,6 +20,8 @@ with patch.dict(
     cog_module = import_project_package("cogs.ai.cog")
 
 GeminiChatCog = cog_module.GeminiChatCog
+PreparedIncomingMessage = cog_module.PreparedIncomingMessage
+StoredMessage = cog_module.StoredMessage
 ToolExecutionEvent = cog_module.ToolExecutionEvent
 types = cog_module.types
 
@@ -70,6 +72,49 @@ class GeminiChatCogTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"result": "queued"', stored_messages[0]["content_text"])
         self.assertEqual(stored_messages[1]["author_name"], "tool:set_volume")
         self.assertIn('error: {"error": "Nothing is playing"}', stored_messages[1]["content_text"])
+
+    def test_build_recent_contents_restores_serialized_file_parts(self) -> None:
+        cog = object.__new__(GeminiChatCog)
+        stored_message = StoredMessage(
+            id=1,
+            channel_id=77,
+            discord_message_id=10,
+            role="user",
+            author_id=100,
+            author_name="alice",
+            content_text="[Image attachment: cat.png]",
+            created_at="2026-03-15 21:10:00",
+            content_parts=(
+                {"type": "file_data", "uri": "uri://image", "mime_type": "image/png"},
+                {
+                    "type": "text",
+                    "text": "[2026-03-15 21:10:00] alice [Image attachment: cat.png]",
+                },
+            ),
+        )
+        current_message = PreparedIncomingMessage(
+            content=types.Content(
+                role="user",
+                parts=[types.Part.from_text(text="[2026-03-15 21:11:00] bob: what is this?")],
+            ),
+            memory_text="what is this?",
+            author_name="bob",
+            created_at="2026-03-15 21:11:00",
+            content_parts=(
+                {
+                    "type": "text",
+                    "text": "[2026-03-15 21:11:00] bob: what is this?",
+                },
+            ),
+        )
+
+        contents = cog._build_recent_contents([stored_message], current_message)
+
+        self.assertEqual(contents[0].parts[0].file_data.uri, "uri://image")
+        self.assertEqual(
+            contents[0].parts[1].text,
+            "[2026-03-15 21:10:00] alice [Image attachment: cat.png]",
+        )
 
     def test_extract_tool_response_payload_and_render_memory_text(self) -> None:
         cog = object.__new__(GeminiChatCog)

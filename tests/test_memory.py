@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -187,3 +188,79 @@ class MemoryStoreTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertTrue((db_dir / "chat_memory.sqlite3").exists())
+
+    async def test_store_and_retrieve_content_parts(self) -> None:
+        await self.store.store_message(
+            channel_id=11,
+            discord_message_id=51,
+            role="user",
+            author_id=100,
+            author_name="alice",
+            content_text="[Image attachment: cat.png]",
+            created_at="2026-03-15 21:00:00",
+            embedding=None,
+            embedding_model=None,
+            content_parts=(
+                {"type": "file_data", "uri": "uri://image", "mime_type": "image/png"},
+                {"type": "text", "text": "[2026-03-15 21:00:00] alice [Image attachment: cat.png]"},
+            ),
+        )
+
+        recent = await self.store.get_recent_messages(11, 10)
+
+        self.assertEqual(len(recent), 1)
+        self.assertEqual(
+            recent[0].content_parts,
+            (
+                {"type": "file_data", "uri": "uri://image", "mime_type": "image/png"},
+                {
+                    "type": "text",
+                    "text": "[2026-03-15 21:00:00] alice [Image attachment: cat.png]",
+                },
+            ),
+        )
+
+    async def test_existing_database_is_migrated_with_content_parts_column(self) -> None:
+        legacy_db = Path(self._tmpdir.name) / "legacy.sqlite3"
+        with sqlite3.connect(legacy_db) as conn:
+            conn.executescript(
+                """
+                CREATE TABLE messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    channel_id INTEGER NOT NULL,
+                    discord_message_id INTEGER,
+                    role TEXT NOT NULL,
+                    author_id INTEGER,
+                    author_name TEXT NOT NULL,
+                    content_text TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    embedding BLOB,
+                    embedding_dim INTEGER,
+                    embedding_model TEXT
+                );
+                CREATE TABLE chat_state (
+                    channel_id INTEGER PRIMARY KEY,
+                    summary TEXT NOT NULL DEFAULT '',
+                    last_summarized_message_id INTEGER NOT NULL DEFAULT 0,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+                """
+            )
+
+        store = MemoryStore(legacy_db)
+        await store.store_message(
+            channel_id=12,
+            discord_message_id=52,
+            role="user",
+            author_id=101,
+            author_name="alice",
+            content_text="hello",
+            created_at="2026-03-15 21:01:00",
+            embedding=None,
+            embedding_model=None,
+            content_parts=({"type": "text", "text": "[2026-03-15 21:01:00] alice: hello"},),
+        )
+
+        recent = await store.get_recent_messages(12, 10)
+
+        self.assertEqual(recent[0].content_parts[0]["type"], "text")

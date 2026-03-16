@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import sqlite3
 from dataclasses import dataclass
@@ -22,6 +23,7 @@ class StoredMessage:
     content_text: str
     created_at: str
     embedding_model: Optional[str] = None
+    content_parts: tuple[dict[str, object], ...] = ()
 
     @property
     def formatted_text(self) -> str:
@@ -89,7 +91,8 @@ class MemoryStore:
                     created_at TEXT NOT NULL,
                     embedding BLOB,
                     embedding_dim INTEGER,
-                    embedding_model TEXT
+                    embedding_model TEXT,
+                    content_parts_json TEXT
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_messages_channel_recent
@@ -98,6 +101,12 @@ class MemoryStore:
                     ON messages(channel_id, embedding_model, id DESC);
                 """
             )
+            columns = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(messages)").fetchall()
+            }
+            if "content_parts_json" not in columns:
+                conn.execute("ALTER TABLE messages ADD COLUMN content_parts_json TEXT")
 
     async def store_message(
         self,
@@ -111,6 +120,7 @@ class MemoryStore:
         created_at: str,
         embedding: Optional[np.ndarray],
         embedding_model: Optional[str],
+        content_parts: Optional[Sequence[dict[str, object]]] = None,
     ) -> StoredMessage:
         if embedding is not None:
             normalized = np.ascontiguousarray(np.asarray(embedding, dtype=np.float32))
@@ -119,6 +129,11 @@ class MemoryStore:
         else:
             embedding_blob = None
             embedding_dim = None
+        serialized_parts = (
+            json.dumps(list(content_parts), ensure_ascii=False)
+            if content_parts
+            else None
+        )
 
         def _store() -> StoredMessage:
             with self._connect() as conn:
@@ -134,9 +149,10 @@ class MemoryStore:
                         created_at,
                         embedding,
                         embedding_dim,
-                        embedding_model
+                        embedding_model,
+                        content_parts_json
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         channel_id,
@@ -149,6 +165,7 @@ class MemoryStore:
                         embedding_blob,
                         embedding_dim,
                         embedding_model,
+                        serialized_parts,
                     ),
                 )
                 message_id = int(cursor.lastrowid)
@@ -166,6 +183,7 @@ class MemoryStore:
                     content_text=content_text,
                     created_at=created_at,
                     embedding_model=embedding_model,
+                    content_parts=tuple(content_parts or ()),
                 )
 
         async with self._write_lock:
@@ -187,7 +205,8 @@ class MemoryStore:
                         author_name,
                         content_text,
                         created_at,
-                        embedding_model
+                        embedding_model,
+                        content_parts_json
                     FROM messages
                     WHERE channel_id = ?
                     ORDER BY id DESC
@@ -293,7 +312,8 @@ class MemoryStore:
                         author_name,
                         content_text,
                         created_at,
-                        embedding_model
+                        embedding_model,
+                        content_parts_json
                     FROM messages
                     WHERE channel_id = ?
                     ORDER BY id DESC
@@ -337,7 +357,8 @@ class MemoryStore:
                         content_text,
                         created_at,
                         embedding,
-                        embedding_model
+                        embedding_model,
+                        content_parts_json
                     FROM messages
                     WHERE channel_id = ?
                       AND embedding_model = ?
@@ -393,6 +414,18 @@ class MemoryStore:
         return await asyncio.to_thread(_search)
 
     def _row_to_message(self, row: sqlite3.Row) -> StoredMessage:
+        raw_content_parts = row["content_parts_json"]
+        content_parts: tuple[dict[str, object], ...] = ()
+        if raw_content_parts:
+            try:
+                payload = json.loads(raw_content_parts)
+            except Exception:  # noqa: BLE001 - malformed historical payloads are ignored
+                logger.warning("Failed to decode content_parts_json for message %s", row["id"])
+            else:
+                if isinstance(payload, list):
+                    content_parts = tuple(
+                        item for item in payload if isinstance(item, dict)
+                    )
         return StoredMessage(
             id=int(row["id"]),
             channel_id=int(row["channel_id"]),
@@ -403,6 +436,7 @@ class MemoryStore:
             content_text=row["content_text"],
             created_at=row["created_at"],
             embedding_model=row["embedding_model"],
+            content_parts=content_parts,
         )
 
 

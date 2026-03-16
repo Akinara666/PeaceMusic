@@ -66,6 +66,7 @@ class PreparedIncomingMessage:
     memory_text: str
     author_name: str
     created_at: str
+    content_parts: tuple[dict[str, object], ...]
 
 
 @dataclass(frozen=True)
@@ -138,6 +139,17 @@ class GeminiChatCog(commands.Cog):
     def _current_timestamp(self) -> str:
         return datetime.now(_MSK_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
+    def _format_chat_turn(
+        self,
+        *,
+        author_name: str,
+        created_at: str,
+        content_text: str,
+    ) -> str:
+        if content_text:
+            return f"[{created_at}] {author_name}: {content_text}"
+        return f"[{created_at}] {author_name}"
+
     def _assistant_name(self, message: discord.Message) -> str:
         if message.guild and message.guild.me:
             return self._normalize_author_name(message.guild.me.display_name)
@@ -176,6 +188,100 @@ class GeminiChatCog(commands.Cog):
         function_response = getattr(feedback, "function_response", None)
         payload = getattr(function_response, "response", None) or {}
         return self._coerce_payload_dict(payload)
+
+    def _serialize_content_parts(
+        self, content: types.Content
+    ) -> tuple[dict[str, object], ...]:
+        payloads: list[dict[str, object]] = []
+        for part in content.parts:
+            if getattr(part, "text", None):
+                payloads.append({"type": "text", "text": part.text})
+                continue
+
+            file_data = getattr(part, "file_data", None)
+            if file_data and getattr(file_data, "uri", None):
+                payloads.append(
+                    {
+                        "type": "file_data",
+                        "uri": getattr(file_data, "uri", ""),
+                        "mime_type": getattr(file_data, "mime_type", None),
+                    }
+                )
+                continue
+
+            function_call = getattr(part, "function_call", None)
+            if function_call:
+                payloads.append(
+                    {
+                        "type": "function_call",
+                        "name": getattr(function_call, "name", ""),
+                        "args": self._ensure_json_safe(
+                            getattr(function_call, "args", None) or {}
+                        ),
+                    }
+                )
+                continue
+
+            function_response = getattr(part, "function_response", None)
+            if function_response:
+                payloads.append(
+                    {
+                        "type": "function_response",
+                        "name": getattr(function_response, "name", ""),
+                        "response": self._ensure_json_safe(
+                            getattr(function_response, "response", None) or {}
+                        ),
+                    }
+                )
+
+        return tuple(payloads)
+
+    def _deserialize_content_parts(
+        self, payloads: tuple[dict[str, object], ...]
+    ) -> list[types.Part]:
+        parts: list[types.Part] = []
+        for payload in payloads:
+            kind = payload.get("type")
+            if kind == "text":
+                text = payload.get("text")
+                if isinstance(text, str) and text:
+                    parts.append(types.Part.from_text(text=text))
+                continue
+
+            if kind == "file_data":
+                uri = payload.get("uri")
+                if isinstance(uri, str) and uri:
+                    parts.append(
+                        types.Part.from_uri(
+                            file_uri=uri,
+                            mime_type=payload.get("mime_type"),
+                        )
+                    )
+                continue
+
+            if kind == "function_call":
+                name = payload.get("name")
+                if isinstance(name, str) and name:
+                    parts.append(
+                        types.Part.from_function_call(
+                            name=name,
+                            args=self._coerce_payload_dict(payload.get("args") or {}),
+                        )
+                    )
+                continue
+
+            if kind == "function_response":
+                name = payload.get("name") or ""
+                parts.append(
+                    types.Part.from_function_response(
+                        name=str(name),
+                        response=self._coerce_payload_dict(
+                            payload.get("response") or {}
+                        ),
+                    )
+                )
+
+        return parts
 
     def _build_tool_memory_text(self, event: ToolExecutionEvent) -> str:
         result_label = "error" if "error" in event.response else "result"
@@ -221,10 +327,13 @@ class GeminiChatCog(commands.Cog):
         contents: list[types.Content] = []
         for stored in recent_messages:
             role = stored.role if stored.role in {"user", "model"} else "user"
+            parts = self._deserialize_content_parts(stored.content_parts)
+            if not parts:
+                parts = [types.Part.from_text(text=stored.formatted_text)]
             contents.append(
                 types.Content(
                     role=role,
-                    parts=[types.Part.from_text(text=stored.formatted_text)],
+                    parts=parts,
                 )
             )
         contents.append(current_message.content)
@@ -237,9 +346,11 @@ class GeminiChatCog(commands.Cog):
         created_at = self._current_timestamp()
         base_text = (message.content or "").strip()
         formatted_text = (
-            f"[{created_at}] {author_name}: {base_text}"
-            if base_text
-            else f"[{created_at}] {author_name}"
+            self._format_chat_turn(
+                author_name=author_name,
+                created_at=created_at,
+                content_text=base_text,
+            )
         )
 
         if message.attachments:
@@ -260,6 +371,7 @@ class GeminiChatCog(commands.Cog):
             memory_text=memory_text,
             author_name=author_name,
             created_at=created_at,
+            content_parts=self._serialize_content_parts(content),
         )
 
     async def _safe_embed_query(self, text: str):
@@ -287,6 +399,7 @@ class GeminiChatCog(commands.Cog):
         content_text: str,
         created_at: str,
         embedding,
+        content_parts: Optional[tuple[dict[str, object], ...]] = None,
     ) -> StoredMessage:
         return await self._memory_store.store_message(
             channel_id=channel_id,
@@ -300,6 +413,7 @@ class GeminiChatCog(commands.Cog):
             embedding_model=(
                 self._embedding_service.model_name if embedding is not None else None
             ),
+            content_parts=content_parts,
         )
 
     async def _persist_tool_events(
@@ -325,6 +439,16 @@ class GeminiChatCog(commands.Cog):
                 content_text=memory_text,
                 created_at=event.created_at,
                 embedding=embedding,
+                content_parts=(
+                    {
+                        "type": "text",
+                        "text": self._format_chat_turn(
+                            author_name=f"tool:{event.tool_name}",
+                            created_at=event.created_at,
+                            content_text=memory_text,
+                        ),
+                    },
+                ),
             )
 
     async def _maybe_schedule_summary(self, channel_id: int) -> None:
@@ -581,21 +705,33 @@ class GeminiChatCog(commands.Cog):
                     content_text=incoming.memory_text,
                     created_at=incoming.created_at,
                     embedding=user_embedding,
+                    content_parts=incoming.content_parts,
                 )
                 await self._persist_tool_events(message.channel.id, tool_events)
 
                 if sent_reply is not None and reply_text:
                     assistant_created_at = self._current_timestamp()
+                    assistant_author_name = self._assistant_name(message)
                     assistant_embedding = await self._safe_embed_document(reply_text)
                     await self._store_message(
                         channel_id=message.channel.id,
                         discord_message_id=sent_reply.id,
                         role="model",
                         author_id=self.bot.user.id if self.bot.user else None,
-                        author_name=self._assistant_name(message),
+                        author_name=assistant_author_name,
                         content_text=reply_text,
                         created_at=assistant_created_at,
                         embedding=assistant_embedding,
+                        content_parts=(
+                            {
+                                "type": "text",
+                                "text": self._format_chat_turn(
+                                    author_name=assistant_author_name,
+                                    created_at=assistant_created_at,
+                                    content_text=reply_text,
+                                ),
+                            },
+                        ),
                     )
 
             await self._maybe_schedule_summary(message.channel.id)
