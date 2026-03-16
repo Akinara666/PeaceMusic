@@ -1143,8 +1143,8 @@ class Music(commands.Cog):
         return f"Режим повтора: {mode}"
 
     async def set_volume_func(self, message: discord.Message, level: float) -> str:
-        if level < 0.0 or level > 2.0:
-            await message.reply("Громкость должна быть в диапазоне 0.0-2.0.")
+        if level < 0.0 or level > 5.0:
+            await message.reply("Громкость должна быть в диапазоне 0.0-5.0.")
             return "Недопустимое значение громкости"
 
         self._volume = level

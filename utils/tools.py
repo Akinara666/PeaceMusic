@@ -75,13 +75,13 @@ tools = [
         function_declarations=[
             types.FunctionDeclaration(
                 name="set_volume",
-                description="Sets the playback volume (0.0-2.0).",
+                description="Sets the playback volume (0.0-5.0).",
                 parameters=types.Schema(
                     type=types.Type.OBJECT,
                     properties={
                         "level": types.Schema(
                             type=types.Type.NUMBER,
-                            description="A number from 0.0 (mute) to 2.0 (maximum).",
+                            description="A number from 0.0 (mute) to 5.0 (maximum).",
                         ),
                     },
                     required=["level"],
