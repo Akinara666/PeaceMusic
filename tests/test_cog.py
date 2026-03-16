@@ -25,6 +25,14 @@ types = cog_module.types
 
 
 class GeminiChatCogTests(unittest.IsolatedAsyncioTestCase):
+    def test_attachment_content_type_falls_back_to_filename(self) -> None:
+        cog = object.__new__(GeminiChatCog)
+        attachment = SimpleNamespace(content_type=None, filename="voice-message.mp3")
+
+        content_type = cog._attachment_content_type(attachment)
+
+        self.assertEqual(content_type, "audio/mpeg")
+
     async def test_persist_tool_events_stores_tool_rows(self) -> None:
         cog = object.__new__(GeminiChatCog)
         cog._safe_embed_document = AsyncMock(side_effect=["emb-1", "emb-2"])

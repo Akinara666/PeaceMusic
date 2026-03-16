@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,15 +13,20 @@ attachments_module = load_project_module(
 )
 
 AttachmentProcessor = attachments_module.AttachmentProcessor
-types = attachments_module.types
 
 
 class AttachmentProcessorTests(unittest.IsolatedAsyncioTestCase):
-    async def test_to_content_for_generic_attachment_returns_text_only(self) -> None:
+    async def test_to_content_for_generic_attachment_keeps_marker_in_prompt(self) -> None:
         client = SimpleNamespace(aio=SimpleNamespace(files=SimpleNamespace()))
         processor = AttachmentProcessor(client, Path("image.png"), Path("video.mp4"))
         message = SimpleNamespace(
-            attachments=[SimpleNamespace(content_type="text/plain", url="https://file")],
+            attachments=[
+                SimpleNamespace(
+                    content_type="text/plain",
+                    filename="notes.txt",
+                    url="https://file",
+                )
+            ],
             author=SimpleNamespace(name="alice"),
         )
 
@@ -32,22 +36,27 @@ class AttachmentProcessorTests(unittest.IsolatedAsyncioTestCase):
             "note",
         )
 
-        self.assertEqual(memory_text, "note")
+        self.assertEqual(memory_text, "note\n[Attachment: notes.txt]")
         self.assertEqual(content.role, "user")
-        self.assertEqual(content.parts[0].text, "[2026-03-15 12:00:00] alice: note")
+        self.assertEqual(
+            content.parts[0].text,
+            "[2026-03-15 12:00:00] alice: note [Attachment: notes.txt]",
+        )
 
     async def test_to_content_for_image_uses_uploaded_file_and_fallback(self) -> None:
-        files_api = SimpleNamespace(
-            upload=AsyncMock(return_value=SimpleNamespace(name="uploaded")),
-        )
-        client = SimpleNamespace(aio=SimpleNamespace(files=files_api))
+        client = SimpleNamespace(aio=SimpleNamespace(files=SimpleNamespace()))
         processor = AttachmentProcessor(client, Path("image.png"), Path("video.mp4"))
-        processor._download_attachment = AsyncMock(return_value=Path("/tmp/uploaded.png"))
-        processor._wait_for_file = AsyncMock(
+        processor._upload_attachment = AsyncMock(
             return_value=SimpleNamespace(uri="uri://image", mime_type="image/png")
         )
         message = SimpleNamespace(
-            attachments=[SimpleNamespace(content_type="image/png", url="https://image")],
+            attachments=[
+                SimpleNamespace(
+                    content_type="image/png",
+                    filename="cat.png",
+                    url="https://image",
+                )
+            ],
             author=SimpleNamespace(name="alice"),
         )
 
@@ -57,43 +66,130 @@ class AttachmentProcessorTests(unittest.IsolatedAsyncioTestCase):
             "",
         )
 
-        self.assertEqual(memory_text, "[Image attachment]")
+        self.assertEqual(memory_text, "[Image attachment: cat.png]")
         self.assertEqual(content.parts[0].file_data.uri, "uri://image")
-        self.assertEqual(content.parts[1].text, "[2026-03-15 12:00:00] alice [Image attachment]")
-        files_api.upload.assert_awaited_once()
+        self.assertEqual(
+            content.parts[1].text,
+            "[2026-03-15 12:00:00] alice [Image attachment: cat.png]",
+        )
+
+    async def test_to_content_infers_media_type_from_filename(self) -> None:
+        client = SimpleNamespace(aio=SimpleNamespace(files=SimpleNamespace()))
+        processor = AttachmentProcessor(client, Path("image.png"), Path("video.mp4"))
+        processor._upload_attachment = AsyncMock(
+            return_value=SimpleNamespace(uri="uri://photo", mime_type="image/jpeg")
+        )
+        message = SimpleNamespace(
+            attachments=[
+                SimpleNamespace(
+                    content_type=None,
+                    filename="photo.jpg",
+                    url="https://image",
+                )
+            ],
+            author=SimpleNamespace(name="alice"),
+        )
+
+        content, memory_text = await processor.to_content(
+            message,
+            "[2026-03-15 12:00:00] alice",
+            "",
+        )
+
+        self.assertEqual(memory_text, "[Image attachment: photo.jpg]")
+        self.assertEqual(content.parts[0].file_data.mime_type, "image/jpeg")
+        processor._upload_attachment.assert_awaited_once_with(
+            message.attachments[0], "image/jpeg"
+        )
+
+    async def test_to_content_handles_multiple_attachments(self) -> None:
+        client = SimpleNamespace(aio=SimpleNamespace(files=SimpleNamespace()))
+        processor = AttachmentProcessor(client, Path("image.png"), Path("video.mp4"))
+        processor._upload_attachment = AsyncMock(
+            return_value=SimpleNamespace(uri="uri://image", mime_type="image/png")
+        )
+        message = SimpleNamespace(
+            attachments=[
+                SimpleNamespace(
+                    content_type="image/png",
+                    filename="cat.png",
+                    url="https://image",
+                ),
+                SimpleNamespace(
+                    content_type="text/plain",
+                    filename="notes.txt",
+                    url="https://file",
+                ),
+            ],
+            author=SimpleNamespace(name="alice"),
+        )
+
+        content, memory_text = await processor.to_content(
+            message,
+            "[2026-03-15 12:00:00] alice: look",
+            "look",
+        )
+
+        self.assertEqual(content.parts[0].file_data.uri, "uri://image")
+        self.assertEqual(
+            content.parts[1].text,
+            "[2026-03-15 12:00:00] alice: look [Attachment: notes.txt]",
+        )
+        self.assertEqual(
+            memory_text,
+            "look\n[Image attachment: cat.png]\n[Attachment: notes.txt]",
+        )
+
+    async def test_to_content_falls_back_to_text_when_upload_fails(self) -> None:
+        client = SimpleNamespace(aio=SimpleNamespace(files=SimpleNamespace()))
+        processor = AttachmentProcessor(client, Path("image.png"), Path("video.mp4"))
+        processor._upload_attachment = AsyncMock(side_effect=RuntimeError("upload failed"))
+        message = SimpleNamespace(
+            attachments=[
+                SimpleNamespace(
+                    content_type="image/png",
+                    filename="cat.png",
+                    url="https://image",
+                )
+            ],
+            author=SimpleNamespace(name="alice"),
+        )
+
+        content, memory_text = await processor.to_content(
+            message,
+            "[2026-03-15 12:00:00] alice",
+            "",
+        )
+
+        self.assertEqual(memory_text, "[Image attachment: cat.png]")
+        self.assertEqual(len(content.parts), 1)
+        self.assertEqual(
+            content.parts[0].text,
+            "[2026-03-15 12:00:00] alice [Image attachment: cat.png]",
+        )
 
     async def test_download_attachment_writes_response_bytes(self) -> None:
         client = SimpleNamespace(aio=SimpleNamespace(files=SimpleNamespace()))
         processor = AttachmentProcessor(client, Path("image.png"), Path("video.mp4"))
-        attachment = SimpleNamespace(url="https://example.com/file")
+        attachment = SimpleNamespace(
+            filename="photo.png",
+            read=AsyncMock(return_value=b"payload"),
+        )
 
-        class FakeResponse:
-            content = b"payload"
+        with patch.object(
+            attachments_module.asyncio,
+            "to_thread",
+            new=AsyncMock(side_effect=lambda func, *args, **kwargs: func(*args, **kwargs)),
+        ):
+            result = await processor._download_attachment(attachment, "image/png")
+            payload = result.read_bytes()
 
-            def raise_for_status(self):
-                return None
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            target = Path(tmpdir) / "download.bin"
-            with patch.object(
-                attachments_module.requests,
-                "get",
-                return_value=FakeResponse(),
-            ) as get_mock:
-                async def fake_to_thread(func, *args, **kwargs):
-                    return func(*args, **kwargs)
-
-                with patch.object(
-                    attachments_module.asyncio,
-                    "to_thread",
-                    new=AsyncMock(side_effect=fake_to_thread),
-                ):
-                    result = await processor._download_attachment(attachment, target)
-                    payload = result.read_bytes()
-
-            self.assertEqual(result.name, "download.bin")
+        try:
+            self.assertEqual(result.suffix, ".png")
             self.assertEqual(payload, b"payload")
-            get_mock.assert_called_once_with("https://example.com/file", timeout=30)
+            attachment.read.assert_awaited_once_with(use_cached=True)
+        finally:
+            result.unlink(missing_ok=True)
 
     async def test_wait_for_file_polls_until_active(self) -> None:
         files_api = SimpleNamespace(

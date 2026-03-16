@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import mimetypes
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -143,6 +144,15 @@ class GeminiChatCog(commands.Cog):
         if self.bot.user:
             return self._normalize_author_name(self.bot.user.display_name)
         return "PeaceMusic"
+
+    def _attachment_content_type(self, attachment: discord.Attachment) -> str:
+        content_type = (getattr(attachment, "content_type", None) or "").lower().strip()
+        if content_type:
+            return content_type
+
+        filename = Path(getattr(attachment, "filename", "")).name
+        guessed, _ = mimetypes.guess_type(filename)
+        return (guessed or "").lower()
 
     def _ensure_json_safe(self, payload: object) -> object:
         try:
@@ -494,8 +504,7 @@ class GeminiChatCog(commands.Cog):
                 (
                     attachment
                     for attachment in message.attachments
-                    if attachment.content_type
-                    and attachment.content_type.startswith("audio/")
+                    if self._attachment_content_type(attachment).startswith("audio/")
                 ),
                 None,
             )
