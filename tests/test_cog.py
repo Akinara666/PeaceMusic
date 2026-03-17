@@ -27,6 +27,92 @@ types = cog_module.types
 
 
 class GeminiChatCogTests(unittest.IsolatedAsyncioTestCase):
+    async def test_process_tool_call_propagates_tool_notification_flag(self) -> None:
+        music_cog = SimpleNamespace(
+            play_func=AsyncMock(),
+            skip_func=AsyncMock(),
+            stop_func=AsyncMock(),
+            set_volume_func=AsyncMock(),
+            skip_by_name_func=AsyncMock(),
+            seek_func=AsyncMock(),
+            summon_func=AsyncMock(),
+            disconnect_func=AsyncMock(),
+            pause_func=AsyncMock(
+                return_value=SimpleNamespace(
+                    text="Воспроизведение на паузе",
+                    user_notified=True,
+                )
+            ),
+            resume_func=AsyncMock(),
+            now_playing_func=AsyncMock(),
+            get_queue_func=AsyncMock(),
+            shuffle_queue_func=AsyncMock(),
+            clear_queue_func=AsyncMock(),
+            remove_from_queue_func=AsyncMock(),
+            set_loop_mode_func=AsyncMock(),
+        )
+        cog = object.__new__(GeminiChatCog)
+        cog.bot = SimpleNamespace(get_cog=lambda name: music_cog if name == "Music" else None)
+
+        feedback = await cog.process_tool_call(
+            types.FunctionCall(name="pause_music", args={}),
+            SimpleNamespace(channel=SimpleNamespace()),
+        )
+
+        self.assertTrue(feedback.user_notified)
+        self.assertEqual(
+            feedback.part.function_response.response,
+            {
+                "result": "Воспроизведение на паузе",
+                "user_notified": True,
+            },
+        )
+        music_cog.pause_func.assert_awaited_once()
+
+    async def test_on_message_sends_audio_attachment_fallback_when_tool_sends_nothing(self) -> None:
+        class _TypingContext:
+            async def __aenter__(self):
+                return None
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        fake_result = SimpleNamespace(
+            text="Добавлено в очередь: voice.mp3",
+            user_notified=False,
+        )
+        fake_music_cog = SimpleNamespace(
+            play_attachment_func=AsyncMock(return_value=fake_result)
+        )
+        fake_channel = SimpleNamespace(
+            id=77,
+            typing=lambda: _TypingContext(),
+        )
+        attachment = SimpleNamespace(content_type="audio/mpeg", filename="voice.mp3")
+        message = SimpleNamespace(
+            author=SimpleNamespace(id=10),
+            channel=fake_channel,
+            attachments=[attachment],
+        )
+
+        cog = object.__new__(GeminiChatCog)
+        cog.bot = SimpleNamespace(
+            user=SimpleNamespace(id=999),
+            get_cog=lambda name: fake_music_cog if name == "Music" else None,
+            process_commands=AsyncMock(),
+        )
+        cog._safe_channel_send = AsyncMock(return_value=SimpleNamespace(id=55))
+
+        with patch.object(cog_module, "CHATBOT_CHANNEL_ID", None):
+            await cog.on_message(message)
+
+        fake_music_cog.play_attachment_func.assert_awaited_once_with(message, attachment)
+        cog._safe_channel_send.assert_awaited_once_with(
+            fake_channel,
+            "Добавлено в очередь: voice.mp3",
+        )
+        cog.bot.process_commands.assert_not_awaited()
+
     def test_attachment_content_type_falls_back_to_filename(self) -> None:
         cog = object.__new__(GeminiChatCog)
         attachment = SimpleNamespace(content_type=None, filename="voice-message.mp3")

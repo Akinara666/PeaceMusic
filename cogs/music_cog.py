@@ -342,6 +342,12 @@ class QueuedTrack:
     prepared_at_monotonic: float = field(default_factory=time.monotonic)
 
 
+@dataclass(frozen=True)
+class UserNotificationResult:
+    text: str
+    user_notified: bool = False
+
+
 # ----------------------------------------------------------------------------
 # Music Cog
 # ----------------------------------------------------------------------------
@@ -387,6 +393,109 @@ class Music(commands.Cog):
         for track in list(self.queue):
             self._cleanup_track_file(track)
         self.queue.clear()
+
+    def _result(self, text: str, *, user_notified: bool = False) -> UserNotificationResult:
+        return UserNotificationResult(text=text, user_notified=user_notified)
+
+    def _truncate_message_content(self, content: Optional[str]) -> Optional[str]:
+        if content is None or len(content) <= 2000:
+            return content
+        return f"{content[:1997]}..."
+
+    async def _safe_channel_send(
+        self,
+        channel: Optional[discord.abc.Messageable],
+        *,
+        content: Optional[str] = None,
+        embed: Optional[discord.Embed] = None,
+    ) -> bool:
+        if channel is None:
+            return False
+        try:
+            await channel.send(content=self._truncate_message_content(content), embed=embed)
+            return True
+        except discord.HTTPException:
+            logger.warning("Failed to send message to channel", exc_info=True)
+            return False
+
+    async def _safe_reply(
+        self,
+        message: discord.Message,
+        *,
+        content: Optional[str] = None,
+        embed: Optional[discord.Embed] = None,
+    ) -> bool:
+        payload = self._truncate_message_content(content)
+        try:
+            await message.reply(content=payload, embed=embed)
+            return True
+        except discord.HTTPException:
+            logger.warning("Failed to reply to message %s", getattr(message, "id", None), exc_info=True)
+            return await self._safe_channel_send(message.channel, content=payload, embed=embed)
+
+    async def _safe_reply_message(
+        self,
+        message: discord.Message,
+        *,
+        content: Optional[str] = None,
+        embed: Optional[discord.Embed] = None,
+    ) -> Optional[discord.Message]:
+        try:
+            return await message.reply(
+                content=self._truncate_message_content(content),
+                embed=embed,
+            )
+        except discord.HTTPException:
+            logger.warning(
+                "Failed to send reply message for %s",
+                getattr(message, "id", None),
+                exc_info=True,
+            )
+            return None
+
+    async def _safe_edit_message(
+        self,
+        target: Optional[discord.Message],
+        *,
+        content: Optional[str] = None,
+        embed: Optional[discord.Embed] = None,
+    ) -> bool:
+        if target is None:
+            return False
+        try:
+            await target.edit(content=self._truncate_message_content(content), embed=embed)
+            return True
+        except discord.HTTPException:
+            logger.warning("Failed to edit message %s", getattr(target, "id", None), exc_info=True)
+            return False
+
+    async def _safe_delete_message(self, target: Optional[discord.Message]) -> bool:
+        if target is None:
+            return False
+        try:
+            await target.delete()
+            return True
+        except discord.HTTPException:
+            logger.warning("Failed to delete message %s", getattr(target, "id", None), exc_info=True)
+            return False
+
+    def _track_background_send(self, task: asyncio.Task[bool]) -> None:
+        with contextlib.suppress(asyncio.CancelledError):
+            exc = task.exception()
+            if exc is not None:
+                logger.warning("Background channel send failed: %s", exc)
+
+    def _dispatch_channel_send(
+        self,
+        channel: Optional[discord.abc.Messageable],
+        *,
+        content: Optional[str] = None,
+        embed: Optional[discord.Embed] = None,
+    ) -> None:
+        task = asyncio.create_task(
+            self._safe_channel_send(channel, content=content, embed=embed)
+        )
+        task.add_done_callback(self._track_background_send)
 
     def _touch_audio_heartbeat(self) -> None:
         self._last_audio_time = time.monotonic()
@@ -457,7 +566,6 @@ class Music(commands.Cog):
     ) -> Optional[discord.VoiceClient]:
         author = message.author
         if not author.voice or not author.voice.channel:
-            await message.reply("Ты не подключен к голосовому каналу.")
             return None
 
         if self.voice_client and self.voice_client.is_connected():
@@ -569,7 +677,7 @@ class Music(commands.Cog):
 
         if track.channel:
             embed = self._build_track_embed(track, color=color, description=description)
-            asyncio.create_task(track.channel.send(embed=embed))
+            self._dispatch_channel_send(track.channel, embed=embed)
         return True
 
     async def _start_next_track(self) -> None:
@@ -778,11 +886,19 @@ class Music(commands.Cog):
 
     # ------------------------------------------------------------------
     # Public functions used by the AI cog
-    async def play_func(self, message: discord.Message, song_name: str) -> str:
+    async def play_func(
+        self, message: discord.Message, song_name: str
+    ) -> UserNotificationResult:
         async with self._play_lock:
             voice_client = await self._ensure_voice_client(message)
             if not voice_client:
-                return "Пользователь не в голосовом канале"
+                notified = await self._safe_reply(
+                    message, content="Ты не подключен к голосовому каналу."
+                )
+                return self._result(
+                    "Пользователь не в голосовом канале",
+                    user_notified=notified,
+                )
 
             tracks: list[QueuedTrack]
             normalized_query = normalize_audio_query(song_name)
@@ -797,10 +913,10 @@ class Music(commands.Cog):
             is_soundcloud = is_soundcloud_query(normalized_query)
             should_stream = not is_soundcloud
 
-            if is_soundcloud:
-                msg = await message.reply("Скачиваю трек с SoundCloud...")
-            else:
-                msg = await message.reply("Ищу трек...")
+            status_text = (
+                "Скачиваю трек с SoundCloud..." if is_soundcloud else "Ищу трек..."
+            )
+            msg = await self._safe_reply_message(message, content=status_text)
 
             try:
                 sources = await YTDLSource.from_url(
@@ -812,16 +928,28 @@ class Music(commands.Cog):
                 )
             except DownloadError as exc:
                 logger.warning("Failed to download track %s: %s", normalized_query, exc)
-                await msg.edit(content=f"Ошибка при поиске: {exc}")
-                return "Ошибка поиска"
+                notified = await self._safe_edit_message(
+                    msg, content=f"Ошибка при поиске: {exc}"
+                )
+                if not notified:
+                    notified = await self._safe_reply(
+                        message, content=f"Ошибка при поиске: {exc}"
+                    )
+                return self._result("Ошибка поиска", user_notified=notified)
             except Exception as exc:  # noqa: BLE001
                 if isinstance(exc, asyncio.CancelledError):
                     raise
                 logger.exception(
                     "Unexpected error while fetching track %s", normalized_query
                 )
-                await msg.edit(content="Произошла непредвиденная ошибка.")
-                return "Ошибка поиска"
+                notified = await self._safe_edit_message(
+                    msg, content="Произошла непредвиденная ошибка."
+                )
+                if not notified:
+                    notified = await self._safe_reply(
+                        message, content="Произошла непредвиденная ошибка."
+                    )
+                return self._result("Ошибка поиска", user_notified=notified)
 
             tracks = [
                 self._build_queued_track(
@@ -835,8 +963,14 @@ class Music(commands.Cog):
             ]
 
             if not tracks:
-                await msg.edit(content="Не удалось найти трек по этому запросу.")
-                return "Трек не найден"
+                notified = await self._safe_edit_message(
+                    msg, content="Не удалось найти трек по этому запросу."
+                )
+                if not notified:
+                    notified = await self._safe_reply(
+                        message, content="Не удалось найти трек по этому запросу."
+                    )
+                return self._result("Трек не найден", user_notified=notified)
 
             for track in tracks:
                 self.queue.append(track)
@@ -851,31 +985,40 @@ class Music(commands.Cog):
             if will_play_immediately:
                 # If playing immediately, `_start_next_track` will send the "Now Playing" embed.
                 # We can delete the "Downloading..." temporary message to avoid double notifications.
-                try:
-                    await msg.delete()
-                except discord.HTTPException:
-                    pass
+                await self._safe_delete_message(msg)
                 await self._start_next_track()
+                user_notified = True
             else:
                 # If adding to queue, show the "Added to queue" embed
                 embed = self._build_track_embed(tracks[0], color=discord.Color.blue())
-                try:
-                    await msg.edit(content=None, embed=embed)
-                except discord.HTTPException:
-                    pass
+                user_notified = await self._safe_edit_message(msg, content=None, embed=embed)
+                if not user_notified:
+                    user_notified = await self._safe_reply(message, embed=embed)
 
             queued_titles = ", ".join(track.title for track in tracks)
             if len(tracks) > 1:
-                return f"Добавлено {len(tracks)} треков из плейлиста."
-            return f"Добавлено в очередь: {queued_titles}"
+                return self._result(
+                    f"Добавлено {len(tracks)} треков из плейлиста.",
+                    user_notified=user_notified,
+                )
+            return self._result(
+                f"Добавлено в очередь: {queued_titles}",
+                user_notified=user_notified,
+            )
 
     async def play_attachment_func(
         self, message: discord.Message, attachment: discord.Attachment
-    ) -> str:
+    ) -> UserNotificationResult:
         async with self._play_lock:
             voice_client = await self._ensure_voice_client(message)
             if not voice_client:
-                return "Пользователь не в голосовом канале"
+                notified = await self._safe_reply(
+                    message, content="Ты не подключен к голосовому каналу."
+                )
+                return self._result(
+                    "Пользователь не в голосовом канале",
+                    user_notified=notified,
+                )
 
             # Save file with unique name
             safe_filename = Path(attachment.filename).name
@@ -885,7 +1028,13 @@ class Music(commands.Cog):
                 await attachment.save(file_path)
             except Exception as exc:
                 logger.warning("Failed to save attachment %s: %s", safe_filename, exc)
-                return "Ошибка сохранения файла"
+                notified = await self._safe_reply(
+                    message, content="Ошибка сохранения файла"
+                )
+                return self._result(
+                    "Ошибка сохранения файла",
+                    user_notified=notified,
+                )
 
             try:
                 audio_source = self._create_local_track_source(file_path)
@@ -895,7 +1044,13 @@ class Music(commands.Cog):
                 )
                 with contextlib.suppress(OSError):
                     file_path.unlink()
-                return "Ошибка обработки аудиофайла"
+                notified = await self._safe_reply(
+                    message, content="Ошибка обработки аудиофайла"
+                )
+                return self._result(
+                    "Ошибка обработки аудиофайла",
+                    user_notified=notified,
+                )
 
             track = QueuedTrack(
                 source=audio_source,
@@ -917,25 +1072,31 @@ class Music(commands.Cog):
 
             if will_play_immediately:
                 await self._start_next_track()
+                user_notified = True
             else:
                 embed = self._build_track_embed(track, color=discord.Color.green())
-                await message.reply(embed=embed)
+                user_notified = await self._safe_reply(message, embed=embed)
 
-            return f"Добавлено в очередь: {track.title}"
+            return self._result(
+                f"Добавлено в очередь: {track.title}",
+                user_notified=user_notified,
+            )
 
-    async def skip_func(self, message: discord.Message) -> str:
+    async def skip_func(self, message: discord.Message) -> UserNotificationResult:
         if not self.voice_client or (
             not self.voice_client.is_playing() and not self.voice_client.is_paused()
         ):
-            await message.reply("Сейчас ничего не играет.")
-            return "Очередь не воспроизводится"
+            notified = await self._safe_reply(message, content="Сейчас ничего не играет.")
+            return self._result("Очередь не воспроизводится", user_notified=notified)
 
         skipped = self.current.title if self.current else "текущий трек"
         self.voice_client.stop()
-        await message.reply(f"Пропускаю: {skipped}")
-        return f"Пропущен трек: {skipped}"
+        notified = await self._safe_reply(message, content=f"Пропускаю: {skipped}")
+        return self._result(f"Пропущен трек: {skipped}", user_notified=notified)
 
-    async def skip_by_name_func(self, message: discord.Message, song_name: str) -> str:
+    async def skip_by_name_func(
+        self, message: discord.Message, song_name: str
+    ) -> UserNotificationResult:
         lowercase_query = song_name.lower()
         if self.current and lowercase_query in self.current.title.lower():
             skipped_title = self.current.title
@@ -943,19 +1104,29 @@ class Music(commands.Cog):
                 self.voice_client.is_playing() or self.voice_client.is_paused()
             ):
                 self.voice_client.stop()
-            await message.reply(f"Пропущен текущий трек: {skipped_title}")
-            return f"Пропущен текущий трек: {skipped_title}"
+            notified = await self._safe_reply(
+                message, content=f"Пропущен текущий трек: {skipped_title}"
+            )
+            return self._result(
+                f"Пропущен текущий трек: {skipped_title}",
+                user_notified=notified,
+            )
 
         for track in list(self.queue):
             if lowercase_query in track.title.lower():
                 self.queue.remove(track)
                 self._cleanup_track_file(track)
-                await message.reply(f"Удалено из очереди: {track.title}")
-                return f"Удалено из очереди: {track.title}"
-        await message.reply("Такой трек не найден в очереди.")
-        return "Трек не найден"
+                notified = await self._safe_reply(
+                    message, content=f"Удалено из очереди: {track.title}"
+                )
+                return self._result(
+                    f"Удалено из очереди: {track.title}",
+                    user_notified=notified,
+                )
+        notified = await self._safe_reply(message, content="Такой трек не найден в очереди.")
+        return self._result("Трек не найден", user_notified=notified)
 
-    async def stop_func(self, message: discord.Message) -> str:
+    async def stop_func(self, message: discord.Message) -> UserNotificationResult:
         self.loop_mode = "off"
         self._replay_track = None
         self._cleanup_queue()
@@ -968,17 +1139,25 @@ class Music(commands.Cog):
             self._suppress_after_callback_once()
             self.voice_client.stop()
         self._cleanup_track_file(current_track)
-        await message.reply("Очередь очищена и воспроизведение остановлено.")
-        return "Очередь очищена"
+        notified = await self._safe_reply(
+            message, content="Очередь очищена и воспроизведение остановлено."
+        )
+        return self._result("Очередь очищена", user_notified=notified)
 
-    async def summon_func(self, message: discord.Message) -> str:
+    async def summon_func(self, message: discord.Message) -> UserNotificationResult:
         voice_client = await self._ensure_voice_client(message)
         if not voice_client:
-            return "Пользователь не в голосовом канале"
-        await message.reply("Я уже с вами в канале!")
-        return "Бот в голосовом канале"
+            notified = await self._safe_reply(
+                message, content="Ты не подключен к голосовому каналу."
+            )
+            return self._result(
+                "Пользователь не в голосовом канале",
+                user_notified=notified,
+            )
+        notified = await self._safe_reply(message, content="Я уже с вами в канале!")
+        return self._result("Бот в голосовом канале", user_notified=notified)
 
-    async def disconnect_func(self, message: discord.Message) -> str:
+    async def disconnect_func(self, message: discord.Message) -> UserNotificationResult:
         self.loop_mode = "off"
         self._replay_track = None
         current_track = self.current
@@ -992,10 +1171,14 @@ class Music(commands.Cog):
             await self.voice_client.disconnect(force=True)
             self.voice_client = None
         self._cleanup_track_file(current_track)
-        await message.reply("Отключилась от канала и очистила очередь.")
-        return "Бот отключён"
+        notified = await self._safe_reply(
+            message, content="Отключилась от канала и очистила очередь."
+        )
+        return self._result("Бот отключён", user_notified=notified)
 
-    async def seek_func(self, message: discord.Message, time: str) -> str:
+    async def seek_func(
+        self, message: discord.Message, time: str
+    ) -> UserNotificationResult:
         if (
             not self.voice_client
             or (
@@ -1003,58 +1186,77 @@ class Music(commands.Cog):
             )
             or not self.current
         ):
-            await message.reply("Сейчас ничего не играет.")
-            return "Нет трека для перемотки"
+            notified = await self._safe_reply(message, content="Сейчас ничего не играет.")
+            return self._result("Нет трека для перемотки", user_notified=notified)
 
         try:
             seconds = parse_time(time)
         except ValueError:
-            await message.reply("Неверный формат времени. Пример: 1:23 или 73")
-            return "Некорректное время"
+            notified = await self._safe_reply(
+                message, content="Неверный формат времени. Пример: 1:23 или 73"
+            )
+            return self._result("Некорректное время", user_notified=notified)
 
         if not self.current.stream_url and not self.current.local_path:
-            await message.reply("Для этого трека перемотка недоступна.")
-            return "Перемотка недоступна"
+            notified = await self._safe_reply(
+                message, content="Для этого трека перемотка недоступна."
+            )
+            return self._result("Перемотка недоступна", user_notified=notified)
 
         was_paused = self.voice_client.is_paused()
         try:
             refreshed = await self._refresh_track_source(self.current, seek=seconds)
         except DownloadError as exc:
             logger.warning("Failed to seek %s: %s", self.current.title, exc)
-            await message.reply("Не удалось перемотать трек.")
-            return "Ошибка перемотки"
+            notified = await self._safe_reply(
+                message, content="Не удалось перемотать трек."
+            )
+            return self._result("Ошибка перемотки", user_notified=notified)
         except Exception:
             logger.exception("Unexpected seek error for %s", self.current.title)
-            await message.reply("Не удалось перемотать трек.")
-            return "Ошибка перемотки"
+            notified = await self._safe_reply(
+                message, content="Не удалось перемотать трек."
+            )
+            return self._result("Ошибка перемотки", user_notified=notified)
 
         if not refreshed:
-            await message.reply("Для этого трека перемотка недоступна.")
-            return "Перемотка недоступна"
+            notified = await self._safe_reply(
+                message, content="Для этого трека перемотка недоступна."
+            )
+            return self._result("Перемотка недоступна", user_notified=notified)
 
         self._stop_voice_client_for_replace()
         try:
             self.voice_client.play(self.current.source, after=self._after_playback)
         except Exception:
             logger.exception("Failed to resume playback after seek for %s", self.current.title)
-            await message.reply("Не удалось перемотать трек.")
-            return "Ошибка перемотки"
+            notified = await self._safe_reply(
+                message, content="Не удалось перемотать трек."
+            )
+            return self._result("Ошибка перемотки", user_notified=notified)
         self._mark_playback_started(start_at=seconds)
         if was_paused:
             self.voice_client.pause()
             self._paused_at_monotonic = time.monotonic()
-        await message.reply(f"Перемотала на {format_duration(seconds)}")
-        return f"Перемотала на {format_duration(seconds)}"
+        notified = await self._safe_reply(
+            message, content=f"Перемотала на {format_duration(seconds)}"
+        )
+        return self._result(
+            f"Перемотала на {format_duration(seconds)}",
+            user_notified=notified,
+        )
 
-    async def pause_func(self, message: discord.Message) -> str:
+    async def pause_func(self, message: discord.Message) -> UserNotificationResult:
         if self.voice_client and self.voice_client.is_playing():
             self.voice_client.pause()
             self._paused_at_monotonic = time.monotonic()
-            await message.reply("Воспроизведение приостановлено.")
-            return "Воспроизведение на паузе"
-        return "Ничего не играет"
+            notified = await self._safe_reply(
+                message, content="Воспроизведение приостановлено."
+            )
+            return self._result("Воспроизведение на паузе", user_notified=notified)
+        return self._result("Ничего не играет")
 
-    async def resume_func(self, message: discord.Message) -> str:
+    async def resume_func(self, message: discord.Message) -> UserNotificationResult:
         if self.voice_client and self.voice_client.is_paused():
             self.voice_client.resume()
             if (
@@ -1066,11 +1268,15 @@ class Music(commands.Cog):
                 )
             self._paused_at_monotonic = None
             self._touch_audio_heartbeat()
-            await message.reply("Воспроизведение продолжено.")
-            return "Воспроизведение продолжено"
-        return "Нечего продолжать"
+            notified = await self._safe_reply(
+                message, content="Воспроизведение продолжено."
+            )
+            return self._result("Воспроизведение продолжено", user_notified=notified)
+        return self._result("Нечего продолжать")
 
-    async def now_playing_func(self, message: discord.Message) -> str:
+    async def now_playing_func(
+        self, message: discord.Message
+    ) -> UserNotificationResult:
         if (
             not self.voice_client
             or (
@@ -1079,18 +1285,22 @@ class Music(commands.Cog):
             )
             or not self.current
         ):
-            return "Сейчас ничего не играет."
+            return self._result("Сейчас ничего не играет.")
 
         progress = self._current_progress_seconds()
         dur = self.current.duration
         dur_str = format_duration(dur) if dur else "Неизвестно"
         prog_str = format_duration(progress)
 
-        return f"Сейчас играет: {self.current.title} (Прогресс: {prog_str} / {dur_str})"
+        return self._result(
+            f"Сейчас играет: {self.current.title} (Прогресс: {prog_str} / {dur_str})"
+        )
 
-    async def get_queue_func(self, message: discord.Message) -> str:
+    async def get_queue_func(
+        self, message: discord.Message
+    ) -> UserNotificationResult:
         if not self.queue:
-            return "Очередь пуста."
+            return self._result("Очередь пуста.")
         
         lines = []
         for i, track in enumerate(self.queue, start=1):
@@ -1099,69 +1309,104 @@ class Music(commands.Cog):
             if i >= 20:
                 lines.append("... и еще треки")
                 break
-        return "\n".join(lines)
+        return self._result("\n".join(lines))
 
-    async def shuffle_queue_func(self, message: discord.Message) -> str:
+    async def shuffle_queue_func(
+        self, message: discord.Message
+    ) -> UserNotificationResult:
         if not self.queue:
-            return "Очередь пуста, нечего перемешивать."
+            return self._result("Очередь пуста, нечего перемешивать.")
         queue_list = list(self.queue)
         random.shuffle(queue_list)
         self.queue.clear()
         self.queue.extend(queue_list)
-        await message.reply("Очередь перемешана.")
-        return "Очередь перемешана"
+        notified = await self._safe_reply(message, content="Очередь перемешана.")
+        return self._result("Очередь перемешана", user_notified=notified)
 
-    async def clear_queue_func(self, message: discord.Message) -> str:
+    async def clear_queue_func(
+        self, message: discord.Message
+    ) -> UserNotificationResult:
         if not self.queue:
-            return "Очередь и так пуста."
+            return self._result("Очередь и так пуста.")
         self._cleanup_queue()
         if self.loop_mode == "queue":
             self.loop_mode = "off"
-        await message.reply("Очередь очищена (текущий трек продолжает играть).")
-        return "Очередь очищена"
+        notified = await self._safe_reply(
+            message, content="Очередь очищена (текущий трек продолжает играть)."
+        )
+        return self._result("Очередь очищена", user_notified=notified)
 
-    async def remove_from_queue_func(self, message: discord.Message, index: int) -> str:
+    async def remove_from_queue_func(
+        self, message: discord.Message, index: int
+    ) -> UserNotificationResult:
         if not self.queue:
-            return "Очередь пуста."
+            return self._result("Очередь пуста.")
         if index < 1 or index > len(self.queue):
-            return f"Неверный индекс. В очереди {len(self.queue)} треков."
+            return self._result(f"Неверный индекс. В очереди {len(self.queue)} треков.")
         
         track = self.queue[index - 1]
         self.queue.remove(track)
         self._cleanup_track_file(track)
-        await message.reply(f"Удалено из очереди: {track.title}")
-        return f"Удален трек: {track.title}"
-        
-    async def set_loop_mode_func(self, message: discord.Message, mode: str) -> str:
+        notified = await self._safe_reply(
+            message, content=f"Удалено из очереди: {track.title}"
+        )
+        return self._result(f"Удален трек: {track.title}", user_notified=notified)
+
+    async def set_loop_mode_func(
+        self, message: discord.Message, mode: str
+    ) -> UserNotificationResult:
         mode = mode.lower()
         if mode not in ("off", "track", "queue"):
-            return "Неизвестный режим. Используйте 'off', 'track' или 'queue'."
+            return self._result(
+                "Неизвестный режим. Используйте 'off', 'track' или 'queue'."
+            )
         
         self.loop_mode = mode
         modes_tr = {"off": "Выключен", "track": "Текущий трек", "queue": "Вся очередь"}
-        await message.reply(f"Режим повтора установлен на: {modes_tr[mode]}.")
-        return f"Режим повтора: {mode}"
+        notified = await self._safe_reply(
+            message, content=f"Режим повтора установлен на: {modes_tr[mode]}."
+        )
+        return self._result(f"Режим повтора: {mode}", user_notified=notified)
 
-    async def set_volume_func(self, message: discord.Message, level: float) -> str:
+    async def set_volume_func(
+        self, message: discord.Message, level: float
+    ) -> UserNotificationResult:
         if level < 0.0 or level > 5.0:
-            await message.reply("Громкость должна быть в диапазоне 0.0-5.0.")
-            return "Недопустимое значение громкости"
+            notified = await self._safe_reply(
+                message, content="Громкость должна быть в диапазоне 0.0-5.0."
+            )
+            return self._result("Недопустимое значение громкости", user_notified=notified)
 
         self._volume = level
         if not self.voice_client:
-            await message.reply(f"Громкость по умолчанию установлена на {int(level * 100)}%.")
-            return f"Громкость {int(level * 100)}%"
+            notified = await self._safe_reply(
+                message,
+                content=f"Громкость по умолчанию установлена на {int(level * 100)}%.",
+            )
+            return self._result(
+                f"Громкость {int(level * 100)}%",
+                user_notified=notified,
+            )
 
         source = self.voice_client.source
         if hasattr(source, "volume"):
             source.volume = level
-            await message.reply(f"Громкость установлена на {int(level * 100)}%.")
-            return f"Громкость {int(level * 100)}%"
+            notified = await self._safe_reply(
+                message, content=f"Громкость установлена на {int(level * 100)}%."
+            )
+            return self._result(
+                f"Громкость {int(level * 100)}%",
+                user_notified=notified,
+            )
 
-        await message.reply(
-            f"Громкость по умолчанию установлена на {int(level * 100)}%."
+        notified = await self._safe_reply(
+            message,
+            content=f"Громкость по умолчанию установлена на {int(level * 100)}%.",
         )
-        return f"Громкость {int(level * 100)}%"
+        return self._result(
+            f"Громкость {int(level * 100)}%",
+            user_notified=notified,
+        )
 
     # ------------------------------------------------------------------
     # Housekeeping

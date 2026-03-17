@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 
 _ATTACHMENT_IMAGE_NAME = Path("uploaded_image.png")
 _ATTACHMENT_VIDEO_NAME = Path("uploaded_video.mp4")
+_DISCORD_MESSAGE_LIMIT = 2000
 _MSK_TZ = timezone(timedelta(hours=3))
 _SUMMARY_SYSTEM_PROMPT = """
 Ты обновляешь долговременную память Discord-чата.
@@ -75,6 +76,13 @@ class ToolExecutionEvent:
     args: dict[str, object]
     response: dict[str, object]
     created_at: str
+    user_notified: bool = False
+
+
+@dataclass(frozen=True)
+class ToolExecutionFeedback:
+    part: types.Part
+    user_notified: bool = False
 
 
 class GeminiChatCog(commands.Cog):
@@ -139,6 +147,11 @@ class GeminiChatCog(commands.Cog):
     def _current_timestamp(self) -> str:
         return datetime.now(_MSK_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
+    def _truncate_discord_text(self, text: str) -> str:
+        if len(text) <= _DISCORD_MESSAGE_LIMIT:
+            return text
+        return f"{text[: _DISCORD_MESSAGE_LIMIT - 3]}..."
+
     def _format_chat_turn(
         self,
         *,
@@ -156,6 +169,24 @@ class GeminiChatCog(commands.Cog):
         if self.bot.user:
             return self._normalize_author_name(self.bot.user.display_name)
         return "PeaceMusic"
+
+    async def _safe_channel_send(
+        self,
+        channel: discord.abc.Messageable,
+        text: str,
+    ) -> Optional[discord.Message]:
+        try:
+            return await channel.send(self._truncate_discord_text(text))
+        except discord.HTTPException:
+            logger.warning("Failed to send channel message", exc_info=True)
+            return None
+
+    def _tool_result_text(self, response: dict[str, object]) -> str:
+        if "error" in response:
+            return str(response["error"])
+        if "result" in response:
+            return str(response["result"])
+        return json.dumps(response, ensure_ascii=False)
 
     def _attachment_content_type(self, attachment: discord.Attachment) -> str:
         content_type = (getattr(attachment, "content_type", None) or "").lower().strip()
@@ -540,7 +571,7 @@ class GeminiChatCog(commands.Cog):
 
     async def process_tool_call(
         self, tool_call: types.FunctionCall, message: discord.Message
-    ) -> types.Part:
+    ) -> ToolExecutionFeedback:
         """Execute a music tool call requested by Gemini."""
         tool_name = tool_call.name or ""
         tool_args = dict(tool_call.args if tool_call.args is not None else {})
@@ -551,26 +582,36 @@ class GeminiChatCog(commands.Cog):
             if emoji:
                 try:
                     await message.add_reaction(emoji)
-                    return types.Part.from_function_response(
-                        name=tool_name,
-                        response={"result": f"Reacted with {emoji}"},
+                    return ToolExecutionFeedback(
+                        part=types.Part.from_function_response(
+                            name=tool_name,
+                            response={"result": f"Reacted with {emoji}"},
+                        ),
                     )
                 except discord.HTTPException as exc:
                     logger.warning("Failed to add reaction %s: %s", emoji, exc)
-                    return types.Part.from_function_response(
-                        name=tool_name,
-                        response={"error": f"Failed to react: {exc}"},
+                    return ToolExecutionFeedback(
+                        part=types.Part.from_function_response(
+                            name=tool_name,
+                            response={"error": f"Failed to react: {exc}"},
+                        ),
                     )
-            return types.Part.from_function_response(
-                name=tool_name,
-                response={"error": "Emoji parameter missing"},
+            return ToolExecutionFeedback(
+                part=types.Part.from_function_response(
+                    name=tool_name,
+                    response={"error": "Emoji parameter missing"},
+                ),
             )
 
         if not self.music_cog:
             error_msg = "Music controls are not available right now."
-            await message.channel.send(error_msg)
-            return types.Part.from_function_response(
-                name=tool_name, response={"error": error_msg}
+            user_notified = (await self._safe_channel_send(message.channel, error_msg)) is not None
+            return ToolExecutionFeedback(
+                part=types.Part.from_function_response(
+                    name=tool_name,
+                    response={"error": error_msg, "user_notified": user_notified},
+                ),
+                user_notified=user_notified,
             )
 
         dispatch_map = {
@@ -596,22 +637,45 @@ class GeminiChatCog(commands.Cog):
         if handler is None:
             error_msg = f"Error calling tool '{tool_name}'"
             logger.warning(error_msg)
-            return types.Part.from_function_response(
-                name=tool_name, response={"error": error_msg}
+            return ToolExecutionFeedback(
+                part=types.Part.from_function_response(
+                    name=tool_name, response={"error": error_msg}
+                ),
             )
 
         try:
             result = await handler(message, **tool_args)
         except Exception as exc:  # noqa: BLE001 - surface every failure to the model
             logger.exception("Error while executing tool '%s'", tool_name)
-            await message.channel.send("Failed to run the requested music command.")
-            return types.Part.from_function_response(
-                name=tool_name,
-                response={"error": str(exc) if str(exc) else "Unknown error"},
+            user_notified = (
+                await self._safe_channel_send(
+                    message.channel, "Failed to run the requested music command."
+                )
+            ) is not None
+            return ToolExecutionFeedback(
+                part=types.Part.from_function_response(
+                    name=tool_name,
+                    response={
+                        "error": str(exc) if str(exc) else "Unknown error",
+                        "user_notified": user_notified,
+                    },
+                ),
+                user_notified=user_notified,
             )
 
-        payload = {"result": str(result)} if result is not None else {"result": "ok"}
-        return types.Part.from_function_response(name=tool_name, response=payload)
+        result_text = "ok"
+        user_notified = False
+        if result is not None:
+            result_text = getattr(result, "text", str(result))
+            user_notified = bool(getattr(result, "user_notified", False))
+
+        payload = {"result": result_text}
+        if user_notified:
+            payload["user_notified"] = True
+        return ToolExecutionFeedback(
+            part=types.Part.from_function_response(name=tool_name, response=payload),
+            user_notified=user_notified,
+        )
 
     # ------------------------------------------------------------------
     # Discord events
@@ -634,7 +698,12 @@ class GeminiChatCog(commands.Cog):
             )
             if audio_att:
                 async with message.channel.typing():
-                    await self.music_cog.play_attachment_func(message, audio_att)
+                    result = await self.music_cog.play_attachment_func(message, audio_att)
+                    if result is not None and not bool(
+                        getattr(result, "user_notified", False)
+                    ):
+                        fallback_text = getattr(result, "text", str(result))
+                        await self._safe_channel_send(message.channel, fallback_text)
                 return
 
         async with self._locks[message.channel.id]:
@@ -676,11 +745,12 @@ class GeminiChatCog(commands.Cog):
                         ToolExecutionEvent(
                             tool_name=call.name or "unknown_tool",
                             args=self._coerce_payload_dict(call.args or {}),
-                            response=self._extract_tool_response_payload(feedback),
+                            response=self._extract_tool_response_payload(feedback.part),
                             created_at=self._current_timestamp(),
+                            user_notified=feedback.user_notified,
                         )
                     )
-                    return feedback
+                    return feedback.part
 
                 try:
                     reply_text = await self._response_generator.generate_reply(
@@ -688,13 +758,24 @@ class GeminiChatCog(commands.Cog):
                         tool_callback,
                         system_instruction=system_instruction,
                     )
-                    if reply_text is not None:
-                        sent_reply = await message.channel.send(
-                            reply_text or "I could not think of a reply."
+                    any_tool_notified = any(event.user_notified for event in tool_events)
+                    if reply_text is not None and not any_tool_notified:
+                        sent_reply = await self._safe_channel_send(
+                            message.channel,
+                            reply_text or "I could not think of a reply.",
+                        )
+                    elif reply_text is None and tool_events and not any_tool_notified:
+                        fallback_text = self._tool_result_text(tool_events[-1].response)
+                        sent_reply = await self._safe_channel_send(
+                            message.channel,
+                            fallback_text,
                         )
                 except Exception as exc:  # noqa: BLE001
                     logger.exception("Gemini response failed")
-                    await message.channel.send(f"Failed to generate a response: {exc}")
+                    await self._safe_channel_send(
+                        message.channel,
+                        f"Failed to generate a response: {exc}",
+                    )
 
                 await self._store_message(
                     channel_id=message.channel.id,
