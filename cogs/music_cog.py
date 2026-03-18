@@ -5,7 +5,7 @@ import contextlib
 import logging
 import random
 import shlex
-import time
+import time as time_module
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -209,14 +209,14 @@ async def _probe_info(
     loop = loop or asyncio.get_running_loop()
     cache_key = f"1:{url}"
     cached = _info_cache.get(cache_key)
-    now = time.monotonic()
+    now = time_module.monotonic()
     if cached and (now - cached[0]) < INFO_CACHE_TTL_SECONDS:
         return cached[1]
 
-    start = time.monotonic()
+    start = time_module.monotonic()
     data = await loop.run_in_executor(None, lambda: _extract_info_sync(url, download=False))
-    _info_cache[cache_key] = (time.monotonic(), data)
-    logger.debug("yt_dlp probe took %.2fs for %s", time.monotonic() - start, url)
+    _info_cache[cache_key] = (time_module.monotonic(), data)
+    logger.debug("yt_dlp probe took %.2fs for %s", time_module.monotonic() - start, url)
     return data
 
 
@@ -267,20 +267,20 @@ class YTDLSource(discord.PCMVolumeTransformer):
 
         cache_key = f"{int(stream)}:{url}"
         cached = _info_cache.get(cache_key)
-        now = time.monotonic()
+        now = time_module.monotonic()
         use_cache = stream
 
         if use_cache and cached and (now - cached[0]) < INFO_CACHE_TTL_SECONDS:
             data = cached[1]
             logger.debug("yt_dlp extract_info cache hit for %s", url)
         else:
-            start_time = time.monotonic()
+            start_time = time_module.monotonic()
             data = await loop.run_in_executor(
                 None, lambda: _extract_info_sync(url, download=not stream)
             )
-            elapsed = time.monotonic() - start_time
+            elapsed = time_module.monotonic() - start_time
             if use_cache:
-                _info_cache[cache_key] = (time.monotonic(), data)
+                _info_cache[cache_key] = (time_module.monotonic(), data)
             logger.debug("yt_dlp extract_info took %.2fs for %s", elapsed, url)
 
         entries = data.get("entries") or [data]
@@ -339,7 +339,7 @@ class QueuedTrack:
     reload_query: Optional[str] = None
     should_stream: bool = True
     is_youtube_hls: bool = False
-    prepared_at_monotonic: float = field(default_factory=time.monotonic)
+    prepared_at_monotonic: float = field(default_factory=time_module.monotonic)
 
 
 @dataclass(frozen=True)
@@ -498,21 +498,21 @@ class Music(commands.Cog):
         task.add_done_callback(self._track_background_send)
 
     def _touch_audio_heartbeat(self) -> None:
-        self._last_audio_time = time.monotonic()
+        self._last_audio_time = time_module.monotonic()
 
     def _reset_playback_timers(self) -> None:
         self._track_start_monotonic = None
         self._paused_at_monotonic = None
 
     def _mark_playback_started(self, *, start_at: int = 0) -> None:
-        self._track_start_monotonic = time.monotonic() - max(start_at, 0)
+        self._track_start_monotonic = time_module.monotonic() - max(start_at, 0)
         self._paused_at_monotonic = None
         self._touch_audio_heartbeat()
 
     def _current_progress_seconds(self) -> int:
         if self._track_start_monotonic is None:
             return 0
-        now = self._paused_at_monotonic or time.monotonic()
+        now = self._paused_at_monotonic or time_module.monotonic()
         return max(0, int(now - self._track_start_monotonic))
 
     def _suppress_after_callback_once(self) -> None:
@@ -590,7 +590,7 @@ class Music(commands.Cog):
             if not track.should_stream:
                 track.stream_url = None
                 track.user_agent = None
-            track.prepared_at_monotonic = time.monotonic()
+            track.prepared_at_monotonic = time_module.monotonic()
             return True
 
         target_query = track.reload_query or track.webpage_url or track.stream_url
@@ -620,7 +620,7 @@ class Music(commands.Cog):
         track.local_path = new_source.local_path
         track.is_youtube_hls = new_source.is_youtube_hls
         track.user_agent = new_source.user_agent
-        track.prepared_at_monotonic = time.monotonic()
+        track.prepared_at_monotonic = time_module.monotonic()
 
         if old_local_path and old_local_path != track.local_path:
             with contextlib.suppress(FileNotFoundError, OSError):
@@ -640,7 +640,7 @@ class Music(commands.Cog):
         if (
             track.should_stream
             and track.reload_query
-            and (time.monotonic() - track.prepared_at_monotonic)
+            and (time_module.monotonic() - track.prepared_at_monotonic)
             > STREAM_SOURCE_MAX_AGE_SECONDS
         ):
             needs_refresh = True
@@ -1022,7 +1022,7 @@ class Music(commands.Cog):
 
             # Save file with unique name
             safe_filename = Path(attachment.filename).name
-            file_path = MUSIC_DIRECTORY_PATH / f"{time.time_ns()}_{safe_filename}"
+            file_path = MUSIC_DIRECTORY_PATH / f"{time_module.time_ns()}_{safe_filename}"
 
             try:
                 await attachment.save(file_path)
@@ -1237,7 +1237,7 @@ class Music(commands.Cog):
         self._mark_playback_started(start_at=seconds)
         if was_paused:
             self.voice_client.pause()
-            self._paused_at_monotonic = time.monotonic()
+            self._paused_at_monotonic = time_module.monotonic()
         notified = await self._safe_reply(
             message, content=f"Перемотала на {format_duration(seconds)}"
         )
@@ -1249,7 +1249,7 @@ class Music(commands.Cog):
     async def pause_func(self, message: discord.Message) -> UserNotificationResult:
         if self.voice_client and self.voice_client.is_playing():
             self.voice_client.pause()
-            self._paused_at_monotonic = time.monotonic()
+            self._paused_at_monotonic = time_module.monotonic()
             notified = await self._safe_reply(
                 message, content="Воспроизведение приостановлено."
             )
@@ -1264,7 +1264,7 @@ class Music(commands.Cog):
                 and self._track_start_monotonic is not None
             ):
                 self._track_start_monotonic += (
-                    time.monotonic() - self._paused_at_monotonic
+                    time_module.monotonic() - self._paused_at_monotonic
                 )
             self._paused_at_monotonic = None
             self._touch_audio_heartbeat()
@@ -1419,7 +1419,7 @@ class Music(commands.Cog):
             return
         if self.current.local_path:
             return
-        now = time.monotonic()
+        now = time_module.monotonic()
         last = self._last_audio_time or now
         if now - last > 25:
             await self._restart_current_stream()
@@ -1430,7 +1430,7 @@ class Music(commands.Cog):
 
     @tasks.loop(minutes=5)
     async def check_for_inactivity(self) -> None:
-        now = time.monotonic()
+        now = time_module.monotonic()
         if self.voice_client and self.voice_client.is_connected():
             if not self.voice_client.is_playing() and not self.voice_client.is_paused():
                 last_time = self._last_audio_time or now
