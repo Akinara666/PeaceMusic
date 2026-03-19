@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import unittest
 from types import SimpleNamespace
@@ -27,6 +28,82 @@ types = cog_module.types
 
 
 class GeminiChatCogTests(unittest.IsolatedAsyncioTestCase):
+    async def test_on_message_stops_typing_before_persisting_memory(self) -> None:
+        events: list[str] = []
+
+        class _TypingContext:
+            async def __aenter__(self):
+                events.append("typing_enter")
+                return None
+
+            async def __aexit__(self, exc_type, exc, tb):
+                events.append("typing_exit")
+                return False
+
+        async def fake_store_message(**kwargs):
+            events.append(f"store:{kwargs['role']}")
+            return SimpleNamespace(id=kwargs.get("discord_message_id") or 55)
+
+        cog = object.__new__(GeminiChatCog)
+        cog.bot = SimpleNamespace(
+            user=SimpleNamespace(id=999, display_name="Mia"),
+            get_cog=lambda name: None,
+            process_commands=AsyncMock(),
+        )
+        cog._settings = SimpleNamespace(
+            memory=SimpleNamespace(
+                recent_messages_limit=12,
+                semantic_results_limit=6,
+                semantic_min_score=0.35,
+            )
+        )
+        cog._locks = {77: asyncio.Lock()}
+        cog._memory_store = SimpleNamespace(
+            get_recent_messages=AsyncMock(return_value=[]),
+            get_chat_state=AsyncMock(
+                return_value=SimpleNamespace(summary="", last_summarized_message_id=0)
+            ),
+        )
+        cog._prepare_incoming_message = AsyncMock(
+            return_value=PreparedIncomingMessage(
+                content=types.Content(role="user", parts=[types.Part.from_text(text="hi")]),
+                memory_text="hi",
+                author_name="alice",
+                created_at="2026-03-19 10:00:00",
+                content_parts=({"type": "text", "text": "hi"},),
+            )
+        )
+        cog._safe_embed_query = AsyncMock(return_value=None)
+        cog._safe_embed_document = AsyncMock(side_effect=["user-emb", "model-emb"])
+        cog._build_memory_instruction = lambda **kwargs: "system"
+        cog._build_recent_contents = lambda recent_messages, current_message: [current_message.content]
+        cog._response_generator = SimpleNamespace(
+            generate_reply=AsyncMock(return_value="hello")
+        )
+        cog._safe_channel_send = AsyncMock(
+            side_effect=lambda channel, text: events.append("send") or SimpleNamespace(id=56)
+        )
+        cog._store_message = AsyncMock(side_effect=fake_store_message)
+        cog._persist_tool_events = AsyncMock()
+        cog._maybe_schedule_summary = AsyncMock()
+
+        message = SimpleNamespace(
+            id=11,
+            author=SimpleNamespace(id=10, name="alice"),
+            channel=SimpleNamespace(id=77, typing=lambda: _TypingContext()),
+            attachments=[],
+            guild=None,
+        )
+
+        with patch.object(cog_module, "CHATBOT_CHANNEL_ID", None):
+            await cog.on_message(message)
+
+        self.assertEqual(events[:3], ["typing_enter", "send", "typing_exit"])
+        self.assertIn("store:user", events)
+        self.assertIn("store:model", events)
+        self.assertLess(events.index("typing_exit"), events.index("store:user"))
+        self.assertLess(events.index("typing_exit"), events.index("store:model"))
+
     async def test_process_tool_call_propagates_tool_notification_flag(self) -> None:
         music_cog = SimpleNamespace(
             play_func=AsyncMock(),

@@ -777,43 +777,43 @@ class GeminiChatCog(commands.Cog):
                         f"Failed to generate a response: {exc}",
                     )
 
+            await self._store_message(
+                channel_id=message.channel.id,
+                discord_message_id=message.id,
+                role="user",
+                author_id=message.author.id,
+                author_name=incoming.author_name,
+                content_text=incoming.memory_text,
+                created_at=incoming.created_at,
+                embedding=user_embedding,
+                content_parts=incoming.content_parts,
+            )
+            await self._persist_tool_events(message.channel.id, tool_events)
+
+            if sent_reply is not None and reply_text:
+                assistant_created_at = self._current_timestamp()
+                assistant_author_name = self._assistant_name(message)
+                assistant_embedding = await self._safe_embed_document(reply_text)
                 await self._store_message(
                     channel_id=message.channel.id,
-                    discord_message_id=message.id,
-                    role="user",
-                    author_id=message.author.id,
-                    author_name=incoming.author_name,
-                    content_text=incoming.memory_text,
-                    created_at=incoming.created_at,
-                    embedding=user_embedding,
-                    content_parts=incoming.content_parts,
+                    discord_message_id=sent_reply.id,
+                    role="model",
+                    author_id=self.bot.user.id if self.bot.user else None,
+                    author_name=assistant_author_name,
+                    content_text=reply_text,
+                    created_at=assistant_created_at,
+                    embedding=assistant_embedding,
+                    content_parts=(
+                        {
+                            "type": "text",
+                            "text": self._format_chat_turn(
+                                author_name=assistant_author_name,
+                                created_at=assistant_created_at,
+                                content_text=reply_text,
+                            ),
+                        },
+                    ),
                 )
-                await self._persist_tool_events(message.channel.id, tool_events)
-
-                if sent_reply is not None and reply_text:
-                    assistant_created_at = self._current_timestamp()
-                    assistant_author_name = self._assistant_name(message)
-                    assistant_embedding = await self._safe_embed_document(reply_text)
-                    await self._store_message(
-                        channel_id=message.channel.id,
-                        discord_message_id=sent_reply.id,
-                        role="model",
-                        author_id=self.bot.user.id if self.bot.user else None,
-                        author_name=assistant_author_name,
-                        content_text=reply_text,
-                        created_at=assistant_created_at,
-                        embedding=assistant_embedding,
-                        content_parts=(
-                            {
-                                "type": "text",
-                                "text": self._format_chat_turn(
-                                    author_name=assistant_author_name,
-                                    created_at=assistant_created_at,
-                                    content_text=reply_text,
-                                ),
-                            },
-                        ),
-                    )
 
             await self._maybe_schedule_summary(message.channel.id)
 
