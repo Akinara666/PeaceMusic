@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import mimetypes
+import re
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -36,6 +37,7 @@ logger = logging.getLogger(__name__)
 _ATTACHMENT_IMAGE_NAME = Path("uploaded_image.png")
 _ATTACHMENT_VIDEO_NAME = Path("uploaded_video.mp4")
 _DISCORD_MESSAGE_LIMIT = 2000
+_TIMESTAMP_PREFIX_RE = re.compile(r"^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]\s*")
 _MSK_TZ = timezone(timedelta(hours=3))
 _SUMMARY_SYSTEM_PROMPT = """
 Ты обновляешь долговременную память Discord-чата.
@@ -162,6 +164,28 @@ class GeminiChatCog(commands.Cog):
         if content_text:
             return f"[{created_at}] {author_name}: {content_text}"
         return f"[{created_at}] {author_name}"
+
+    def _format_prompt_turn(self, *, author_name: str, content_text: str) -> str:
+        if content_text:
+            return f"{author_name}: {content_text}"
+        return author_name
+
+    def _strip_timestamp_prefix(self, text: str) -> str:
+        return _TIMESTAMP_PREFIX_RE.sub("", text, count=1)
+
+    def _sanitize_history_text(
+        self,
+        *,
+        role: str,
+        author_name: str,
+        text: str,
+    ) -> str:
+        cleaned = self._strip_timestamp_prefix(text)
+        if role == "model":
+            model_prefix = f"{author_name}: "
+            if cleaned.startswith(model_prefix):
+                return cleaned[len(model_prefix) :]
+        return cleaned
 
     def _assistant_name(self, message: discord.Message) -> str:
         if message.guild and message.guild.me:
@@ -331,7 +355,7 @@ class GeminiChatCog(commands.Cog):
     ) -> str:
         summary_block = chat_state.summary.strip() or "Память чата еще не сформирована."
         semantic_block = (
-            format_memory_block(semantic_matches)
+            format_memory_block(semantic_matches, include_timestamps=False)
             if semantic_matches
             else "Подходящих воспоминаний по смыслу не найдено."
         )
@@ -340,6 +364,8 @@ class GeminiChatCog(commands.Cog):
             "Ниже подключена многослойная память чата.\n"
             "Используй ее как скрытый контекст, не пересказывай эти блоки "
             "пользователям напрямую.\n\n"
+            "Никогда не оформляй ответ как лог чата: не добавляй timestamp, дату, "
+            "время или имя автора в начале своей реплики.\n\n"
             "Level 0 - Глобальное состояние чата:\n"
             f"{summary_block}\n\n"
             "Level 1 - Семантически релевантные воспоминания:\n"
@@ -360,7 +386,27 @@ class GeminiChatCog(commands.Cog):
             role = stored.role if stored.role in {"user", "model"} else "user"
             parts = self._deserialize_content_parts(stored.content_parts)
             if not parts:
-                parts = [types.Part.from_text(text=stored.formatted_text)]
+                fallback_text = (
+                    stored.content_text
+                    if stored.role == "model" and stored.content_text
+                    else stored.prompt_text
+                )
+                parts = [types.Part.from_text(text=fallback_text)]
+            else:
+                parts = [
+                    (
+                        types.Part.from_text(
+                            text=self._sanitize_history_text(
+                                role=stored.role,
+                                author_name=stored.author_name,
+                                text=part.text,
+                            )
+                        )
+                        if getattr(part, "text", None)
+                        else part
+                    )
+                    for part in parts
+                ]
             contents.append(
                 types.Content(
                     role=role,
@@ -376,10 +422,9 @@ class GeminiChatCog(commands.Cog):
         author_name = self._normalize_author_name(message.author.name)
         created_at = self._current_timestamp()
         base_text = (message.content or "").strip()
-        formatted_text = (
-            self._format_chat_turn(
+        prompt_text = (
+            self._format_prompt_turn(
                 author_name=author_name,
-                created_at=created_at,
                 content_text=base_text,
             )
         )
@@ -387,13 +432,13 @@ class GeminiChatCog(commands.Cog):
         if message.attachments:
             content, memory_text = await self._attachment_processor.to_content(
                 message,
-                formatted_text,
+                prompt_text,
                 base_text,
             )
         else:
             content = types.Content(
                 role="user",
-                parts=[types.Part.from_text(text=formatted_text)],
+                parts=[types.Part.from_text(text=prompt_text)],
             )
             memory_text = base_text or "[Пустое сообщение]"
 
@@ -473,9 +518,8 @@ class GeminiChatCog(commands.Cog):
                 content_parts=(
                     {
                         "type": "text",
-                        "text": self._format_chat_turn(
+                        "text": self._format_prompt_turn(
                             author_name=f"tool:{event.tool_name}",
-                            created_at=event.created_at,
                             content_text=memory_text,
                         ),
                     },
@@ -518,7 +562,7 @@ class GeminiChatCog(commands.Cog):
             ):
                 return
 
-            transcript = format_memory_block(messages)
+            transcript = format_memory_block(messages, include_timestamps=False)
             user_prompt = (
                 "Обнови summary на основе предыдущей памяти и свежего "
                 "фрагмента диалога.\n\n"
@@ -806,11 +850,7 @@ class GeminiChatCog(commands.Cog):
                     content_parts=(
                         {
                             "type": "text",
-                            "text": self._format_chat_turn(
-                                author_name=assistant_author_name,
-                                created_at=assistant_created_at,
-                                content_text=reply_text,
-                            ),
+                            "text": reply_text,
                         },
                     ),
                 )

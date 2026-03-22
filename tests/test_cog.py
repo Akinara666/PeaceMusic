@@ -233,6 +233,10 @@ class GeminiChatCogTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stored_messages[0]["embedding"], "emb-1")
         self.assertIn('"song_name": "Nujabes"', stored_messages[0]["content_text"])
         self.assertIn('"result": "queued"', stored_messages[0]["content_text"])
+        self.assertEqual(
+            stored_messages[0]["content_parts"][0]["text"].split("\n", 1)[0],
+            "tool:play_music: [tool] play_music",
+        )
         self.assertEqual(stored_messages[1]["author_name"], "tool:set_volume")
         self.assertIn('error: {"error": "Nothing is playing"}', stored_messages[1]["content_text"])
 
@@ -276,7 +280,7 @@ class GeminiChatCogTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(contents[0].parts[0].file_data.uri, "uri://image")
         self.assertEqual(
             contents[0].parts[1].text,
-            "[2026-03-15 21:10:00] alice [Image attachment: cat.png]",
+            "alice [Image attachment: cat.png]",
         )
 
     def test_extract_tool_response_payload_and_render_memory_text(self) -> None:

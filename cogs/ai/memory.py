@@ -31,6 +31,12 @@ class StoredMessage:
             return f"[{self.created_at}] {self.author_name}: {self.content_text}"
         return f"[{self.created_at}] {self.author_name}"
 
+    @property
+    def prompt_text(self) -> str:
+        if self.content_text:
+            return f"{self.author_name}: {self.content_text}"
+        return self.author_name
+
 
 @dataclass(frozen=True)
 class SemanticMatch(StoredMessage):
@@ -444,11 +450,15 @@ def format_memory_block(
     messages: Iterable[StoredMessage],
     *,
     include_scores: bool = False,
+    include_timestamps: bool = True,
 ) -> str:
     lines: list[str] = []
     for message in messages:
         prefix = ""
         if include_scores and isinstance(message, SemanticMatch):
             prefix = f"(score={message.score:.3f}) "
-        lines.append(f"{prefix}{message.formatted_text}")
+        rendered_text = (
+            message.formatted_text if include_timestamps else message.prompt_text
+        )
+        lines.append(f"{prefix}{rendered_text}")
     return "\n".join(lines)
