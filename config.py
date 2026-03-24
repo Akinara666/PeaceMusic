@@ -49,6 +49,18 @@ def _get_env(
     return value
 
 
+def _get_env_bool(name: str, default: bool = False) -> bool:
+    value = _get_env(name)
+    if value is None:
+        return default
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
 def _load_default_prompt() -> str:
     try:
         text = DEFAULT_PROMPT_PATH.read_text(encoding="utf-8")
@@ -126,15 +138,18 @@ def _build_intents() -> discord.Intents:
     return intents
 
 
-def _build_ytdl_options(music_dir: Path) -> dict:
+def _build_ytdl_options(
+    music_dir: Path,
+    *,
+    use_cookies: bool,
+    cookies_file: Optional[Path],
+) -> dict:
     """
     Optimized for 1 vCPU / 2GB RAM.
     - format: Prefer opus/webm when available to reduce transcoding overhead.
     - buffers: Modest chunk sizes to avoid OOM but sufficient for stability.
     """
-    cookies_path = REPO_ROOT / "cogs" / "cookies.txt"
-    return {
-        "cookiefile": str(cookies_path),
+    options = {
         "format": "bestaudio[acodec=opus]/bestaudio[ext=webm]/bestaudio/best",
         "noplaylist": True,
         "ignoreerrors": False,
@@ -150,6 +165,9 @@ def _build_ytdl_options(music_dir: Path) -> dict:
         "retries": 3,
         "fragment_retries": 20,
     }
+    if use_cookies and cookies_file is not None:
+        options["cookiefile"] = str(cookies_file)
+    return options
 
 
 def _build_ffmpeg_options() -> dict:
@@ -243,6 +261,16 @@ def load_settings() -> AppSettings:
     )
 
     prompt_file_raw = _get_env("BOT_PROMPT_FILE")
+    ytdl_use_cookies = _get_env_bool("YTDL_USE_COOKIES", default=False)
+    cookies_file_raw = (
+        _get_env("YTDL_COOKIE_FILE") or "data/cookies.txt"
+    )
+    cookies_file: Optional[Path] = None
+    if ytdl_use_cookies:
+        candidate = Path(cookies_file_raw)
+        if not candidate.is_absolute():
+            candidate = (REPO_ROOT / candidate).resolve()
+        cookies_file = candidate
     prompt_file: Optional[Path] = None
     prompt_text = _load_default_prompt()
     if prompt_file_raw:
@@ -275,7 +303,11 @@ def load_settings() -> AppSettings:
     )
 
     audio_settings = AudioSettings(
-        ytdl_options=_build_ytdl_options(music_directory),
+        ytdl_options=_build_ytdl_options(
+            music_directory,
+            use_cookies=ytdl_use_cookies,
+            cookies_file=cookies_file,
+        ),
         ffmpeg_options=_build_ffmpeg_options(),
     )
 

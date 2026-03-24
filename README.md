@@ -73,6 +73,13 @@ Configure them in `.env` (see `.env.example`).
 - `GEMINI_SUMMARY_MODEL` - background summary model (defaults to `gemini-3.1-flash-lite`).
 - `GEMINI_EMBEDDING_MODEL` - embedding model for semantic memory (defaults to `gemini-embedding-2-preview`).
 - `MUSIC_DIRECTORY` - path for downloaded/cached tracks (defaults to `music_files`).
+- `YTDL_USE_COOKIES` - enable `yt-dlp` cookies support (`false` by default).
+- `YTDL_COOKIE_FILE` - path to a Netscape-format cookies file when cookies are enabled (defaults to `data/cookies.txt`).
+
+### Cookies
+- Cookies are disabled by default.
+- To enable them, set `YTDL_USE_COOKIES=true` and place a Netscape-format cookies file at `data/cookies.txt`, or set a custom path via `YTDL_COOKIE_FILE`.
+- Docker no longer bind-mounts `cogs/cookies.txt`, so removing that file will not break container startup.
 
 ## Sample Prompts (in chat)
 Use natural language to trigger Tool Calling and music features: `play <song name>`, `seek to 1:23`, `set volume to 50%`, `skip this track`, `disconnect from voice`, `join my channel`, etc.

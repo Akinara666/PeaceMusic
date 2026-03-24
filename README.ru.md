@@ -71,6 +71,13 @@ python main.py
 - `GEMINI_SUMMARY_MODEL` — модель для фонового summary (по умолчанию `gemini-3.1-flash-lite`)
 - `GEMINI_EMBEDDING_MODEL` — модель эмбеддингов для семантической памяти (по умолчанию `gemini-embedding-2-preview`)
 - `MUSIC_DIRECTORY` — путь для кэша/локальных файлов (по умолчанию `music_files`)
+- `YTDL_USE_COOKIES` — включает cookies для `yt-dlp` (по умолчанию `false`)
+- `YTDL_COOKIE_FILE` — путь к cookies-файлу в формате Netscape, если cookies включены (по умолчанию `data/cookies.txt`)
+
+## Cookies для yt-dlp
+- По умолчанию cookies выключены.
+- Если они нужны, выставь `YTDL_USE_COOKIES=true` и положи Netscape `cookies.txt` в `data/cookies.txt`, либо укажи свой путь через `YTDL_COOKIE_FILE`.
+- Docker больше не монтирует `cogs/cookies.txt`, поэтому удаление этого файла не ломает запуск контейнера.
 
 ## Команды/возможности (в чате)
 Ассистент сам вызывает музыкальные функции через Tool Calling — просто пиши: «включи <трек>», «перемотай на 1:23», «сделай громкость 50%», «пропусти трек», «останови музыку», «зайди ко мне в голосовой» и т.п.

@@ -42,3 +42,21 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(settings.memory.semantic_results_limit, 6)
         self.assertEqual(settings.memory.summary_trigger_messages, 30)
         self.assertEqual(settings.misc.status_message, "Test Bot")
+        self.assertNotIn("cookiefile", settings.audio.ytdl_options)
+
+    def test_load_settings_enables_cookiefile_only_when_requested(self) -> None:
+        mock_env = {
+            "DISCORD_BOT_TOKEN": "test_token",
+            "GEMINI_API_KEY": "test_key",
+            "YTDL_USE_COOKIES": "true",
+            "YTDL_COOKIE_FILE": "custom/cookies.txt",
+        }
+
+        with patch.dict(os.environ, mock_env, clear=True):
+            config_module = load_project_module("test_config_module_cookies", "config.py")
+            settings = config_module.load_settings()
+
+        self.assertIn("cookiefile", settings.audio.ytdl_options)
+        self.assertTrue(
+            settings.audio.ytdl_options["cookiefile"].endswith("custom/cookies.txt")
+        )
