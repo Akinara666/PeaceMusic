@@ -734,9 +734,12 @@ class Music(commands.Cog):
                 self._replay_track = finished_track
             elif self.loop_mode == "queue":
                 self._replay_track = None
+                self.current = None
+                self._reset_playback_timers()
                 self.bot.loop.call_soon_threadsafe(
-                    asyncio.create_task, self._requeue_lazy(finished_track)
+                    asyncio.create_task, self._requeue_and_continue(finished_track)
                 )
+                return
             else:
                 self._cleanup_track_file(finished_track)
                 self._replay_track = None
@@ -750,6 +753,15 @@ class Music(commands.Cog):
         self.bot.loop.call_soon_threadsafe(
             asyncio.create_task, self._start_next_track()
         )
+
+    async def _requeue_and_continue(self, track: QueuedTrack) -> None:
+        """Requeue the finished track and then start the next one.
+
+        This ensures the requeue completes before ``_start_next_track``
+        checks the queue, avoiding a race where the queue appears empty.
+        """
+        await self._requeue_lazy(track)
+        await self._start_next_track()
 
     async def _requeue_lazy(self, track: QueuedTrack) -> None:
         requeued = False

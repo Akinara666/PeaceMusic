@@ -748,6 +748,7 @@ class GeminiChatCog(commands.Cog):
                     ):
                         fallback_text = getattr(result, "text", str(result))
                         await self._safe_channel_send(message.channel, fallback_text)
+                await self.bot.process_commands(message)
                 return
 
         async with self._locks[message.channel.id]:
