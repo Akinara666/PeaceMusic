@@ -223,7 +223,7 @@ class ResponseGenerator:
             tool_rounds += 1
             for tool_call in function_calls[:2]:
                 feedback = await tool_callback(tool_call)
-                history.append(types.Content(role="user", parts=[feedback]))
+                history.append(types.Content(role="tool", parts=[feedback]))
 
             if tool_rounds >= 4:
                 final_text = "\n".join(text_parts).strip()

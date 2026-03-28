@@ -526,11 +526,27 @@ class Music(commands.Cog):
             self.voice_client.stop()
 
     def _create_local_track_source(
-        self, file_path: Path, *, seek: Optional[int] = None
+        self,
+        file_path: Path,
+        *,
+        seek: Optional[int] = None,
+        on_chunk: Optional[Callable[[], None]] = None,
     ) -> discord.PCMVolumeTransformer:
         ffmpeg_args = build_ffmpeg_options(stream=False, seek=seek)
         audio_source = discord.FFmpegPCMAudio(str(file_path), **ffmpeg_args)
-        return discord.PCMVolumeTransformer(audio_source, volume=self._volume)
+        transformer = discord.PCMVolumeTransformer(audio_source, volume=self._volume)
+        if on_chunk is not None:
+            original_read = transformer.read
+
+            def _read_with_heartbeat() -> bytes:
+                data = original_read()
+                if data:
+                    with contextlib.suppress(Exception):
+                        on_chunk()
+                return data
+
+            transformer.read = _read_with_heartbeat  # type: ignore[assignment]
+        return transformer
 
     def _build_queued_track(
         self,
@@ -585,7 +601,8 @@ class Music(commands.Cog):
 
         if track.local_path and track.local_path.exists():
             track.source = self._create_local_track_source(
-                track.local_path, seek=seek_seconds or None
+                track.local_path, seek=seek_seconds or None,
+                on_chunk=self._touch_audio_heartbeat,
             )
             if not track.should_stream:
                 track.stream_url = None
@@ -768,7 +785,9 @@ class Music(commands.Cog):
         try:
             if track.local_path and track.local_path.exists():
                 new_track = QueuedTrack(
-                    source=self._create_local_track_source(track.local_path),
+                    source=self._create_local_track_source(
+                        track.local_path, on_chunk=self._touch_audio_heartbeat
+                    ),
                     title=track.title,
                     requester=track.requester,
                     stream_url=None,
@@ -1049,7 +1068,9 @@ class Music(commands.Cog):
                 )
 
             try:
-                audio_source = self._create_local_track_source(file_path)
+                audio_source = self._create_local_track_source(
+                    file_path, on_chunk=self._touch_audio_heartbeat
+                )
             except Exception as exc:
                 logger.error(
                     "Failed to create audio source for %s: %s", safe_filename, exc
@@ -1357,7 +1378,7 @@ class Music(commands.Cog):
             return self._result(f"Неверный индекс. В очереди {len(self.queue)} треков.")
         
         track = self.queue[index - 1]
-        self.queue.remove(track)
+        del self.queue[index - 1]
         self._cleanup_track_file(track)
         notified = await self._safe_reply(
             message, content=f"Удалено из очереди: {track.title}"

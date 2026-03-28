@@ -18,7 +18,7 @@ class ConfigTests(unittest.TestCase):
             "GEMINI_SUMMARY_MODEL": "gemini-3.1-flash-lite",
             "GEMINI_EMBEDDING_MODEL": "gemini-embedding-2-preview",
             "MUSIC_DIRECTORY": "test_music_dir",
-            "CONTEXT_FILE": "test_context.json",
+
             "CHAT_MEMORY_DB": "chat_memory.sqlite3",
             "DISCORD_STATUS_MESSAGE": "Test Bot",
         }
@@ -36,7 +36,7 @@ class ConfigTests(unittest.TestCase):
         )
         self.assertEqual(settings.gemini.embedding_dimensions, 768)
         self.assertEqual(str(settings.misc.music_directory), "test_music_dir")
-        self.assertEqual(str(settings.misc.context_file), "test_context.json")
+
         self.assertEqual(str(settings.memory.db_file), "chat_memory.sqlite3")
         self.assertEqual(settings.memory.recent_messages_limit, 12)
         self.assertEqual(settings.memory.semantic_results_limit, 6)

@@ -83,8 +83,8 @@ class DiscordSettings:
 @dataclass(frozen=True)
 class GeminiSettings:
     api_key: str
-    response_model: str = "gemini-3.1-flash-lite"
-    summary_model: str = "gemini-3.1-flash-lite"
+    response_model: str = "gemini-3.1-flash-lite-preview"
+    summary_model: str = "gemini-3.1-flash-lite-preview"
     embedding_model: str = "gemini-embedding-2-preview"
     embedding_dimensions: int = 768
     thinking_budget: int = 8192
@@ -107,7 +107,6 @@ class MemorySettings:
 @dataclass(frozen=True)
 class MiscSettings:
     music_directory: Path
-    context_file: Path
     status_message: str
     prompt_file: Optional[Path]
     prompt_text: str
@@ -234,9 +233,7 @@ def load_settings() -> AppSettings:
     music_directory = Path(
         _get_env("MUSIC_DIRECTORY", default="music_files") or "music_files"
     )
-    context_file = Path(
-        _get_env("CONTEXT_FILE", default="chat_context.json") or "chat_context.json"
-    )
+
     memory_db_file = Path(
         _get_env("CHAT_MEMORY_DB", default="chat_memory.sqlite3")
         or "chat_memory.sqlite3"
@@ -287,7 +284,6 @@ def load_settings() -> AppSettings:
 
     misc_settings = MiscSettings(
         music_directory=music_directory,
-        context_file=context_file,
         status_message=status_message,
         prompt_file=prompt_file,
         prompt_text=prompt_text,
@@ -344,7 +340,7 @@ GEMINI_EMBEDDING_MODEL = _settings.gemini.embedding_model
 GEMINI_EMBEDDING_DIMENSIONS = _settings.gemini.embedding_dimensions
 GEMINI_THINKING_BUDGET = _settings.gemini.thinking_budget
 MUSIC_DIRECTORY = _settings.misc.music_directory
-CONTEXT_FILE = str(_settings.misc.context_file)
+
 CHAT_MEMORY_DB = str(_settings.memory.db_file)
 MEMORY_RECENT_MESSAGES = _settings.memory.recent_messages_limit
 MEMORY_SEMANTIC_RESULTS = _settings.memory.semantic_results_limit
