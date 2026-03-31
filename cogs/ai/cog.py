@@ -39,6 +39,32 @@ _ATTACHMENT_VIDEO_NAME = Path("uploaded_video.mp4")
 _DISCORD_MESSAGE_LIMIT = 2000
 _TIMESTAMP_PREFIX_RE = re.compile(r"^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]\s*")
 _MSK_TZ = timezone(timedelta(hours=3))
+_SILENCE_RE = re.compile(
+    r"\b("
+    # русские
+    r"замолчи|заткнись|молчи|тихо|помолчи|умолкни"
+    r"|не\s*говори|не\s*отвечай|не\s*пиши|не\s*болтай"
+    r"|закрой\s*рот|рот\s*закрой|хватит\s*болтать|хватит\s*говорить"
+    r"|цыц|тсс|шш+|тише|заглохни|угомонись"
+    r"|завали|завались|помалкивай|притихни"
+    r"|молчать|молчок|тишина"
+    # English
+    r"|shut\s*up|be\s*quiet|silence|hush|stfu|mute|shush|zip\s*it|quiet"
+    r")\b",
+    re.IGNORECASE,
+)
+_UNSILENCE_RE = re.compile(
+    r"\b("
+    # русские
+    r"говори|отомри|отмри|можешь\s+говорить|хватит\s+молчать"
+    r"|можно\s+говорить|давай\s+говори|отвечай|пиши"
+    r"|перестань\s+молчать|хорош\s+молчать|ну\s+говори"
+    r"|разрешаю\s+говорить|болтай|общайся|вернись"
+    # English
+    r"|unmute|speak|talk|you\s+can\s+talk|start\s+talking"
+    r")\b",
+    re.IGNORECASE,
+)
 _SUMMARY_SYSTEM_PROMPT = """
 Ты обновляешь долговременную память Discord-чата.
 
@@ -99,6 +125,7 @@ class GeminiChatCog(commands.Cog):
         )
         self._locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
         self._summary_tasks: dict[int, asyncio.Task[None]] = {}
+        self._silent_channels: dict[int, bool] = {}
 
         base_dir = Path(__file__).resolve().parents[2]
         db_path = self._settings.memory.db_file
@@ -731,6 +758,25 @@ class GeminiChatCog(commands.Cog):
         if CHATBOT_CHANNEL_ID and message.channel.id != CHATBOT_CHANNEL_ID:
             return
 
+        # --- Silent mode toggle ---
+        raw_text = (message.content or "").strip()
+        if _UNSILENCE_RE.search(raw_text):
+            self._silent_channels.pop(message.channel.id, None)
+            try:
+                await message.add_reaction("✅")
+            except discord.HTTPException:
+                pass
+            await self.bot.process_commands(message)
+            return
+        if _SILENCE_RE.search(raw_text):
+            self._silent_channels[message.channel.id] = True
+            try:
+                await message.add_reaction("🤫")
+            except discord.HTTPException:
+                pass
+            await self.bot.process_commands(message)
+            return
+
         if message.attachments and self.music_cog:
             audio_att = next(
                 (
@@ -804,17 +850,19 @@ class GeminiChatCog(commands.Cog):
                         system_instruction=system_instruction,
                     )
                     any_tool_notified = any(event.user_notified for event in tool_events)
-                    if reply_text is not None and not any_tool_notified:
-                        sent_reply = await self._safe_channel_send(
-                            message.channel,
-                            reply_text or "I could not think of a reply.",
-                        )
-                    elif reply_text is None and tool_events and not any_tool_notified:
-                        fallback_text = self._tool_result_text(tool_events[-1].response)
-                        sent_reply = await self._safe_channel_send(
-                            message.channel,
-                            fallback_text,
-                        )
+                    is_silent = self._silent_channels.get(message.channel.id, False)
+                    if not is_silent:
+                        if reply_text is not None and not any_tool_notified:
+                            sent_reply = await self._safe_channel_send(
+                                message.channel,
+                                reply_text or "I could not think of a reply.",
+                            )
+                        elif reply_text is None and tool_events and not any_tool_notified:
+                            fallback_text = self._tool_result_text(tool_events[-1].response)
+                            sent_reply = await self._safe_channel_send(
+                                message.channel,
+                                fallback_text,
+                            )
                 except Exception as exc:  # noqa: BLE001
                     logger.exception("Gemini response failed")
                     await self._safe_channel_send(
