@@ -65,6 +65,7 @@ _UNSILENCE_RE = re.compile(
     r")\b",
     re.IGNORECASE,
 )
+_SILENT_DURATION = timedelta(minutes=15)
 _SUMMARY_SYSTEM_PROMPT = """
 Ты обновляешь долговременную память Discord-чата.
 
@@ -125,7 +126,7 @@ class GeminiChatCog(commands.Cog):
         )
         self._locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
         self._summary_tasks: dict[int, asyncio.Task[None]] = {}
-        self._silent_channels: dict[int, bool] = {}
+        self._silent_channels: dict[int, datetime] = {}
 
         base_dir = Path(__file__).resolve().parents[2]
         db_path = self._settings.memory.db_file
@@ -769,7 +770,7 @@ class GeminiChatCog(commands.Cog):
             await self.bot.process_commands(message)
             return
         if _SILENCE_RE.search(raw_text):
-            self._silent_channels[message.channel.id] = True
+            self._silent_channels[message.channel.id] = datetime.now(_MSK_TZ)
             try:
                 await message.add_reaction("🤫")
             except discord.HTTPException:
@@ -850,7 +851,13 @@ class GeminiChatCog(commands.Cog):
                         system_instruction=system_instruction,
                     )
                     any_tool_notified = any(event.user_notified for event in tool_events)
-                    is_silent = self._silent_channels.get(message.channel.id, False)
+                    silenced_at = self._silent_channels.get(message.channel.id)
+                    is_silent = (
+                        silenced_at is not None
+                        and datetime.now(_MSK_TZ) - silenced_at < _SILENT_DURATION
+                    )
+                    if silenced_at is not None and not is_silent:
+                        self._silent_channels.pop(message.channel.id, None)
                     if not is_silent:
                         if reply_text is not None and not any_tool_notified:
                             sent_reply = await self._safe_channel_send(

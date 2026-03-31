@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from datetime import datetime, timedelta, timezone
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -328,7 +329,8 @@ class GeminiChatCogTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(cog_module, "CHATBOT_CHANNEL_ID", None):
             await cog.on_message(message)
 
-        self.assertTrue(cog._silent_channels.get(77, False))
+        self.assertIn(77, cog._silent_channels)
+        self.assertIsInstance(cog._silent_channels[77], datetime)
         message.add_reaction.assert_awaited_once_with("🤫")
 
     async def test_silent_mode_suppresses_reply_but_keeps_tools(self) -> None:
