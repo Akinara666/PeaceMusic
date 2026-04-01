@@ -51,7 +51,7 @@ class GeminiChatCogTests(unittest.IsolatedAsyncioTestCase):
         )
         member = SimpleNamespace(id=42, mention="<@42>")
 
-        await cog.bot_access(
+        await cog.manage_bot_access(
             interaction,
             SimpleNamespace(value="disable"),
             member,

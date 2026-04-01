@@ -210,7 +210,7 @@ class GeminiChatCog(commands.Cog):
     )
     @app_commands.default_permissions(manage_guild=True)
     @app_commands.guild_only()
-    async def bot_access(
+    async def manage_bot_access(
         self,
         interaction: discord.Interaction,
         action: app_commands.Choice[str],
