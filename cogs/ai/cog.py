@@ -37,6 +37,8 @@ logger = logging.getLogger(__name__)
 _ATTACHMENT_IMAGE_NAME = Path("uploaded_image.png")
 _ATTACHMENT_VIDEO_NAME = Path("uploaded_video.mp4")
 _DISCORD_MESSAGE_LIMIT = 2000
+_TEMPORAL_CONTEXT_LIMIT = 8
+_TEMPORAL_PREVIEW_LIMIT = 96
 _TIMESTAMP_PREFIX_RE = re.compile(r"^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]\s*")
 _MSK_TZ = timezone(timedelta(hours=3))
 _SILENCE_RE = re.compile(
@@ -215,6 +217,49 @@ class GeminiChatCog(commands.Cog):
                 return cleaned[len(model_prefix) :]
         return cleaned
 
+    def _summarize_message_preview(self, text: str) -> str:
+        normalized = " ".join(text.split())
+        if len(normalized) <= _TEMPORAL_PREVIEW_LIMIT:
+            return normalized
+        return f"{normalized[: _TEMPORAL_PREVIEW_LIMIT - 3]}..."
+
+    def _build_temporal_context(
+        self,
+        *,
+        recent_messages: list[StoredMessage],
+        current_message: PreparedIncomingMessage,
+    ) -> str:
+        entries = recent_messages[-_TEMPORAL_CONTEXT_LIMIT :]
+        if not entries:
+            return (
+                f'- current | role=user | author={current_message.author_name} | '
+                f'sent_at={current_message.created_at} | '
+                f'text="{self._summarize_message_preview(current_message.memory_text)}"'
+            )
+
+        lines = []
+        for index, stored in enumerate(entries, start=1):
+            preview_source = stored.content_text or stored.author_name
+            lines.append(
+                f'- recent#{index} | role={stored.role} | author={stored.author_name} | '
+                f'sent_at={stored.created_at} | '
+                f'text="{self._summarize_message_preview(preview_source)}"'
+            )
+        lines.append(
+            f'- current | role=user | author={current_message.author_name} | '
+            f'sent_at={current_message.created_at} | '
+            f'text="{self._summarize_message_preview(current_message.memory_text)}"'
+        )
+        return "\n".join(lines)
+
+    def _sanitize_outgoing_reply(self, text: str, *, assistant_name: str) -> str:
+        cleaned = text.strip()
+        cleaned = self._strip_timestamp_prefix(cleaned)
+        assistant_prefix = f"{assistant_name}: "
+        if cleaned.startswith(assistant_prefix):
+            cleaned = cleaned[len(assistant_prefix) :].lstrip()
+        return cleaned or text.strip()
+
     def _assistant_name(self, message: discord.Message) -> str:
         if message.guild and message.guild.me:
             return self._normalize_author_name(message.guild.me.display_name)
@@ -380,6 +425,7 @@ class GeminiChatCog(commands.Cog):
         *,
         chat_state: ChatState,
         semantic_matches: list[SemanticMatch],
+        temporal_context: str,
     ) -> str:
         summary_block = chat_state.summary.strip() or "Память чата еще не сформирована."
         semantic_block = (
@@ -398,6 +444,8 @@ class GeminiChatCog(commands.Cog):
             f"{summary_block}\n\n"
             "Level 1 - Семантически релевантные воспоминания:\n"
             f"{semantic_block}\n\n"
+            "Level 1.5 - Временной контекст недавних сообщений:\n"
+            f"{temporal_context}\n\n"
             "Level 2 - Последние реплики придут в самой истории диалога.\n"
             "Приоритет интерпретации: текущая реплика пользователя > Level 2 > "
             "Level 1 > Level 0.\n"
@@ -825,11 +873,17 @@ class GeminiChatCog(commands.Cog):
                 reply_text: Optional[str] = None
                 sent_reply: Optional[discord.Message] = None
                 tool_events: list[ToolExecutionEvent] = []
+                temporal_context = self._build_temporal_context(
+                    recent_messages=recent_messages,
+                    current_message=incoming,
+                )
                 system_instruction = self._build_memory_instruction(
                     chat_state=chat_state,
                     semantic_matches=semantic_matches,
+                    temporal_context=temporal_context,
                 )
                 contents = self._build_recent_contents(recent_messages, incoming)
+                assistant_author_name = self._assistant_name(message)
 
                 async def tool_callback(call: types.FunctionCall) -> types.Part:
                     feedback = await self.process_tool_call(call, message)
@@ -850,6 +904,11 @@ class GeminiChatCog(commands.Cog):
                         tool_callback,
                         system_instruction=system_instruction,
                     )
+                    if reply_text is not None:
+                        reply_text = self._sanitize_outgoing_reply(
+                            reply_text,
+                            assistant_name=assistant_author_name,
+                        )
                     any_tool_notified = any(event.user_notified for event in tool_events)
                     silenced_at = self._silent_channels.get(message.channel.id)
                     is_silent = (
@@ -892,7 +951,6 @@ class GeminiChatCog(commands.Cog):
 
             if sent_reply is not None and reply_text:
                 assistant_created_at = self._current_timestamp()
-                assistant_author_name = self._assistant_name(message)
                 assistant_embedding = await self._safe_embed_document(reply_text)
                 await self._store_message(
                     channel_id=message.channel.id,

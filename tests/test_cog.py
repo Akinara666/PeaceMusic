@@ -29,6 +29,59 @@ types = cog_module.types
 
 
 class GeminiChatCogTests(unittest.IsolatedAsyncioTestCase):
+    def test_build_temporal_context_contains_message_times(self) -> None:
+        cog = object.__new__(GeminiChatCog)
+        recent_messages = [
+            StoredMessage(
+                id=1,
+                channel_id=77,
+                discord_message_id=10,
+                role="user",
+                author_id=100,
+                author_name="alice",
+                content_text="first",
+                created_at="2026-04-01 12:00:00",
+            ),
+            StoredMessage(
+                id=2,
+                channel_id=77,
+                discord_message_id=11,
+                role="model",
+                author_id=200,
+                author_name="Mia",
+                content_text="second",
+                created_at="2026-04-01 12:00:05",
+            ),
+        ]
+        current_message = PreparedIncomingMessage(
+            content=types.Content(role="user", parts=[types.Part.from_text(text="alice: third")]),
+            memory_text="third",
+            author_name="alice",
+            created_at="2026-04-01 12:00:10",
+            content_parts=({"type": "text", "text": "alice: third"},),
+        )
+
+        temporal_context = cog._build_temporal_context(
+            recent_messages=recent_messages,
+            current_message=current_message,
+        )
+
+        self.assertIn("sent_at=2026-04-01 12:00:00", temporal_context)
+        self.assertIn("sent_at=2026-04-01 12:00:05", temporal_context)
+        self.assertIn("sent_at=2026-04-01 12:00:10", temporal_context)
+        self.assertIn('text="first"', temporal_context)
+        self.assertIn('text="third"', temporal_context)
+
+    def test_sanitize_outgoing_reply_removes_leading_timestamp(self) -> None:
+        cog = object.__new__(GeminiChatCog)
+
+        cleaned = cog._sanitize_outgoing_reply(
+            "[2026-04-01 12:00:10] Mia: привет",
+            assistant_name="Mia",
+        )
+
+        self.assertEqual(cleaned, "привет")
+
     async def test_on_message_stops_typing_before_persisting_memory(self) -> None:
         events: list[str] = []
 
@@ -193,7 +246,7 @@ class GeminiChatCogTests(unittest.IsolatedAsyncioTestCase):
             fake_channel,
             "Добавлено в очередь: voice.mp3",
         )
-        cog.bot.process_commands.assert_not_awaited()
+        cog.bot.process_commands.assert_awaited_once_with(message)
 
     def test_attachment_content_type_falls_back_to_filename(self) -> None:
         cog = object.__new__(GeminiChatCog)
@@ -355,7 +408,7 @@ class GeminiChatCogTests(unittest.IsolatedAsyncioTestCase):
             )
         )
         cog._locks = {77: asyncio.Lock()}
-        cog._silent_channels = {77: True}
+        cog._silent_channels = {77: datetime.now(timezone(timedelta(hours=3)))}
         cog._memory_store = SimpleNamespace(
             get_recent_messages=AsyncMock(return_value=[]),
             get_chat_state=AsyncMock(
@@ -412,7 +465,7 @@ class GeminiChatCogTests(unittest.IsolatedAsyncioTestCase):
             user=SimpleNamespace(id=999),
             process_commands=AsyncMock(),
         )
-        cog._silent_channels = {77: True}
+        cog._silent_channels = {77: datetime.now(timezone(timedelta(hours=3)))}
 
         message = SimpleNamespace(
             author=SimpleNamespace(id=10),
