@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 import discord
+from discord import app_commands
 from discord.ext import commands
 from google import genai
 from google.genai import types
@@ -129,6 +130,8 @@ class GeminiChatCog(commands.Cog):
         self._locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
         self._summary_tasks: dict[int, asyncio.Task[None]] = {}
         self._silent_channels: dict[int, datetime] = {}
+        self._disabled_users: dict[int, set[int]] = {}
+        self._disabled_users_loaded: set[int] = set()
 
         base_dir = Path(__file__).resolve().parents[2]
         db_path = self._settings.memory.db_file
@@ -167,6 +170,98 @@ class GeminiChatCog(commands.Cog):
     @property
     def music_cog(self) -> Optional["Music"]:
         return self.bot.get_cog("Music")  # type: ignore
+
+    async def _load_disabled_users(self, guild_id: int) -> set[int]:
+        if guild_id not in self._disabled_users_loaded:
+            self._disabled_users[guild_id] = await self._memory_store.get_disabled_user_ids(
+                guild_id
+            )
+            self._disabled_users_loaded.add(guild_id)
+        return self._disabled_users.setdefault(guild_id, set())
+
+    async def _is_user_disabled(self, guild_id: int, user_id: int) -> bool:
+        disabled_users = await self._load_disabled_users(guild_id)
+        return user_id in disabled_users
+
+    async def _set_user_disabled(
+        self, guild_id: int, user_id: int, *, disabled: bool
+    ) -> None:
+        await self._memory_store.set_user_disabled(guild_id, user_id, disabled=disabled)
+        disabled_users = await self._load_disabled_users(guild_id)
+        if disabled:
+            disabled_users.add(user_id)
+        else:
+            disabled_users.discard(user_id)
+
+    @app_commands.command(
+        name="bot_access",
+        description="Включить или отключить реакцию бота на сообщения выбранного пользователя.",
+    )
+    @app_commands.describe(
+        action="Что сделать с доступом пользователя к общению с ботом.",
+        member="Пользователь, для которого меняется доступ.",
+    )
+    @app_commands.choices(
+        action=[
+            app_commands.Choice(name="Отключить", value="disable"),
+            app_commands.Choice(name="Включить", value="enable"),
+            app_commands.Choice(name="Статус", value="status"),
+        ]
+    )
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.guild_only()
+    async def bot_access(
+        self,
+        interaction: discord.Interaction,
+        action: app_commands.Choice[str],
+        member: discord.Member,
+    ) -> None:
+        guild = getattr(interaction, "guild", None)
+        if guild is None:
+            await interaction.response.send_message(
+                "Эта команда доступна только на сервере.",
+                ephemeral=True,
+            )
+            return
+
+        permissions = getattr(interaction.user, "guild_permissions", None)
+        can_manage = bool(
+            getattr(permissions, "manage_guild", False)
+            or getattr(permissions, "administrator", False)
+        )
+        if not can_manage:
+            await interaction.response.send_message(
+                "Нужны права `Manage Server` или администратора.",
+                ephemeral=True,
+            )
+            return
+
+        bot_user = getattr(self.bot, "user", None)
+        if bot_user is not None and member.id == bot_user.id:
+            await interaction.response.send_message(
+                "Нельзя отключить общение бота с самим ботом.",
+                ephemeral=True,
+            )
+            return
+
+        if action.value == "status":
+            is_disabled = await self._is_user_disabled(guild.id, member.id)
+            status_text = (
+                "отключен" if is_disabled else "включен"
+            )
+            await interaction.response.send_message(
+                f"Для {member.mention} доступ к общению с ботом сейчас {status_text}.",
+                ephemeral=True,
+            )
+            return
+
+        disabled = action.value == "disable"
+        await self._set_user_disabled(guild.id, member.id, disabled=disabled)
+        status_text = "отключено" if disabled else "включено"
+        await interaction.response.send_message(
+            f"Общение с ботом для {member.mention} {status_text}.",
+            ephemeral=True,
+        )
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -805,6 +900,9 @@ class GeminiChatCog(commands.Cog):
         if message.author == self.bot.user:
             return
         if CHATBOT_CHANNEL_ID and message.channel.id != CHATBOT_CHANNEL_ID:
+            return
+        guild = getattr(message, "guild", None)
+        if guild and await self._is_user_disabled(guild.id, message.author.id):
             return
 
         # --- Silent mode toggle ---

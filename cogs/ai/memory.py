@@ -105,6 +105,13 @@ class MemoryStore:
                     ON messages(channel_id, id DESC);
                 CREATE INDEX IF NOT EXISTS idx_messages_channel_embeddings
                     ON messages(channel_id, embedding_model, id DESC);
+
+                CREATE TABLE IF NOT EXISTS disabled_users (
+                    guild_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (guild_id, user_id)
+                );
                 """
             )
             columns = {
@@ -284,6 +291,62 @@ class MemoryStore:
 
         async with self._write_lock:
             await asyncio.to_thread(_write)
+
+    async def set_user_disabled(
+        self, guild_id: int, user_id: int, *, disabled: bool
+    ) -> None:
+        def _write() -> None:
+            with self._connect() as conn:
+                if disabled:
+                    conn.execute(
+                        """
+                        INSERT OR IGNORE INTO disabled_users(guild_id, user_id)
+                        VALUES (?, ?)
+                        """,
+                        (guild_id, user_id),
+                    )
+                else:
+                    conn.execute(
+                        """
+                        DELETE FROM disabled_users
+                        WHERE guild_id = ? AND user_id = ?
+                        """,
+                        (guild_id, user_id),
+                    )
+
+        async with self._write_lock:
+            await asyncio.to_thread(_write)
+
+    async def get_disabled_user_ids(self, guild_id: int) -> set[int]:
+        def _load() -> set[int]:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT user_id
+                    FROM disabled_users
+                    WHERE guild_id = ?
+                    """,
+                    (guild_id,),
+                ).fetchall()
+            return {int(row["user_id"]) for row in rows}
+
+        return await asyncio.to_thread(_load)
+
+    async def is_user_disabled(self, guild_id: int, user_id: int) -> bool:
+        def _load() -> bool:
+            with self._connect() as conn:
+                row = conn.execute(
+                    """
+                    SELECT 1
+                    FROM disabled_users
+                    WHERE guild_id = ? AND user_id = ?
+                    LIMIT 1
+                    """,
+                    (guild_id, user_id),
+                ).fetchone()
+            return row is not None
+
+        return await asyncio.to_thread(_load)
 
     async def count_unsummarized_messages(
         self, channel_id: int, after_message_id: int

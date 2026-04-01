@@ -110,6 +110,7 @@ def _install_numpy_stub() -> None:
 
 def _install_discord_stub() -> None:
     discord_module = py_types.ModuleType("discord")
+    app_commands_module = py_types.ModuleType("discord.app_commands")
     discord_ext_module = py_types.ModuleType("discord.ext")
     commands_module = py_types.ModuleType("discord.ext.commands")
 
@@ -129,14 +130,46 @@ def _install_discord_stub() -> None:
     class Bot:
         pass
 
+    class Choice:
+        def __init__(self, *, name, value):
+            self.name = name
+            self.value = value
+
+        @classmethod
+        def __class_getitem__(cls, item):
+            return cls
+
+    def _identity_decorator(*args, **kwargs):
+        def decorator(func):
+            return func
+
+        return decorator
+
+    class _ChecksNamespace:
+        @staticmethod
+        def has_permissions(**kwargs):
+            return _identity_decorator
+
+    app_commands_module.Choice = Choice
+    app_commands_module.command = _identity_decorator
+    app_commands_module.describe = _identity_decorator
+    app_commands_module.choices = _identity_decorator
+    app_commands_module.default_permissions = _identity_decorator
+    app_commands_module.guild_only = _identity_decorator
+    app_commands_module.checks = _ChecksNamespace()
+
     discord_module.Intents = Intents
     discord_module.Message = type("Message", (), {})
     discord_module.Attachment = type("Attachment", (), {})
+    discord_module.Member = type("Member", (), {})
+    discord_module.Interaction = type("Interaction", (), {})
     discord_module.HTTPException = type("HTTPException", (Exception,), {})
+    discord_module.app_commands = app_commands_module
     commands_module.Cog = Cog
     commands_module.Bot = Bot
     discord_ext_module.commands = commands_module
     discord_module.ext = discord_ext_module
+    sys.modules["discord.app_commands"] = app_commands_module
     sys.modules["discord"] = discord_module
     sys.modules["discord.ext"] = discord_ext_module
     sys.modules["discord.ext.commands"] = commands_module

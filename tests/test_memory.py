@@ -242,6 +242,19 @@ class MemoryStoreTests(unittest.IsolatedAsyncioTestCase):
             ),
         )
 
+    async def test_disable_and_enable_user(self) -> None:
+        self.assertFalse(await self.store.is_user_disabled(100, 200))
+
+        await self.store.set_user_disabled(100, 200, disabled=True)
+
+        self.assertTrue(await self.store.is_user_disabled(100, 200))
+        self.assertEqual(await self.store.get_disabled_user_ids(100), {200})
+
+        await self.store.set_user_disabled(100, 200, disabled=False)
+
+        self.assertFalse(await self.store.is_user_disabled(100, 200))
+        self.assertEqual(await self.store.get_disabled_user_ids(100), set())
+
     async def test_existing_database_is_migrated_with_content_parts_column(self) -> None:
         legacy_db = Path(self._tmpdir.name) / "legacy.sqlite3"
         with sqlite3.connect(legacy_db) as conn:

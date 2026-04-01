@@ -84,6 +84,9 @@ Configure them in `.env` (see `.env.example`).
 ## Sample Prompts (in chat)
 Use natural language to trigger Tool Calling and music features: `play <song name>`, `seek to 1:23`, `set volume to 50%`, `skip this track`, `disconnect from voice`, `join my channel`, etc.
 
+## Slash Commands
+- `/bot_access action:<Disable|Enable|Status> member:<user>` - manage whether a specific server member can interact with the bot in text chat. Requires `Manage Server` or administrator permissions.
+
 ## Updating
 ```bash
 git pull

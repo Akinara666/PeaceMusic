@@ -29,6 +29,65 @@ types = cog_module.types
 
 
 class GeminiChatCogTests(unittest.IsolatedAsyncioTestCase):
+    async def test_bot_access_command_updates_disabled_users(self) -> None:
+        cog = object.__new__(GeminiChatCog)
+        cog.bot = SimpleNamespace(user=SimpleNamespace(id=999))
+        cog._memory_store = SimpleNamespace(
+            set_user_disabled=AsyncMock(),
+            get_disabled_user_ids=AsyncMock(return_value=set()),
+        )
+        cog._disabled_users = {}
+        cog._disabled_users_loaded = set()
+
+        interaction = SimpleNamespace(
+            guild=SimpleNamespace(id=1),
+            user=SimpleNamespace(
+                guild_permissions=SimpleNamespace(
+                    manage_guild=True,
+                    administrator=False,
+                )
+            ),
+            response=SimpleNamespace(send_message=AsyncMock()),
+        )
+        member = SimpleNamespace(id=42, mention="<@42>")
+
+        await cog.bot_access(
+            interaction,
+            SimpleNamespace(value="disable"),
+            member,
+        )
+
+        cog._memory_store.set_user_disabled.assert_awaited_once_with(
+            1, 42, disabled=True
+        )
+        self.assertEqual(cog._disabled_users[1], {42})
+        interaction.response.send_message.assert_awaited_once_with(
+            "Общение с ботом для <@42> отключено.",
+            ephemeral=True,
+        )
+
+    async def test_on_message_ignores_disabled_user(self) -> None:
+        cog = object.__new__(GeminiChatCog)
+        cog.bot = SimpleNamespace(
+            user=SimpleNamespace(id=999),
+            process_commands=AsyncMock(),
+        )
+        cog._is_user_disabled = AsyncMock(return_value=True)
+
+        message = SimpleNamespace(
+            author=SimpleNamespace(id=10),
+            guild=SimpleNamespace(id=1),
+            channel=SimpleNamespace(id=77),
+            content="привет",
+            attachments=[],
+        )
+
+        with patch.object(cog_module, "CHATBOT_CHANNEL_ID", None):
+            await cog.on_message(message)
+
+        cog._is_user_disabled.assert_awaited_once_with(1, 10)
+        cog.bot.process_commands.assert_not_awaited()
+
     def test_build_temporal_context_contains_message_times(self) -> None:
         cog = object.__new__(GeminiChatCog)
         recent_messages = [
