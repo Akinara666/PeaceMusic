@@ -1,5 +1,6 @@
 discord.py
 google-genai
+httpx[socks]
 numpy
 pydub
 requests

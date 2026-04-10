@@ -68,6 +68,7 @@ Configure them in `.env` (see `.env.example`).
 - `DISCORD_BOT_TOKEN` - your Discord bot token.
 - `CHATBOT_CHANNEL_ID` - channel ID for AI chat (optional; omit to respond in any channel).
 - `GEMINI_API_KEY` - Google Gemini Developer API key.
+- `GEMINI_SOCKS_PROXY` - optional SOCKS5 proxy for Gemini API traffic, for example `socks5://127.0.0.1:40000`.
 - `CHAT_MEMORY_DB` - path to the SQLite memory database (defaults to `chat_memory.sqlite3`; Docker overrides it to `/app/data/chat_memory.sqlite3`).
 - `GEMINI_RESPONSE_MODEL` - response generation model (defaults to `gemini-3.1-flash-lite`).
 - `GEMINI_SUMMARY_MODEL` - background summary model (defaults to `gemini-3.1-flash-lite`).
@@ -75,6 +76,8 @@ Configure them in `.env` (see `.env.example`).
 - `MUSIC_DIRECTORY` - path for downloaded/cached tracks (defaults to `music_files`).
 - `YTDL_USE_COOKIES` - enable `yt-dlp` cookies support (`false` by default).
 - `YTDL_COOKIE_FILE` - path to a Netscape-format cookies file when cookies are enabled (defaults to `data/cookies.txt`).
+
+`GEMINI_SOCKS_PROXY` applies to response generation, embeddings, file checks, and background summaries because all Gemini SDK calls share the same client.
 
 ### Cookies
 - Cookies are disabled by default.

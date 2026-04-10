@@ -66,6 +66,7 @@ python main.py
 - `DISCORD_BOT_TOKEN` — токен Discord‑бота
 - `CHATBOT_CHANNEL_ID` — ID текстового канала для общения с ассистентом (опционально; если пусто — слушает все)
 - `GEMINI_API_KEY` — ключ Gemini Developer API
+- `GEMINI_SOCKS_PROXY` — опциональный SOCKS5-прокси для трафика Gemini API, например `socks5://127.0.0.1:40000`
 - `CHAT_MEMORY_DB` — путь к SQLite‑базе памяти (по умолчанию `chat_memory.sqlite3`; в Docker переопределяется на `/app/data/chat_memory.sqlite3`)
 - `GEMINI_RESPONSE_MODEL` — модель генерации ответов (по умолчанию `gemini-3.1-flash-lite`)
 - `GEMINI_SUMMARY_MODEL` — модель для фонового summary (по умолчанию `gemini-3.1-flash-lite`)
@@ -73,6 +74,8 @@ python main.py
 - `MUSIC_DIRECTORY` — путь для кэша/локальных файлов (по умолчанию `music_files`)
 - `YTDL_USE_COOKIES` — включает cookies для `yt-dlp` (по умолчанию `false`)
 - `YTDL_COOKIE_FILE` — путь к cookies-файлу в формате Netscape, если cookies включены (по умолчанию `data/cookies.txt`)
+
+`GEMINI_SOCKS_PROXY` применяется ко всем вызовам Gemini SDK: генерации ответов, эмбеддингам, проверкам файлов и фоновому summary.
 
 ## Cookies для yt-dlp
 - По умолчанию cookies выключены.

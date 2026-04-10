@@ -35,6 +35,7 @@ class ConfigTests(unittest.TestCase):
             settings.gemini.embedding_model, "gemini-embedding-2-preview"
         )
         self.assertEqual(settings.gemini.embedding_dimensions, 768)
+        self.assertIsNone(settings.gemini.socks_proxy)
         self.assertEqual(str(settings.misc.music_directory), "test_music_dir")
 
         self.assertEqual(str(settings.memory.db_file), "chat_memory.sqlite3")
@@ -60,3 +61,16 @@ class ConfigTests(unittest.TestCase):
         self.assertTrue(
             settings.audio.ytdl_options["cookiefile"].endswith("custom/cookies.txt")
         )
+
+    def test_load_settings_reads_optional_gemini_socks_proxy(self) -> None:
+        mock_env = {
+            "DISCORD_BOT_TOKEN": "test_token",
+            "GEMINI_API_KEY": "test_key",
+            "GEMINI_SOCKS_PROXY": "socks5://127.0.0.1:40000",
+        }
+
+        with patch.dict(os.environ, mock_env, clear=True):
+            config_module = load_project_module("test_config_module_proxy", "config.py")
+            settings = config_module.load_settings()
+
+        self.assertEqual(settings.gemini.socks_proxy, "socks5://127.0.0.1:40000")

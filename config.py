@@ -88,6 +88,7 @@ class GeminiSettings:
     embedding_model: str = "gemini-embedding-2-preview"
     embedding_dimensions: int = 768
     thinking_budget: int = 8192
+    socks_proxy: Optional[str] = None
 
     @property
     def default_model(self) -> str:
@@ -229,6 +230,7 @@ def load_settings() -> AppSettings:
     gemini_thinking_budget = int(
         _get_env("GEMINI_THINKING_BUDGET", default="8192") or "8192"
     )
+    gemini_socks_proxy = _get_env("GEMINI_SOCKS_PROXY") or None
 
     music_directory = Path(
         _get_env("MUSIC_DIRECTORY", default="music_files") or "music_files"
@@ -320,6 +322,7 @@ def load_settings() -> AppSettings:
             embedding_model=gemini_embedding_model,
             embedding_dimensions=gemini_embedding_dimensions,
             thinking_budget=gemini_thinking_budget,
+            socks_proxy=gemini_socks_proxy,
         ),
         memory=memory_settings,
         misc=misc_settings,
@@ -339,6 +342,7 @@ GEMINI_SUMMARY_MODEL = _settings.gemini.summary_model
 GEMINI_EMBEDDING_MODEL = _settings.gemini.embedding_model
 GEMINI_EMBEDDING_DIMENSIONS = _settings.gemini.embedding_dimensions
 GEMINI_THINKING_BUDGET = _settings.gemini.thinking_budget
+GEMINI_SOCKS_PROXY = _settings.gemini.socks_proxy
 MUSIC_DIRECTORY = _settings.misc.music_directory
 
 CHAT_MEMORY_DB = str(_settings.memory.db_file)

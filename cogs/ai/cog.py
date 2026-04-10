@@ -123,9 +123,18 @@ class GeminiChatCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self._settings = get_settings()
+        http_options_kwargs: dict[str, object] = {"timeout": 24000}
+        if self._settings.gemini.socks_proxy:
+            http_options_kwargs["client_args"] = {
+                "proxy": self._settings.gemini.socks_proxy
+            }
+            http_options_kwargs["async_client_args"] = {
+                "proxy": self._settings.gemini.socks_proxy
+            }
+            logger.info("Gemini SOCKS proxy enabled for outbound API calls")
         self.client = genai.Client(
             api_key=self._settings.gemini.api_key,
-            http_options=types.HttpOptions(timeout=24000),
+            http_options=types.HttpOptions(**http_options_kwargs),
         )
         self._locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
         self._summary_tasks: dict[int, asyncio.Task[None]] = {}
