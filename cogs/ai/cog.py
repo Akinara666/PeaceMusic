@@ -125,11 +125,21 @@ class GeminiChatCog(commands.Cog):
         self._settings = get_settings()
         http_options_kwargs: dict[str, object] = {"timeout": 24000}
         if self._settings.gemini.socks_proxy:
+            try:
+                import httpx
+            except ImportError as exc:  # pragma: no cover - dependency/runtime guard
+                raise RuntimeError(
+                    "GEMINI_SOCKS_PROXY requires httpx[socks] to be installed."
+                ) from exc
+
+            proxy = self._settings.gemini.socks_proxy
+            # Force the async Gemini client to stay on httpx; otherwise the SDK may
+            # pick aiohttp when it is present via discord.py.
             http_options_kwargs["client_args"] = {
-                "proxy": self._settings.gemini.socks_proxy
+                "transport": httpx.HTTPTransport(proxy=proxy)
             }
             http_options_kwargs["async_client_args"] = {
-                "proxy": self._settings.gemini.socks_proxy
+                "transport": httpx.AsyncHTTPTransport(proxy=proxy)
             }
             logger.info("Gemini SOCKS proxy enabled for outbound API calls")
         self.client = genai.Client(

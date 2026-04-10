@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -29,6 +31,72 @@ types = cog_module.types
 
 
 class GeminiChatCogTests(unittest.IsolatedAsyncioTestCase):
+    def test_init_uses_httpx_transports_for_gemini_socks_proxy(self) -> None:
+        captured_kwargs: dict[str, object] = {}
+
+        class FakeHTTPTransport:
+            def __init__(self, *, proxy):
+                self.proxy = proxy
+
+        class FakeAsyncHTTPTransport:
+            def __init__(self, *, proxy):
+                self.proxy = proxy
+
+        fake_httpx = SimpleNamespace(
+            HTTPTransport=FakeHTTPTransport,
+            AsyncHTTPTransport=FakeAsyncHTTPTransport,
+        )
+        fake_settings = SimpleNamespace(
+            gemini=SimpleNamespace(
+                api_key="key",
+                socks_proxy="socks5://127.0.0.1:40000",
+                embedding_model="embed-model",
+                embedding_dimensions=768,
+                response_model="response-model",
+                thinking_budget=1024,
+            ),
+            memory=SimpleNamespace(db_file=Path("chat_memory.sqlite3")),
+        )
+
+        with patch.object(cog_module, "get_settings", return_value=fake_settings):
+            with patch.object(
+                cog_module.genai,
+                "Client",
+                create=True,
+                side_effect=lambda **kwargs: captured_kwargs.update(kwargs)
+                or SimpleNamespace(),
+            ):
+                with patch.object(cog_module, "MemoryStore", return_value=SimpleNamespace()):
+                    with patch.object(
+                        cog_module,
+                        "AttachmentProcessor",
+                        return_value=SimpleNamespace(),
+                    ):
+                        with patch.object(
+                            cog_module,
+                            "GeminiEmbeddingService",
+                            return_value=SimpleNamespace(model_name="embed-model"),
+                        ):
+                            with patch.object(
+                                cog_module,
+                                "ResponseGenerator",
+                                return_value=SimpleNamespace(),
+                            ):
+                                with patch.dict(sys.modules, {"httpx": fake_httpx}):
+                                    GeminiChatCog(SimpleNamespace())
+
+        http_options = captured_kwargs["http_options"]
+        self.assertEqual(captured_kwargs["api_key"], "key")
+        self.assertEqual(http_options.timeout, 24000)
+        self.assertEqual(
+            http_options.client_args["transport"].proxy,
+            "socks5://127.0.0.1:40000",
+        )
+        self.assertEqual(
+            http_options.async_client_args["transport"].proxy,
+            "socks5://127.0.0.1:40000",
+        )
+
     async def test_bot_access_command_updates_disabled_users(self) -> None:
         cog = object.__new__(GeminiChatCog)
         cog.bot = SimpleNamespace(user=SimpleNamespace(id=999))

@@ -193,6 +193,10 @@ def _install_google_stub() -> None:
         def __init__(self, **kwargs):
             self.__dict__.update(kwargs)
 
+    class HttpOptions:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
     class FunctionCall:
         def __init__(self, name="", args=None):
             self.name = name
@@ -282,6 +286,7 @@ def _install_google_stub() -> None:
     types_module.ThinkingConfig = ThinkingConfig
     types_module.GenerateContentConfig = GenerateContentConfig
     types_module.EmbedContentConfig = EmbedContentConfig
+    types_module.HttpOptions = HttpOptions
     types_module.FunctionCall = FunctionCall
     types_module.FunctionResponse = FunctionResponse
     types_module.Part = Part
