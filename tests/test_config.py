@@ -11,7 +11,7 @@ from config import load_settings  # noqa: E402
 def test_load_settings_smoke():
     """Test that settings load correctly with mocked environment variables."""
     mock_env = {
-        "DISCORD_BOT_TOKEN": "test_token",
+        "DISCORD_BOT_TOKEN": 'YOUR_TOKEN_HERE',
         "GEMINI_API_KEY": "test_key",
         "MUSIC_DIRECTORY": "test_music_dir",
         "CONTEXT_FILE": "test_context.json",
