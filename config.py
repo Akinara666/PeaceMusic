@@ -166,6 +166,15 @@ def _build_ytdl_options(
         "socket_timeout": 15,
         "retries": 3,
         "fragment_retries": 20,
+        # YouTube periodically rejects the default web client with
+        # "The page needs to be reloaded". Walking through the alternative
+        # clients in order recovers most of those failures without us needing
+        # PO tokens or browser cookies.
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["default", "tv", "ios", "mweb"],
+            }
+        },
     }
     if use_cookies and cookies_file is not None:
         options["cookiefile"] = str(cookies_file)
