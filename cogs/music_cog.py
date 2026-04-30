@@ -6,7 +6,7 @@ import logging
 import random
 import shlex
 import time as time_module
-from collections import deque
+from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Deque, Optional
@@ -187,7 +187,26 @@ def build_ffmpeg_options(
 
 
 INFO_CACHE_TTL_SECONDS = 900
-_info_cache: dict[str, tuple[float, dict]] = {}
+INFO_CACHE_MAX_ENTRIES = 256
+_info_cache: "OrderedDict[str, tuple[float, dict]]" = OrderedDict()
+
+
+def _info_cache_set(key: str, data: dict) -> None:
+    _info_cache[key] = (time_module.monotonic(), data)
+    _info_cache.move_to_end(key)
+    while len(_info_cache) > INFO_CACHE_MAX_ENTRIES:
+        _info_cache.popitem(last=False)
+
+
+def _info_cache_get(key: str) -> Optional[dict]:
+    cached = _info_cache.get(key)
+    if not cached:
+        return None
+    if (time_module.monotonic() - cached[0]) >= INFO_CACHE_TTL_SECONDS:
+        _info_cache.pop(key, None)
+        return None
+    _info_cache.move_to_end(key)
+    return cached[1]
 
 
 def _create_ytdl() -> youtube_dl.YoutubeDL:
@@ -208,14 +227,13 @@ async def _probe_info(
     """Быстрое получение метаданных без скачивания, с кэшем."""
     loop = loop or asyncio.get_running_loop()
     cache_key = f"1:{url}"
-    cached = _info_cache.get(cache_key)
-    now = time_module.monotonic()
-    if cached and (now - cached[0]) < INFO_CACHE_TTL_SECONDS:
-        return cached[1]
+    cached = _info_cache_get(cache_key)
+    if cached is not None:
+        return cached
 
     start = time_module.monotonic()
     data = await loop.run_in_executor(None, lambda: _extract_info_sync(url, download=False))
-    _info_cache[cache_key] = (time_module.monotonic(), data)
+    _info_cache_set(cache_key, data)
     logger.debug("yt_dlp probe took %.2fs for %s", time_module.monotonic() - start, url)
     return data
 
@@ -266,12 +284,11 @@ class YTDLSource(discord.PCMVolumeTransformer):
         loop = loop or asyncio.get_running_loop()
 
         cache_key = f"{int(stream)}:{url}"
-        cached = _info_cache.get(cache_key)
-        now = time_module.monotonic()
         use_cache = stream
+        cached = _info_cache_get(cache_key) if use_cache else None
 
-        if use_cache and cached and (now - cached[0]) < INFO_CACHE_TTL_SECONDS:
-            data = cached[1]
+        if cached is not None:
+            data = cached
             logger.debug("yt_dlp extract_info cache hit for %s", url)
         else:
             start_time = time_module.monotonic()
@@ -280,7 +297,7 @@ class YTDLSource(discord.PCMVolumeTransformer):
             )
             elapsed = time_module.monotonic() - start_time
             if use_cache:
-                _info_cache[cache_key] = (time_module.monotonic(), data)
+                _info_cache_set(cache_key, data)
             logger.debug("yt_dlp extract_info took %.2fs for %s", elapsed, url)
 
         entries = data.get("entries") or [data]
@@ -753,8 +770,8 @@ class Music(commands.Cog):
                 self._replay_track = None
                 self.current = None
                 self._reset_playback_timers()
-                self.bot.loop.call_soon_threadsafe(
-                    asyncio.create_task, self._requeue_and_continue(finished_track)
+                asyncio.run_coroutine_threadsafe(
+                    self._requeue_and_continue(finished_track), self.bot.loop
                 )
                 return
             else:
@@ -767,9 +784,7 @@ class Music(commands.Cog):
 
         self.current = None
         self._reset_playback_timers()
-        self.bot.loop.call_soon_threadsafe(
-            asyncio.create_task, self._start_next_track()
-        )
+        asyncio.run_coroutine_threadsafe(self._start_next_track(), self.bot.loop)
 
     async def _requeue_and_continue(self, track: QueuedTrack) -> None:
         """Requeue the finished track and then start the next one.

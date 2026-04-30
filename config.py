@@ -209,8 +209,17 @@ def _build_ffmpeg_options() -> dict:
 
 def load_settings() -> AppSettings:
     discord_token = _get_env("DISCORD_BOT_TOKEN", required=True)
-    chatbot_channel_id_raw = _get_env("CHATBOT_CHANNEL_ID")
-    chatbot_channel_id = int(chatbot_channel_id_raw) if chatbot_channel_id_raw else None
+    chatbot_channel_id_raw = (_get_env("CHATBOT_CHANNEL_ID") or "").strip()
+    chatbot_channel_id: Optional[int]
+    if chatbot_channel_id_raw:
+        try:
+            chatbot_channel_id = int(chatbot_channel_id_raw)
+        except ValueError as exc:
+            raise RuntimeError(
+                f"CHATBOT_CHANNEL_ID must be an integer, got {chatbot_channel_id_raw!r}"
+            ) from exc
+    else:
+        chatbot_channel_id = None
 
     gemini_key = _get_env("GEMINI_API_KEY", required=True)
     gemini_response_model = (

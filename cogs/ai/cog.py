@@ -573,7 +573,15 @@ class GeminiChatCog(commands.Cog):
     ) -> list[types.Content]:
         contents: list[types.Content] = []
         for stored in recent_messages:
-            role = stored.role if stored.role in {"user", "model"} else "user"
+            # Tool rows are persisted for semantic recall and summary, but they
+            # are not real user/model turns: replaying them as fake "user" text
+            # confuses Gemini's role alternation and pollutes the chat history.
+            # The matching tool result is still visible to the model via the
+            # immediate function_response in the turn that produced it, plus
+            # the temporal/semantic memory blocks in the system instruction.
+            if stored.role not in {"user", "model"}:
+                continue
+            role = stored.role
             parts = self._deserialize_content_parts(stored.content_parts)
             if not parts:
                 fallback_text = (
@@ -809,6 +817,9 @@ class GeminiChatCog(commands.Cog):
         """Execute a music tool call requested by Gemini."""
         tool_name = tool_call.name or ""
         tool_args = dict(tool_call.args if tool_call.args is not None else {})
+        # The discord message is always passed positionally; drop any colliding
+        # key the model might hallucinate to avoid a TypeError on dispatch.
+        tool_args.pop("message", None)
         logger.info("Gemini invoked tool '%s' with args %s", tool_name, tool_args)
 
         if tool_name == "react_to_message":
