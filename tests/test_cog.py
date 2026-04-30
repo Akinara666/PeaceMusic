@@ -27,7 +27,24 @@ GeminiChatCog = cog_module.GeminiChatCog
 PreparedIncomingMessage = cog_module.PreparedIncomingMessage
 StoredMessage = cog_module.StoredMessage
 ToolExecutionEvent = cog_module.ToolExecutionEvent
+_RateLimiter = cog_module._RateLimiter
 types = cog_module.types
+
+
+class RateLimiterTests(unittest.TestCase):
+    def test_zero_max_is_permissive(self) -> None:
+        limiter = _RateLimiter(window_seconds=60, max_requests=0)
+        for _ in range(50):
+            self.assertTrue(limiter.allow(1))
+
+    def test_blocks_after_threshold_within_window(self) -> None:
+        limiter = _RateLimiter(window_seconds=60, max_requests=3)
+        self.assertTrue(limiter.allow(7))
+        self.assertTrue(limiter.allow(7))
+        self.assertTrue(limiter.allow(7))
+        self.assertFalse(limiter.allow(7))
+        # Different key has its own bucket.
+        self.assertTrue(limiter.allow(8))
 
 
 class GeminiChatCogTests(unittest.IsolatedAsyncioTestCase):
@@ -56,6 +73,10 @@ class GeminiChatCogTests(unittest.IsolatedAsyncioTestCase):
                 thinking_budget=1024,
             ),
             memory=SimpleNamespace(db_file=Path("chat_memory.sqlite3")),
+            misc=SimpleNamespace(
+                rate_limit_max_requests=0,
+                rate_limit_window_seconds=60.0,
+            ),
         )
 
         with patch.object(cog_module, "get_settings", return_value=fake_settings):

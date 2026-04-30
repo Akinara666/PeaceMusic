@@ -8,6 +8,7 @@ from google.genai import types
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from google import genai
 
+
 class GeminiEmbeddingService:
     """Create normalized Gemini embeddings for semantic memory retrieval."""
 

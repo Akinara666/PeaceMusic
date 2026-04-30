@@ -5,7 +5,7 @@ import json
 import logging
 import mimetypes
 import re
-from collections import defaultdict
+from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -93,6 +93,30 @@ _SUMMARY_SYSTEM_PROMPT = """
 """.strip()
 
 
+class _RateLimiter:
+    """Simple per-key sliding-window limiter used to cap AI calls per user."""
+
+    def __init__(self, *, window_seconds: float, max_requests: int) -> None:
+        self._window = max(window_seconds, 0.0)
+        self._max = max(max_requests, 0)
+        self._hits: dict[int, deque[float]] = defaultdict(deque)
+
+    def allow(self, key: int) -> bool:
+        if self._max <= 0 or self._window <= 0:
+            return True
+        from time import monotonic
+
+        now = monotonic()
+        bucket = self._hits[key]
+        cutoff = now - self._window
+        while bucket and bucket[0] < cutoff:
+            bucket.popleft()
+        if len(bucket) >= self._max:
+            return False
+        bucket.append(now)
+        return True
+
+
 @dataclass(frozen=True)
 class PreparedIncomingMessage:
     content: types.Content
@@ -117,8 +141,16 @@ class ToolExecutionFeedback:
     user_notified: bool = False
 
 
+_PERMISSIVE_RATE_LIMITER = _RateLimiter(window_seconds=0, max_requests=0)
+
+
 class GeminiChatCog(commands.Cog):
     """Discord cog responsible for Gemini-powered chat responses."""
+
+    # Class-level defaults so tests that bypass __init__ via object.__new__
+    # still see safe values for fields the production initializer fills in.
+    _silent_channels_loaded: bool = False
+    _rate_limiter: _RateLimiter = _PERMISSIVE_RATE_LIMITER
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -149,8 +181,13 @@ class GeminiChatCog(commands.Cog):
         self._locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
         self._summary_tasks: dict[int, asyncio.Task[None]] = {}
         self._silent_channels: dict[int, datetime] = {}
+        self._silent_channels_loaded = False
         self._disabled_users: dict[int, set[int]] = {}
         self._disabled_users_loaded: set[int] = set()
+        self._rate_limiter = _RateLimiter(
+            window_seconds=self._settings.misc.rate_limit_window_seconds,
+            max_requests=self._settings.misc.rate_limit_max_requests,
+        )
 
         base_dir = Path(__file__).resolve().parents[2]
         db_path = self._settings.memory.db_file
@@ -189,6 +226,49 @@ class GeminiChatCog(commands.Cog):
     @property
     def music_cog(self) -> Optional["Music"]:
         return self.bot.get_cog("Music")  # type: ignore
+
+    async def _ensure_silent_channels_loaded(self) -> None:
+        if self._silent_channels_loaded:
+            return
+        try:
+            stored = await self._memory_store.get_silent_channels()
+        except Exception:  # noqa: BLE001 - persistence must not block chat
+            logger.exception("Failed to load silent channels from memory store")
+            self._silent_channels_loaded = True
+            return
+        for channel_id, raw_ts in stored.items():
+            parsed = self._parse_silent_timestamp(raw_ts)
+            if parsed is None:
+                continue
+            if datetime.now(_MSK_TZ) - parsed >= _SILENT_DURATION:
+                # Expired entries are pruned eagerly so the table stays small.
+                asyncio.create_task(
+                    self._memory_store.set_channel_silenced(channel_id, None)
+                )
+                continue
+            self._silent_channels[channel_id] = parsed
+        self._silent_channels_loaded = True
+
+    @staticmethod
+    def _parse_silent_timestamp(raw: str) -> Optional[datetime]:
+        try:
+            parsed = datetime.fromisoformat(raw)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=_MSK_TZ)
+        return parsed
+
+    async def _persist_silent_channel(
+        self, channel_id: int, silenced_at: Optional[datetime]
+    ) -> None:
+        payload = silenced_at.isoformat() if silenced_at else None
+        try:
+            await self._memory_store.set_channel_silenced(channel_id, payload)
+        except Exception:  # noqa: BLE001 - persistence is best-effort
+            logger.exception(
+                "Failed to persist silent flag for channel %s", channel_id
+            )
 
     async def _load_disabled_users(self, guild_id: int) -> set[int]:
         if guild_id not in self._disabled_users_loaded:
@@ -935,10 +1015,16 @@ class GeminiChatCog(commands.Cog):
         if guild and await self._is_user_disabled(guild.id, message.author.id):
             return
 
+        await self._ensure_silent_channels_loaded()
+
         # --- Silent mode toggle ---
         raw_text = (message.content or "").strip()
         if _UNSILENCE_RE.search(raw_text):
-            self._silent_channels.pop(message.channel.id, None)
+            existed = self._silent_channels.pop(message.channel.id, None)
+            if existed is not None:
+                asyncio.create_task(
+                    self._persist_silent_channel(message.channel.id, None)
+                )
             try:
                 await message.add_reaction("✅")
             except discord.HTTPException:
@@ -946,7 +1032,11 @@ class GeminiChatCog(commands.Cog):
             await self.bot.process_commands(message)
             return
         if _SILENCE_RE.search(raw_text):
-            self._silent_channels[message.channel.id] = datetime.now(_MSK_TZ)
+            silenced_at = datetime.now(_MSK_TZ)
+            self._silent_channels[message.channel.id] = silenced_at
+            asyncio.create_task(
+                self._persist_silent_channel(message.channel.id, silenced_at)
+            )
             try:
                 await message.add_reaction("🤫")
             except discord.HTTPException:
@@ -973,6 +1063,14 @@ class GeminiChatCog(commands.Cog):
                         await self._safe_channel_send(message.channel, fallback_text)
                 await self.bot.process_commands(message)
                 return
+
+        if not self._rate_limiter.allow(message.author.id):
+            try:
+                await message.add_reaction("⏳")
+            except discord.HTTPException:
+                pass
+            await self.bot.process_commands(message)
+            return
 
         async with self._locks[message.channel.id]:
             async with message.channel.typing():
@@ -1045,6 +1143,9 @@ class GeminiChatCog(commands.Cog):
                     )
                     if silenced_at is not None and not is_silent:
                         self._silent_channels.pop(message.channel.id, None)
+                        asyncio.create_task(
+                            self._persist_silent_channel(message.channel.id, None)
+                        )
                     if not is_silent:
                         if reply_text is not None and not any_tool_notified:
                             sent_reply = await self._safe_channel_send(

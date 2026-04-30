@@ -12,6 +12,7 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+
 @dataclass(frozen=True)
 class StoredMessage:
     id: int
@@ -111,6 +112,11 @@ class MemoryStore:
                     user_id INTEGER NOT NULL,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY (guild_id, user_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS silent_channels (
+                    channel_id INTEGER PRIMARY KEY,
+                    silenced_at TEXT NOT NULL
                 );
                 """
             )
@@ -329,6 +335,40 @@ class MemoryStore:
                     (guild_id,),
                 ).fetchall()
             return {int(row["user_id"]) for row in rows}
+
+        return await asyncio.to_thread(_load)
+
+    async def set_channel_silenced(
+        self, channel_id: int, silenced_at: Optional[str]
+    ) -> None:
+        def _write() -> None:
+            with self._connect() as conn:
+                if silenced_at is None:
+                    conn.execute(
+                        "DELETE FROM silent_channels WHERE channel_id = ?",
+                        (channel_id,),
+                    )
+                else:
+                    conn.execute(
+                        """
+                        INSERT INTO silent_channels(channel_id, silenced_at)
+                        VALUES (?, ?)
+                        ON CONFLICT(channel_id) DO UPDATE SET
+                            silenced_at = excluded.silenced_at
+                        """,
+                        (channel_id, silenced_at),
+                    )
+
+        async with self._write_lock:
+            await asyncio.to_thread(_write)
+
+    async def get_silent_channels(self) -> dict[int, str]:
+        def _load() -> dict[int, str]:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    "SELECT channel_id, silenced_at FROM silent_channels"
+                ).fetchall()
+            return {int(row["channel_id"]): row["silenced_at"] for row in rows}
 
         return await asyncio.to_thread(_load)
 

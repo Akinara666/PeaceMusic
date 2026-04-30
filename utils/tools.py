@@ -125,7 +125,10 @@ tools = [
         function_declarations=[
             types.FunctionDeclaration(
                 name="now_playing",
-                description="Returns information about the currently playing track (title, duration, current progress).",
+                description=(
+                    "Returns information about the currently playing track "
+                    "(title, duration, current progress)."
+                ),
             )
         ],
     ),
@@ -181,7 +184,10 @@ tools = [
                     properties={
                         "mode": types.Schema(
                             type=types.Type.STRING,
-                            description="The loop mode. Options: 'off', 'track' (repeat current song), 'queue' (repeat entire queue).",
+                            description=(
+                                "The loop mode. Options: 'off', 'track' "
+                                "(repeat current song), 'queue' (repeat entire queue)."
+                            ),
                         ),
                     },
                     required=["mode"],

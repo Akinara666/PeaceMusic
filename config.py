@@ -111,6 +111,8 @@ class MiscSettings:
     status_message: str
     prompt_file: Optional[Path]
     prompt_text: str
+    rate_limit_max_requests: int = 0
+    rate_limit_window_seconds: float = 60.0
 
 
 @dataclass(frozen=True)
@@ -293,11 +295,20 @@ def load_settings() -> AppSettings:
         except (FileNotFoundError, OSError):
             pass
 
+    rate_limit_max_requests = int(
+        _get_env("AI_RATE_LIMIT_MAX_REQUESTS", default="20") or "20"
+    )
+    rate_limit_window_seconds = float(
+        _get_env("AI_RATE_LIMIT_WINDOW_SECONDS", default="60") or "60"
+    )
+
     misc_settings = MiscSettings(
         music_directory=music_directory,
         status_message=status_message,
         prompt_file=prompt_file,
         prompt_text=prompt_text,
+        rate_limit_max_requests=rate_limit_max_requests,
+        rate_limit_window_seconds=rate_limit_window_seconds,
     )
 
     memory_settings = MemorySettings(

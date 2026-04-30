@@ -242,6 +242,25 @@ class MemoryStoreTests(unittest.IsolatedAsyncioTestCase):
             ),
         )
 
+    async def test_silent_channel_persistence_round_trip(self) -> None:
+        self.assertEqual(await self.store.get_silent_channels(), {})
+
+        await self.store.set_channel_silenced(77, "2026-04-30T12:00:00+03:00")
+        self.assertEqual(
+            await self.store.get_silent_channels(),
+            {77: "2026-04-30T12:00:00+03:00"},
+        )
+
+        # Idempotent overwrite keeps the latest value.
+        await self.store.set_channel_silenced(77, "2026-04-30T13:00:00+03:00")
+        self.assertEqual(
+            await self.store.get_silent_channels(),
+            {77: "2026-04-30T13:00:00+03:00"},
+        )
+
+        await self.store.set_channel_silenced(77, None)
+        self.assertEqual(await self.store.get_silent_channels(), {})
+
     async def test_disable_and_enable_user(self) -> None:
         self.assertFalse(await self.store.is_user_disabled(100, 200))
 

@@ -1349,7 +1349,7 @@ class Music(commands.Cog):
     ) -> UserNotificationResult:
         if not self.queue:
             return self._result("Очередь пуста.")
-        
+
         lines = []
         for i, track in enumerate(self.queue, start=1):
             dur = format_duration(track.duration) if track.duration else "?:??"
@@ -1391,7 +1391,7 @@ class Music(commands.Cog):
             return self._result("Очередь пуста.")
         if index < 1 or index > len(self.queue):
             return self._result(f"Неверный индекс. В очереди {len(self.queue)} треков.")
-        
+
         track = self.queue[index - 1]
         del self.queue[index - 1]
         self._cleanup_track_file(track)
@@ -1408,7 +1408,7 @@ class Music(commands.Cog):
             return self._result(
                 "Неизвестный режим. Используйте 'off', 'track' или 'queue'."
             )
-        
+
         self.loop_mode = mode
         modes_tr = {"off": "Выключен", "track": "Текущий трек", "queue": "Вся очередь"}
         notified = await self._safe_reply(
