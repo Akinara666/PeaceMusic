@@ -133,6 +133,8 @@ class ToolExecutionEvent:
     response: dict[str, object]
     created_at: str
     user_notified: bool = False
+    source: str = "tool"
+    trigger: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -607,12 +609,15 @@ class GeminiChatCog(commands.Cog):
 
     def _build_tool_memory_text(self, event: ToolExecutionEvent) -> str:
         result_label = "error" if "error" in event.response else "result"
-        return (
-            f"[tool] {event.tool_name}\n"
-            f"args: {json.dumps(event.args, ensure_ascii=False, sort_keys=True)}\n"
+        lines = [f"[{event.source}] {event.tool_name}"]
+        if event.trigger:
+            lines.append(f"trigger: {event.trigger}")
+        lines.append(f"args: {json.dumps(event.args, ensure_ascii=False, sort_keys=True)}")
+        lines.append(
             f"{result_label}: "
             f"{json.dumps(event.response, ensure_ascii=False, sort_keys=True)}"
         )
+        return "\n".join(lines)
 
     def _build_memory_instruction(
         self,
@@ -789,7 +794,7 @@ class GeminiChatCog(commands.Cog):
                 discord_message_id=None,
                 role="tool",
                 author_id=None,
-                author_name=f"tool:{event.tool_name}",
+                author_name=f"{event.source}:{event.tool_name}",
                 content_text=memory_text,
                 created_at=event.created_at,
                 embedding=embedding,
@@ -797,12 +802,36 @@ class GeminiChatCog(commands.Cog):
                     {
                         "type": "text",
                         "text": self._format_prompt_turn(
-                            author_name=f"tool:{event.tool_name}",
+                            author_name=f"{event.source}:{event.tool_name}",
                             content_text=memory_text,
                         ),
                     },
                 ),
             )
+
+    async def persist_manual_music_command(
+        self,
+        *,
+        channel_id: int,
+        tool_name: str,
+        args: Optional[dict[str, object]] = None,
+        response: Optional[dict[str, object]] = None,
+        user_notified: bool = False,
+    ) -> None:
+        await self._persist_tool_events(
+            channel_id,
+            [
+                ToolExecutionEvent(
+                    tool_name=tool_name,
+                    args=dict(args or {}),
+                    response=dict(response or {}),
+                    created_at=self._current_timestamp(),
+                    user_notified=user_notified,
+                    source="manual",
+                    trigger="slash_command",
+                )
+            ],
+        )
 
     async def _maybe_schedule_summary(self, channel_id: int) -> None:
         active_task = self._summary_tasks.get(channel_id)

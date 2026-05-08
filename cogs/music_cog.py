@@ -13,6 +13,7 @@ from typing import Callable, Deque, Optional
 from urllib.parse import urlparse
 
 import discord
+from discord import app_commands
 import yt_dlp as youtube_dl
 from discord.ext import commands, tasks
 from yt_dlp.utils import DownloadError
@@ -365,6 +366,29 @@ class UserNotificationResult:
     user_notified: bool = False
 
 
+class _InteractionMessageAdapter:
+    def __init__(self, interaction: discord.Interaction):
+        self._interaction = interaction
+        self.author = interaction.user
+        self.channel = interaction.channel
+        self.guild = interaction.guild
+        self.id = getattr(interaction, "id", None)
+
+    async def reply(
+        self,
+        content: Optional[str] = None,
+        embed: Optional[discord.Embed] = None,
+    ) -> discord.Message:
+        if not self._interaction.response.is_done():
+            await self._interaction.response.send_message(content=content, embed=embed)
+            return await self._interaction.original_response()
+        return await self._interaction.followup.send(
+            content=content,
+            embed=embed,
+            wait=True,
+        )
+
+
 # ----------------------------------------------------------------------------
 # Music Cog
 # ----------------------------------------------------------------------------
@@ -413,6 +437,60 @@ class Music(commands.Cog):
 
     def _result(self, text: str, *, user_notified: bool = False) -> UserNotificationResult:
         return UserNotificationResult(text=text, user_notified=user_notified)
+
+    async def _run_slash_command(
+        self,
+        interaction: discord.Interaction,
+        *,
+        tool_name: str,
+        handler,
+        **tool_args: object,
+    ) -> None:
+        message = _InteractionMessageAdapter(interaction)
+        try:
+            result = await handler(message, **tool_args)
+        except Exception as exc:
+            logger.exception("Slash command %s failed", tool_name)
+            await message.reply(content="Не удалось выполнить музыкальную команду.")
+            chat_cog = self.bot.get_cog("GeminiChatCog")
+            if chat_cog is not None and interaction.channel_id is not None:
+                try:
+                    await chat_cog.persist_manual_music_command(
+                        channel_id=interaction.channel_id,
+                        tool_name=tool_name,
+                        args=tool_args,
+                        response={"error": str(exc) if str(exc) else "Unknown error"},
+                        user_notified=True,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to persist manual music error %s for channel %s",
+                        tool_name,
+                        interaction.channel_id,
+                    )
+            return
+
+        user_notified = result.user_notified
+        if not user_notified:
+            await message.reply(content=self._truncate_message_content(result.text))
+            user_notified = True
+
+        chat_cog = self.bot.get_cog("GeminiChatCog")
+        if chat_cog is not None and interaction.channel_id is not None:
+            try:
+                await chat_cog.persist_manual_music_command(
+                    channel_id=interaction.channel_id,
+                    tool_name=tool_name,
+                    args=tool_args,
+                    response={"result": result.text},
+                    user_notified=user_notified,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to persist manual music command %s for channel %s",
+                    tool_name,
+                    interaction.channel_id,
+                )
 
     def _truncate_message_content(self, content: Optional[str]) -> Optional[str]:
         if content is None or len(content) <= 2000:
@@ -1454,6 +1532,161 @@ class Music(commands.Cog):
         return self._result(
             f"Громкость {int(level * 100)}%",
             user_notified=notified,
+        )
+
+    @app_commands.command(name="play", description="Добавить трек или плейлист в очередь.")
+    @app_commands.describe(song_name="Название трека или ссылка.")
+    async def play_slash(self, interaction: discord.Interaction, song_name: str) -> None:
+        await self._run_slash_command(
+            interaction,
+            tool_name="play_music",
+            handler=self.play_func,
+            song_name=song_name,
+        )
+
+    @app_commands.command(name="skip", description="Пропустить текущий трек.")
+    async def skip_slash(self, interaction: discord.Interaction) -> None:
+        await self._run_slash_command(
+            interaction,
+            tool_name="skip_music",
+            handler=self.skip_func,
+        )
+
+    @app_commands.command(name="stop", description="Остановить воспроизведение и очистить очередь.")
+    async def stop_slash(self, interaction: discord.Interaction) -> None:
+        await self._run_slash_command(
+            interaction,
+            tool_name="stop_music",
+            handler=self.stop_func,
+        )
+
+    @app_commands.command(name="set_volume", description="Установить громкость от 0 до 5.")
+    @app_commands.describe(level="Громкость, где 1.0 = 100%.")
+    async def set_volume_slash(
+        self, interaction: discord.Interaction, level: float
+    ) -> None:
+        await self._run_slash_command(
+            interaction,
+            tool_name="set_volume",
+            handler=self.set_volume_func,
+            level=float(level),
+        )
+
+    @app_commands.command(name="skip_by_name", description="Удалить или пропустить трек по названию.")
+    @app_commands.describe(song_name="Часть названия трека.")
+    async def skip_by_name_slash(
+        self, interaction: discord.Interaction, song_name: str
+    ) -> None:
+        await self._run_slash_command(
+            interaction,
+            tool_name="skip_music_by_name",
+            handler=self.skip_by_name_func,
+            song_name=song_name,
+        )
+
+    @app_commands.command(name="seek", description="Перемотать текущий трек.")
+    @app_commands.describe(time="Время в секундах, MM:SS или HH:MM:SS.")
+    async def seek_slash(self, interaction: discord.Interaction, time: str) -> None:
+        await self._run_slash_command(
+            interaction,
+            tool_name="seek",
+            handler=self.seek_func,
+            time=time,
+        )
+
+    @app_commands.command(name="summon", description="Подключить бота к вашему голосовому каналу.")
+    async def summon_slash(self, interaction: discord.Interaction) -> None:
+        await self._run_slash_command(
+            interaction,
+            tool_name="summon",
+            handler=self.summon_func,
+        )
+
+    @app_commands.command(name="disconnect", description="Отключить бота от голосового канала.")
+    async def disconnect_slash(self, interaction: discord.Interaction) -> None:
+        await self._run_slash_command(
+            interaction,
+            tool_name="disconnect",
+            handler=self.disconnect_func,
+        )
+
+    @app_commands.command(name="pause", description="Поставить воспроизведение на паузу.")
+    async def pause_slash(self, interaction: discord.Interaction) -> None:
+        await self._run_slash_command(
+            interaction,
+            tool_name="pause_music",
+            handler=self.pause_func,
+        )
+
+    @app_commands.command(name="resume", description="Продолжить воспроизведение.")
+    async def resume_slash(self, interaction: discord.Interaction) -> None:
+        await self._run_slash_command(
+            interaction,
+            tool_name="resume_music",
+            handler=self.resume_func,
+        )
+
+    @app_commands.command(name="now_playing", description="Показать текущий трек.")
+    async def now_playing_slash(self, interaction: discord.Interaction) -> None:
+        await self._run_slash_command(
+            interaction,
+            tool_name="now_playing",
+            handler=self.now_playing_func,
+        )
+
+    @app_commands.command(name="queue", description="Показать очередь треков.")
+    async def queue_slash(self, interaction: discord.Interaction) -> None:
+        await self._run_slash_command(
+            interaction,
+            tool_name="get_queue",
+            handler=self.get_queue_func,
+        )
+
+    @app_commands.command(name="shuffle_queue", description="Перемешать очередь.")
+    async def shuffle_queue_slash(self, interaction: discord.Interaction) -> None:
+        await self._run_slash_command(
+            interaction,
+            tool_name="shuffle_queue",
+            handler=self.shuffle_queue_func,
+        )
+
+    @app_commands.command(name="clear_queue", description="Очистить очередь, не трогая текущий трек.")
+    async def clear_queue_slash(self, interaction: discord.Interaction) -> None:
+        await self._run_slash_command(
+            interaction,
+            tool_name="clear_queue",
+            handler=self.clear_queue_func,
+        )
+
+    @app_commands.command(name="remove_from_queue", description="Удалить трек из очереди по номеру.")
+    @app_commands.describe(index="Номер трека в очереди, начиная с 1.")
+    async def remove_from_queue_slash(
+        self, interaction: discord.Interaction, index: int
+    ) -> None:
+        await self._run_slash_command(
+            interaction,
+            tool_name="remove_from_queue",
+            handler=self.remove_from_queue_func,
+            index=int(index),
+        )
+
+    @app_commands.command(name="loop_mode", description="Установить режим повтора.")
+    @app_commands.describe(mode="off, track или queue.")
+    @app_commands.choices(
+        mode=[
+            app_commands.Choice(name="Выключен", value="off"),
+            app_commands.Choice(name="Текущий трек", value="track"),
+            app_commands.Choice(name="Вся очередь", value="queue"),
+        ]
+    )
+    async def loop_mode_slash(
+        self, interaction: discord.Interaction, mode: app_commands.Choice[str]
+    ) -> None:
+        await self._run_slash_command(
+            interaction,
+            tool_name="loop_mode",
+            handler=self.set_loop_mode_func,
+            mode=mode.value,
         )
 
     # ------------------------------------------------------------------

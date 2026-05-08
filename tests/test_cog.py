@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from tests.stub_modules import import_project_package, install_stubs
 
@@ -445,6 +445,35 @@ class GeminiChatCogTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(stored_messages[1]["author_name"], "tool:set_volume")
         self.assertIn('error: {"error": "Nothing is playing"}', stored_messages[1]["content_text"])
+
+    async def test_persist_manual_music_command_marks_manual_source(self) -> None:
+        cog = object.__new__(GeminiChatCog)
+        cog._safe_embed_document = AsyncMock(return_value="emb-manual")
+        cog._current_timestamp = Mock(return_value="2026-03-15 21:00:03")
+        stored_messages = []
+
+        async def fake_store_message(**kwargs):
+            stored_messages.append(kwargs)
+            return SimpleNamespace(**kwargs)
+
+        cog._store_message = fake_store_message
+
+        await cog.persist_manual_music_command(
+            channel_id=77,
+            tool_name="play_music",
+            args={"song_name": "Nujabes"},
+            response={"result": "queued"},
+            user_notified=True,
+        )
+
+        self.assertEqual(len(stored_messages), 1)
+        self.assertEqual(stored_messages[0]["author_name"], "manual:play_music")
+        self.assertIn("[manual] play_music", stored_messages[0]["content_text"])
+        self.assertIn("trigger: slash_command", stored_messages[0]["content_text"])
+        self.assertEqual(
+            stored_messages[0]["content_parts"][0]["text"].split("\n", 1)[0],
+            "manual:play_music: [manual] play_music",
+        )
 
     def test_build_recent_contents_restores_serialized_file_parts(self) -> None:
         cog = object.__new__(GeminiChatCog)
