@@ -1170,90 +1170,96 @@ class GeminiChatCog(commands.Cog):
             thinking_msg: Optional[discord.Message] = None
             generation_error: Optional[Exception] = None
 
-            async with message.channel.typing():
-                incoming = await self._prepare_incoming_message(message)
-                recent_messages = await self._memory_store.get_recent_messages(
-                    message.channel.id,
-                    self._settings.memory.recent_messages_limit,
-                )
-                chat_state = await self._memory_store.get_chat_state(message.channel.id)
-                query_embedding, user_embedding = await asyncio.gather(
-                    self._safe_embed_query(incoming.memory_text),
-                    self._safe_embed_document(incoming.memory_text),
+            incoming = await self._prepare_incoming_message(message)
+            recent_messages = await self._memory_store.get_recent_messages(
+                message.channel.id,
+                self._settings.memory.recent_messages_limit,
+            )
+            chat_state = await self._memory_store.get_chat_state(message.channel.id)
+            query_embedding, user_embedding = await asyncio.gather(
+                self._safe_embed_query(incoming.memory_text),
+                self._safe_embed_document(incoming.memory_text),
+            )
+
+            semantic_matches: list[SemanticMatch] = []
+            if query_embedding is not None:
+                semantic_matches = await self._memory_store.get_semantic_matches(
+                    channel_id=message.channel.id,
+                    query_embedding=query_embedding,
+                    embedding_model=self._embedding_service.model_name,
+                    limit=self._settings.memory.semantic_results_limit,
+                    min_score=self._settings.memory.semantic_min_score,
+                    exclude_ids=[stored.id for stored in recent_messages],
+                    candidate_limit=self._settings.memory.semantic_candidate_limit,
+                    half_life_days=self._settings.memory.semantic_half_life_days,
                 )
 
-                semantic_matches: list[SemanticMatch] = []
-                if query_embedding is not None:
-                    semantic_matches = await self._memory_store.get_semantic_matches(
-                        channel_id=message.channel.id,
-                        query_embedding=query_embedding,
-                        embedding_model=self._embedding_service.model_name,
-                        limit=self._settings.memory.semantic_results_limit,
-                        min_score=self._settings.memory.semantic_min_score,
-                        exclude_ids=[stored.id for stored in recent_messages],
-                        candidate_limit=self._settings.memory.semantic_candidate_limit,
-                        half_life_days=self._settings.memory.semantic_half_life_days,
+            temporal_context = self._build_temporal_context(
+                recent_messages=recent_messages,
+                current_message=incoming,
+            )
+            system_instruction = self._build_memory_instruction(
+                chat_state=chat_state,
+                semantic_matches=semantic_matches,
+                temporal_context=temporal_context,
+            )
+            contents = self._build_recent_contents(recent_messages, incoming)
+            assistant_author_name = self._assistant_name(message)
+
+            _silenced_at_start = self._silent_channels.get(message.channel.id)
+            _silent_at_start = (
+                _silenced_at_start is not None
+                and datetime.now(_MSK_TZ) - _silenced_at_start < _SILENT_DURATION
+            )
+
+            # Visible activity indicator (replaces Discord's typing trigger,
+            # which leaves a ghost indicator for up to 10s after the bot
+            # actually sends its message). This message is updated by
+            # `think` calls and finally edited into the bot's reply.
+            if not _silent_at_start:
+                thinking_msg = await self._safe_channel_send(
+                    message.channel, "-# 💭 *...*"
+                )
+
+            async def tool_callback(call: types.FunctionCall) -> types.Part:
+                nonlocal thinking_msg
+                if call.name == "think" and not _silent_at_start:
+                    reasoning = (call.args or {}).get("reasoning", "") if call.args else ""
+                    if reasoning:
+                        preview = self._format_thinking_text(str(reasoning))
+                        if thinking_msg is None:
+                            thinking_msg = await self._safe_channel_send(
+                                message.channel, preview
+                            )
+                        else:
+                            await self._safe_edit_message(thinking_msg, content=preview)
+
+                feedback = await self.process_tool_call(call, message)
+                tool_events.append(
+                    ToolExecutionEvent(
+                        tool_name=call.name or "unknown_tool",
+                        args=self._coerce_payload_dict(call.args or {}),
+                        response=self._extract_tool_response_payload(feedback.part),
+                        created_at=self._current_timestamp(),
+                        user_notified=feedback.user_notified,
                     )
-
-                temporal_context = self._build_temporal_context(
-                    recent_messages=recent_messages,
-                    current_message=incoming,
                 )
-                system_instruction = self._build_memory_instruction(
-                    chat_state=chat_state,
-                    semantic_matches=semantic_matches,
-                    temporal_context=temporal_context,
+                return feedback.part
+
+            try:
+                reply_text = await self._response_generator.generate_reply(
+                    contents,
+                    tool_callback,
+                    system_instruction=system_instruction,
                 )
-                contents = self._build_recent_contents(recent_messages, incoming)
-                assistant_author_name = self._assistant_name(message)
-
-                _silenced_at_start = self._silent_channels.get(message.channel.id)
-                _silent_at_start = (
-                    _silenced_at_start is not None
-                    and datetime.now(_MSK_TZ) - _silenced_at_start < _SILENT_DURATION
-                )
-
-                async def tool_callback(call: types.FunctionCall) -> types.Part:
-                    nonlocal thinking_msg
-                    if call.name == "think" and not _silent_at_start:
-                        reasoning = (call.args or {}).get("reasoning", "") if call.args else ""
-                        if reasoning:
-                            preview = self._format_thinking_text(str(reasoning))
-                            if thinking_msg is None:
-                                thinking_msg = await self._safe_channel_send(
-                                    message.channel, preview
-                                )
-                            else:
-                                await self._safe_edit_message(thinking_msg, content=preview)
-
-                    feedback = await self.process_tool_call(call, message)
-                    tool_events.append(
-                        ToolExecutionEvent(
-                            tool_name=call.name or "unknown_tool",
-                            args=self._coerce_payload_dict(call.args or {}),
-                            response=self._extract_tool_response_payload(feedback.part),
-                            created_at=self._current_timestamp(),
-                            user_notified=feedback.user_notified,
-                        )
+                if reply_text is not None:
+                    reply_text = self._sanitize_outgoing_reply(
+                        reply_text,
+                        assistant_name=assistant_author_name,
                     )
-                    return feedback.part
-
-                try:
-                    reply_text = await self._response_generator.generate_reply(
-                        contents,
-                        tool_callback,
-                        system_instruction=system_instruction,
-                    )
-                    if reply_text is not None:
-                        reply_text = self._sanitize_outgoing_reply(
-                            reply_text,
-                            assistant_name=assistant_author_name,
-                        )
-                except Exception as exc:  # noqa: BLE001
-                    logger.exception("Gemini response failed")
-                    generation_error = exc
-
-            # ── typing indicator stops here, BEFORE final send/edit ──
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("Gemini response failed")
+                generation_error = exc
 
             if generation_error is not None:
                 if thinking_msg is not None:
