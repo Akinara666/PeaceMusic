@@ -931,6 +931,16 @@ class GeminiChatCog(commands.Cog):
         tool_args.pop("message", None)
         logger.info("Gemini invoked tool '%s' with args %s", tool_name, tool_args)
 
+        if tool_name == "think":
+            reasoning = tool_args.get("reasoning", "")
+            logger.debug("Agent reflection: %s", reasoning)
+            return ToolExecutionFeedback(
+                part=types.Part.from_function_response(
+                    name=tool_name,
+                    response={"acknowledged": True},
+                ),
+            )
+
         if tool_name == "react_to_message":
             emoji = tool_args.get("emoji")
             if emoji:

@@ -220,6 +220,32 @@ tools = [
     types.Tool(
         function_declarations=[
             types.FunctionDeclaration(
+                name="think",
+                description=(
+                    "Explicit reasoning step — use this to think out loud before or after actions. "
+                    "Call it before a complex multi-step task to plan the sequence, "
+                    "and after completing actions to verify the outcome and decide if anything else is needed. "
+                    "The reasoning is logged but not shown to the user."
+                ),
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "reasoning": types.Schema(
+                            type=types.Type.STRING,
+                            description=(
+                                "Your reasoning: what you've done, what the current state is, "
+                                "and what (if anything) needs to happen next."
+                            ),
+                        ),
+                    },
+                    required=["reasoning"],
+                ),
+            )
+        ],
+    ),
+    types.Tool(
+        function_declarations=[
+            types.FunctionDeclaration(
                 name="react_to_message",
                 description="Adds an emoji reaction to the user's current message.",
                 parameters=types.Schema(
