@@ -142,6 +142,9 @@ class ResponseGenerator:
     ) -> Optional[str]:
         active_instruction = system_instruction or self._base_instruction
         tool_rounds = 0
+        total_tool_calls = 0
+        _MAX_TOOL_CALLS_PER_TURN = 20
+        _MAX_TOOL_CALLS_PER_ROUND = 5
 
         async def _generate_once() -> Optional[types.GenerateContentResponse]:
             attempts = 3
@@ -221,11 +224,14 @@ class ResponseGenerator:
                 return final_text or None
 
             tool_rounds += 1
-            for tool_call in function_calls:
+            for tool_call in function_calls[:_MAX_TOOL_CALLS_PER_ROUND]:
                 feedback = await tool_callback(tool_call)
                 history.append(types.Content(role="tool", parts=[feedback]))
+                total_tool_calls += 1
+                if total_tool_calls >= _MAX_TOOL_CALLS_PER_TURN:
+                    break
 
-            if tool_rounds >= 12:
+            if tool_rounds >= 12 or total_tool_calls >= _MAX_TOOL_CALLS_PER_TURN:
                 final_text = "\n".join(text_parts).strip()
                 return final_text or None
 

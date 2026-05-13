@@ -18,7 +18,7 @@ import yt_dlp as youtube_dl
 from discord.ext import commands, tasks
 from yt_dlp.utils import DownloadError
 
-from config import MUSIC_DIRECTORY, YTDL_OPTIONS, FFMPEG_OPTIONS
+from config import MUSIC_DIRECTORY, YTDL_OPTIONS, FFMPEG_OPTIONS, MUSIC_QUEUE_MAX_SIZE
 
 logger = logging.getLogger(__name__)
 
@@ -1057,6 +1057,13 @@ class Music(commands.Cog):
                     user_notified=notified,
                 )
 
+            if len(self.queue) >= MUSIC_QUEUE_MAX_SIZE:
+                return self._result(
+                    f"Очередь заполнена ({MUSIC_QUEUE_MAX_SIZE} треков максимум). "
+                    "Пропустите или удалите несколько треков перед добавлением.",
+                    user_notified=False,
+                )
+
             tracks: list[QueuedTrack]
             normalized_query = normalize_audio_query(song_name)
             if normalized_query != song_name:
@@ -1128,6 +1135,9 @@ class Music(commands.Cog):
                         message, content="Не удалось найти трек по этому запросу."
                     )
                 return self._result("Трек не найден", user_notified=notified)
+
+            remaining_slots = MUSIC_QUEUE_MAX_SIZE - len(self.queue)
+            tracks = tracks[:remaining_slots]
 
             for track in tracks:
                 self.queue.append(track)

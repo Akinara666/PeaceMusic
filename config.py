@@ -113,6 +113,7 @@ class MiscSettings:
     prompt_text: str
     rate_limit_max_requests: int = 0
     rate_limit_window_seconds: float = 60.0
+    queue_max_size: int = 50
 
 
 @dataclass(frozen=True)
@@ -302,6 +303,8 @@ def load_settings() -> AppSettings:
         _get_env("AI_RATE_LIMIT_WINDOW_SECONDS", default="60") or "60"
     )
 
+    queue_max_size = int(_get_env("MUSIC_QUEUE_MAX_SIZE", default="50") or "50")
+
     misc_settings = MiscSettings(
         music_directory=music_directory,
         status_message=status_message,
@@ -309,6 +312,7 @@ def load_settings() -> AppSettings:
         prompt_text=prompt_text,
         rate_limit_max_requests=rate_limit_max_requests,
         rate_limit_window_seconds=rate_limit_window_seconds,
+        queue_max_size=queue_max_size,
     )
 
     memory_settings = MemorySettings(
@@ -378,6 +382,7 @@ BOT_PROMPT_FILE = (
 BOT_PROMPT_TEXT = _settings.misc.prompt_text
 YTDL_OPTIONS = _settings.audio.ytdl_options
 FFMPEG_OPTIONS = _settings.audio.ffmpeg_options
+MUSIC_QUEUE_MAX_SIZE = _settings.misc.queue_max_size
 
 
 def get_settings() -> AppSettings:
