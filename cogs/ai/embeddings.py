@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from google.genai import types
+
+from . import api_logger
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from google import genai
@@ -38,14 +41,20 @@ class GeminiEmbeddingService:
         if not clean_text:
             raise ValueError("Cannot embed empty text")
 
-        response = await self._client.aio.models.embed_content(
-            model=self._model_name,
-            contents=clean_text,
-            config=types.EmbedContentConfig(
-                task_type=task_type,
-                output_dimensionality=self._output_dimensionality,
-            ),
-        )
+        started = time.monotonic()
+        try:
+            response = await self._client.aio.models.embed_content(
+                model=self._model_name,
+                contents=clean_text,
+                config=types.EmbedContentConfig(
+                    task_type=task_type,
+                    output_dimensionality=self._output_dimensionality,
+                ),
+            )
+        finally:
+            api_logger.record_embed(
+                self._model_name, task_type, time.monotonic() - started
+            )
 
         values = self._extract_values(response)
         vector = np.ascontiguousarray(np.asarray(values, dtype=np.float32))

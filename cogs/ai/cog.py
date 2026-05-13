@@ -5,6 +5,7 @@ import json
 import logging
 import mimetypes
 import re
+import time
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -29,6 +30,7 @@ from .memory import (
     format_memory_block,
 )
 from .response import ResponseGenerator
+from . import api_logger
 
 if TYPE_CHECKING:  # pragma: no cover - only imported for typing
     from cogs.music_cog import Music
@@ -877,82 +879,98 @@ class GeminiChatCog(commands.Cog):
 
     async def _refresh_summary(self, channel_id: int) -> None:
         async with self._locks[channel_id]:
-            chat_state = await self._memory_store.get_chat_state(channel_id)
-            unsummarized = await self._memory_store.count_unsummarized_messages(
-                channel_id, chat_state.last_summarized_message_id
-            )
-            if unsummarized < self._settings.memory.summary_trigger_messages:
-                return
-
-            latest_message_id, messages = (
-                await self._memory_store.get_recent_summary_window(
-                    channel_id, self._settings.memory.summary_window_messages
-                )
-            )
-            if (
-                not messages
-                or latest_message_id <= chat_state.last_summarized_message_id
-            ):
-                return
-
-            transcript = format_memory_block(messages, include_timestamps=False)
-            user_prompt = (
-                "Обнови summary на основе предыдущей памяти и свежего "
-                "фрагмента диалога.\n\n"
-                "Предыдущее summary:\n"
-                f"{chat_state.summary.strip() or '[пусто]'}\n\n"
-                "Новый фрагмент чата:\n"
-                f"{transcript}"
-            )
-
+            _summary_label = f"summary.refresh channel={channel_id}"
+            _su, _stok, _sstart = api_logger.open_usage(_summary_label)
             try:
-                response = await self.client.aio.models.generate_content(
-                    model=self._settings.gemini.summary_model,
-                    contents=user_prompt,
-                    config=types.GenerateContentConfig(
-                        system_instruction=_SUMMARY_SYSTEM_PROMPT,
-                        temperature=0.2,
-                    ),
-                )
-            except Exception:  # noqa: BLE001 - keep chat responsive if summary fails
-                logger.exception(
-                    "Failed to refresh chat summary for channel %s", channel_id
-                )
-                return
+                await self._refresh_summary_impl(channel_id)
+            finally:
+                api_logger.close_usage(_su, _stok, _sstart, _summary_label)
 
-            summary_text = self._extract_text(response)
-            if not summary_text:
-                return
+    async def _refresh_summary_impl(self, channel_id: int) -> None:
+        chat_state = await self._memory_store.get_chat_state(channel_id)
+        unsummarized = await self._memory_store.count_unsummarized_messages(
+            channel_id, chat_state.last_summarized_message_id
+        )
+        if unsummarized < self._settings.memory.summary_trigger_messages:
+            return
 
-            await self._memory_store.update_chat_state(
-                channel_id=channel_id,
-                summary=summary_text.strip(),
-                last_summarized_message_id=latest_message_id,
+        latest_message_id, messages = (
+            await self._memory_store.get_recent_summary_window(
+                channel_id, self._settings.memory.summary_window_messages
+            )
+        )
+        if (
+            not messages
+            or latest_message_id <= chat_state.last_summarized_message_id
+        ):
+            return
+
+        transcript = format_memory_block(messages, include_timestamps=False)
+        user_prompt = (
+            "Обнови summary на основе предыдущей памяти и свежего "
+            "фрагмента диалога.\n\n"
+            "Предыдущее summary:\n"
+            f"{chat_state.summary.strip() or '[пусто]'}\n\n"
+            "Новый фрагмент чата:\n"
+            f"{transcript}"
+        )
+
+        _gen_started = time.monotonic()
+        response = None
+        try:
+            response = await self.client.aio.models.generate_content(
+                model=self._settings.gemini.summary_model,
+                contents=user_prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=_SUMMARY_SYSTEM_PROMPT,
+                    temperature=0.2,
+                ),
+            )
+        except Exception:  # noqa: BLE001 - keep chat responsive if summary fails
+            logger.exception(
+                "Failed to refresh chat summary for channel %s", channel_id
+            )
+            return
+        finally:
+            api_logger.record_generate(
+                self._settings.gemini.summary_model,
+                time.monotonic() - _gen_started,
+                getattr(response, "usage_metadata", None),
             )
 
-            retention_days = self._settings.memory.raw_retention_days
-            if retention_days > 0:
-                cutoff = (
-                    datetime.now(_MSK_TZ) - timedelta(days=retention_days)
-                ).strftime("%Y-%m-%d %H:%M:%S")
-                try:
-                    deleted = await self._memory_store.prune_old_messages(
+        summary_text = self._extract_text(response)
+        if not summary_text:
+            return
+
+        await self._memory_store.update_chat_state(
+            channel_id=channel_id,
+            summary=summary_text.strip(),
+            last_summarized_message_id=latest_message_id,
+        )
+
+        retention_days = self._settings.memory.raw_retention_days
+        if retention_days > 0:
+            cutoff = (
+                datetime.now(_MSK_TZ) - timedelta(days=retention_days)
+            ).strftime("%Y-%m-%d %H:%M:%S")
+            try:
+                deleted = await self._memory_store.prune_old_messages(
+                    channel_id,
+                    before_message_id=latest_message_id,
+                    older_than_iso=cutoff,
+                    keep_last=self._settings.memory.recent_messages_limit * 2,
+                )
+                if deleted:
+                    logger.info(
+                        "Pruned %d old messages from channel %s (older than %s)",
+                        deleted,
                         channel_id,
-                        before_message_id=latest_message_id,
-                        older_than_iso=cutoff,
-                        keep_last=self._settings.memory.recent_messages_limit * 2,
+                        cutoff,
                     )
-                    if deleted:
-                        logger.info(
-                            "Pruned %d old messages from channel %s (older than %s)",
-                            deleted,
-                            channel_id,
-                            cutoff,
-                        )
-                except Exception:  # noqa: BLE001 - pruning is best-effort
-                    logger.exception(
-                        "Failed to prune old messages for channel %s", channel_id
-                    )
+            except Exception:  # noqa: BLE001 - pruning is best-effort
+                logger.exception(
+                    "Failed to prune old messages for channel %s", channel_id
+                )
 
     def _extract_text(self, response: types.GenerateContentResponse) -> str:
         text = getattr(response, "text", None)
@@ -1169,6 +1187,12 @@ class GeminiChatCog(commands.Cog):
             thinking_msg: Optional[discord.Message] = None
             generation_error: Optional[Exception] = None
 
+            _usage_label = (
+                f"agent.cycle channel={message.channel.id} "
+                f"user={message.author.id}"
+            )
+            _usage, _usage_token, _usage_started = api_logger.open_usage(_usage_label)
+
             incoming = await self._prepare_incoming_message(message)
             recent_messages = await self._memory_store.get_recent_messages(
                 message.channel.id,
@@ -1340,5 +1364,9 @@ class GeminiChatCog(commands.Cog):
                 )
 
             await self._maybe_schedule_summary(message.channel.id)
+
+            api_logger.close_usage(
+                _usage, _usage_token, _usage_started, _usage_label
+            )
 
         await self.bot.process_commands(message)

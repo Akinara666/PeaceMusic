@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Awaitable, Callable, List, Optional, TYPE_CHECKING
 
 from google.genai import errors, types
+
+from . import api_logger
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from google import genai
@@ -153,6 +156,8 @@ class ResponseGenerator:
             config = self.build_generation_config_with_instruction(active_instruction)
 
             while attempts:
+                started = time.monotonic()
+                response = None
                 try:
                     response = await self._client.aio.models.generate_content(
                         model=self._model_name,
@@ -192,6 +197,12 @@ class ResponseGenerator:
                         continue
 
                     raise
+
+                api_logger.record_generate(
+                    self._model_name,
+                    time.monotonic() - started,
+                    getattr(response, "usage_metadata", None),
+                )
 
                 if response.candidates and response.candidates[0].content:
                     return response
