@@ -810,12 +810,11 @@ class GeminiChatCog(commands.Cog):
         if not tool_events:
             return
 
-        memory_texts = [self._build_tool_memory_text(event) for event in tool_events]
-        embeddings = await asyncio.gather(
-            *(self._safe_embed_document(text) for text in memory_texts)
-        )
-
-        for event, memory_text, embedding in zip(tool_events, memory_texts, embeddings):
+        # Tool events are excluded from semantic recall (role != 'tool' filter),
+        # so embedding them would waste API quota and DB space. They are still
+        # persisted as plain text for the summary task to consume.
+        for event in tool_events:
+            memory_text = self._build_tool_memory_text(event)
             await self._store_message(
                 channel_id=channel_id,
                 discord_message_id=None,
@@ -824,7 +823,7 @@ class GeminiChatCog(commands.Cog):
                 author_name=f"{event.source}:{event.tool_name}",
                 content_text=memory_text,
                 created_at=event.created_at,
-                embedding=embedding,
+                embedding=None,
                 content_parts=(
                     {
                         "type": "text",
