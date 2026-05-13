@@ -1010,6 +1010,39 @@ class Music(commands.Cog):
 
     # ------------------------------------------------------------------
     # Public functions used by the AI cog
+    async def search_func(
+        self, message: discord.Message, query: str
+    ) -> UserNotificationResult:
+        normalized = normalize_audio_query(query)
+        if not _looks_like_url(normalized) and not normalized.startswith(
+            ("ytsearch", "scsearch")
+        ):
+            search_query = f"ytsearch5:{normalized}"
+        else:
+            search_query = normalized
+
+        try:
+            data = await _probe_info(search_query)
+        except Exception as exc:  # noqa: BLE001
+            return self._result(f"Ошибка поиска: {exc}", user_notified=False)
+
+        entries = data.get("entries") or ([data] if data.get("title") else [])
+        lines: list[str] = []
+        for entry in entries[:5]:
+            if not entry:
+                continue
+            title = entry.get("title", "Unknown")
+            duration = format_duration(entry.get("duration"))
+            uploader = entry.get("uploader") or entry.get("channel") or "Unknown"
+            url = entry.get("webpage_url") or entry.get("url", "")
+            lines.append(f"{len(lines) + 1}. {title} ({duration}) — {uploader} | {url}")
+
+        if not lines:
+            return self._result("Ничего не найдено.", user_notified=False)
+
+        summary = f"Найдено {len(lines)} результатов по запросу «{query}»:\n" + "\n".join(lines)
+        return self._result(summary, user_notified=False)
+
     async def play_func(
         self, message: discord.Message, song_name: str
     ) -> UserNotificationResult:

@@ -198,6 +198,28 @@ tools = [
     types.Tool(
         function_declarations=[
             types.FunctionDeclaration(
+                name="search_music",
+                description=(
+                    "Search for music without adding it to the queue. Returns up to 5 results "
+                    "with title, duration, uploader, and URL. Use this to explore options before "
+                    "deciding what to play, or when the user asks what's available in a genre/mood."
+                ),
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "query": types.Schema(
+                            type=types.Type.STRING,
+                            description="Search query — song name, artist, genre, mood, or URL.",
+                        ),
+                    },
+                    required=["query"],
+                ),
+            )
+        ],
+    ),
+    types.Tool(
+        function_declarations=[
+            types.FunctionDeclaration(
                 name="react_to_message",
                 description="Adds an emoji reaction to the user's current message.",
                 parameters=types.Schema(

@@ -221,11 +221,11 @@ class ResponseGenerator:
                 return final_text or None
 
             tool_rounds += 1
-            for tool_call in function_calls[:2]:
+            for tool_call in function_calls:
                 feedback = await tool_callback(tool_call)
                 history.append(types.Content(role="tool", parts=[feedback]))
 
-            if tool_rounds >= 4:
+            if tool_rounds >= 12:
                 final_text = "\n".join(text_parts).strip()
                 return final_text or None
 

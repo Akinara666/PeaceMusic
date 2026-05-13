@@ -969,6 +969,7 @@ class GeminiChatCog(commands.Cog):
             )
 
         dispatch_map = {
+            "search_music": self.music_cog.search_func,
             "play_music": self.music_cog.play_func,
             "skip_music": self.music_cog.skip_func,
             "stop_music": self.music_cog.stop_func,
