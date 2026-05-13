@@ -143,6 +143,7 @@ class ResponseGenerator:
         active_instruction = system_instruction or self._base_instruction
         tool_rounds = 0
         total_tool_calls = 0
+        accumulated_text_parts: list[str] = []
         _MAX_TOOL_CALLS_PER_TURN = 20
         _MAX_TOOL_CALLS_PER_ROUND = 5
 
@@ -219,8 +220,11 @@ class ResponseGenerator:
                 elif part.text and part.text.strip():
                     text_parts.append(part.text.strip())
 
+            if text_parts:
+                accumulated_text_parts.extend(text_parts)
+
             if not function_calls:
-                final_text = "\n".join(text_parts).strip()
+                final_text = "\n".join(accumulated_text_parts).strip()
                 return final_text or None
 
             tool_rounds += 1
@@ -233,7 +237,7 @@ class ResponseGenerator:
                         break
 
             if tool_rounds >= 12 or total_tool_calls >= _MAX_TOOL_CALLS_PER_TURN:
-                final_text = "\n".join(text_parts).strip()
+                final_text = "\n".join(accumulated_text_parts).strip()
                 return final_text or None
 
     async def generate_reply_legacy(

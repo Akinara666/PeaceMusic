@@ -1282,18 +1282,17 @@ class GeminiChatCog(commands.Cog):
                         self._persist_silent_channel(message.channel.id, None)
                     )
                 if not is_silent:
-                    if reply_text is not None and not any_tool_notified:
-                        final_text = reply_text or "I could not think of a reply."
+                    if reply_text:
                         if thinking_msg is not None and await self._safe_edit_message(
-                            thinking_msg, content=final_text
+                            thinking_msg, content=reply_text
                         ):
                             sent_reply = thinking_msg
                             thinking_msg = None
                         else:
                             sent_reply = await self._safe_channel_send(
-                                message.channel, final_text
+                                message.channel, reply_text
                             )
-                    elif reply_text is None and tool_events and not any_tool_notified:
+                    elif tool_events and not any_tool_notified:
                         fallback_text = self._tool_result_text(tool_events[-1].response)
                         if thinking_msg is not None and await self._safe_edit_message(
                             thinking_msg, content=fallback_text
