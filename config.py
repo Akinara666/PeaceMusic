@@ -103,6 +103,9 @@ class MemorySettings:
     semantic_min_score: float
     summary_trigger_messages: int
     summary_window_messages: int
+    semantic_half_life_days: float = 30.0
+    semantic_candidate_limit: int = 1000
+    raw_retention_days: int = 90
 
 
 @dataclass(frozen=True)
@@ -270,6 +273,15 @@ def load_settings() -> AppSettings:
     summary_window_messages = int(
         _get_env("MEMORY_SUMMARY_WINDOW", default="40") or "40"
     )
+    semantic_half_life_days = float(
+        _get_env("MEMORY_SEMANTIC_HALF_LIFE_DAYS", default="30") or "30"
+    )
+    semantic_candidate_limit = int(
+        _get_env("MEMORY_SEMANTIC_CANDIDATES", default="1000") or "1000"
+    )
+    raw_retention_days = int(
+        _get_env("MEMORY_RAW_RETENTION_DAYS", default="90") or "90"
+    )
 
     prompt_file_raw = _get_env("BOT_PROMPT_FILE")
     ytdl_use_cookies = _get_env_bool("YTDL_USE_COOKIES", default=False)
@@ -322,6 +334,9 @@ def load_settings() -> AppSettings:
         semantic_min_score=semantic_min_score,
         summary_trigger_messages=summary_trigger_messages,
         summary_window_messages=summary_window_messages,
+        semantic_half_life_days=semantic_half_life_days,
+        semantic_candidate_limit=semantic_candidate_limit,
+        raw_retention_days=raw_retention_days,
     )
 
     audio_settings = AudioSettings(

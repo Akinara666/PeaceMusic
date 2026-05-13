@@ -5,6 +5,7 @@ import json
 import logging
 import sqlite3
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Optional, Sequence
 
@@ -388,6 +389,59 @@ class MemoryStore:
 
         return await asyncio.to_thread(_load)
 
+    async def prune_old_messages(
+        self,
+        channel_id: int,
+        *,
+        before_message_id: int,
+        older_than_iso: str,
+        keep_last: int = 0,
+    ) -> int:
+        """Delete summarized messages older than the cutoff.
+
+        Only rows whose id is below ``before_message_id`` (i.e., already captured
+        by the chat summary) AND whose ``created_at`` is strictly before
+        ``older_than_iso`` are removed. ``keep_last`` rows are always preserved
+        regardless of age, to protect the recent-history window even in low-
+        traffic channels.
+        """
+        if before_message_id <= 0:
+            return 0
+
+        def _prune() -> int:
+            with self._connect() as conn:
+                preserve_floor = 0
+                if keep_last > 0:
+                    floor_row = conn.execute(
+                        """
+                        SELECT id FROM messages
+                        WHERE channel_id = ?
+                        ORDER BY id DESC
+                        LIMIT 1 OFFSET ?
+                        """,
+                        (channel_id, max(keep_last - 1, 0)),
+                    ).fetchone()
+                    if floor_row is not None:
+                        preserve_floor = int(floor_row["id"])
+
+                cutoff_id = before_message_id
+                if preserve_floor > 0 and preserve_floor < cutoff_id:
+                    cutoff_id = preserve_floor
+
+                cursor = conn.execute(
+                    """
+                    DELETE FROM messages
+                    WHERE channel_id = ?
+                      AND id < ?
+                      AND created_at < ?
+                    """,
+                    (channel_id, cutoff_id, older_than_iso),
+                )
+                return int(cursor.rowcount or 0)
+
+        async with self._write_lock:
+            return await asyncio.to_thread(_prune)
+
     async def count_unsummarized_messages(
         self, channel_id: int, after_message_id: int
     ) -> int:
@@ -448,9 +502,12 @@ class MemoryStore:
         limit: int,
         min_score: float = 0.35,
         exclude_ids: Sequence[int] = (),
+        candidate_limit: int = 1000,
+        half_life_days: float = 30.0,
     ) -> list[SemanticMatch]:
         query = np.ascontiguousarray(np.asarray(query_embedding, dtype=np.float32))
         excluded = set(exclude_ids)
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
 
         def _search() -> list[SemanticMatch]:
             with self._connect() as conn:
@@ -472,9 +529,11 @@ class MemoryStore:
                     WHERE channel_id = ?
                       AND embedding_model = ?
                       AND embedding IS NOT NULL
+                      AND role != 'tool'
                     ORDER BY id DESC
+                    LIMIT ?
                     """,
-                    (channel_id, embedding_model),
+                    (channel_id, embedding_model, candidate_limit),
                 ).fetchall()
 
             if not rows:
@@ -482,6 +541,7 @@ class MemoryStore:
 
             vectors: list[np.ndarray] = []
             messages: list[StoredMessage] = []
+            ages_days: list[float] = []
             for row in rows:
                 if int(row["id"]) in excluded:
                     continue
@@ -493,12 +553,20 @@ class MemoryStore:
                     continue
                 vectors.append(vector)
                 messages.append(self._row_to_message(row))
+                ages_days.append(_message_age_days(row["created_at"], now))
 
             if not vectors:
                 return []
 
             matrix = np.vstack(vectors)
-            scores = matrix @ query
+            raw_scores = matrix @ query
+            if half_life_days > 0:
+                ages = np.asarray(ages_days, dtype=np.float32)
+                decay = np.power(0.5, ages / float(half_life_days))
+                scores = raw_scores * decay
+            else:
+                scores = raw_scores
+
             top_count = min(limit, scores.shape[0])
             if top_count < 1:
                 return []
@@ -547,6 +615,25 @@ class MemoryStore:
             embedding_model=row["embedding_model"],
             content_parts=content_parts,
         )
+
+
+def _message_age_days(created_at: Optional[str], now_naive_utc: datetime) -> float:
+    """Approximate age of a stored message in days, using naive comparison.
+
+    Returns 0.0 if the timestamp is missing or unparseable. Treats stored
+    timestamps as naive (timezone differences within ~hours are negligible
+    next to the day-scale half-life).
+    """
+    if not created_at:
+        return 0.0
+    try:
+        parsed = datetime.fromisoformat(str(created_at).strip().replace(" ", "T"))
+    except ValueError:
+        return 0.0
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    delta = now_naive_utc - parsed
+    return max(0.0, delta.total_seconds() / 86400.0)
 
 
 def format_memory_block(

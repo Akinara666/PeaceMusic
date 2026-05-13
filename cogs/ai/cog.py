@@ -931,6 +931,30 @@ class GeminiChatCog(commands.Cog):
                 last_summarized_message_id=latest_message_id,
             )
 
+            retention_days = self._settings.memory.raw_retention_days
+            if retention_days > 0:
+                cutoff = (
+                    datetime.now(_MSK_TZ) - timedelta(days=retention_days)
+                ).strftime("%Y-%m-%d %H:%M:%S")
+                try:
+                    deleted = await self._memory_store.prune_old_messages(
+                        channel_id,
+                        before_message_id=latest_message_id,
+                        older_than_iso=cutoff,
+                        keep_last=self._settings.memory.recent_messages_limit * 2,
+                    )
+                    if deleted:
+                        logger.info(
+                            "Pruned %d old messages from channel %s (older than %s)",
+                            deleted,
+                            channel_id,
+                            cutoff,
+                        )
+                except Exception:  # noqa: BLE001 - pruning is best-effort
+                    logger.exception(
+                        "Failed to prune old messages for channel %s", channel_id
+                    )
+
     def _extract_text(self, response: types.GenerateContentResponse) -> str:
         text = getattr(response, "text", None)
         if text:
@@ -1167,6 +1191,8 @@ class GeminiChatCog(commands.Cog):
                         limit=self._settings.memory.semantic_results_limit,
                         min_score=self._settings.memory.semantic_min_score,
                         exclude_ids=[stored.id for stored in recent_messages],
+                        candidate_limit=self._settings.memory.semantic_candidate_limit,
+                        half_life_days=self._settings.memory.semantic_half_life_days,
                     )
 
                 temporal_context = self._build_temporal_context(
