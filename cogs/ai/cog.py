@@ -474,6 +474,32 @@ class GeminiChatCog(commands.Cog):
             logger.warning("Failed to send channel message", exc_info=True)
             return None
 
+    async def _safe_edit_message(
+        self, msg: Optional[discord.Message], *, content: str
+    ) -> bool:
+        if msg is None:
+            return False
+        try:
+            await msg.edit(content=self._truncate_discord_text(content))
+            return True
+        except discord.HTTPException:
+            logger.warning("Failed to edit message", exc_info=True)
+            return False
+
+    async def _safe_delete_message(self, msg: Optional[discord.Message]) -> None:
+        if msg is None:
+            return
+        try:
+            await msg.delete()
+        except discord.HTTPException:
+            logger.warning("Failed to delete message", exc_info=True)
+
+    def _format_thinking_text(self, reasoning: str, max_chars: int = 300) -> str:
+        cleaned = " ".join(reasoning.strip().split())
+        if len(cleaned) > max_chars:
+            cleaned = cleaned[: max_chars - 3].rstrip() + "..."
+        return f"-# 💭 *{cleaned}*"
+
     def _tool_result_text(self, response: dict[str, object]) -> str:
         if "error" in response:
             return str(response["error"])
@@ -780,6 +806,7 @@ class GeminiChatCog(commands.Cog):
         channel_id: int,
         tool_events: list[ToolExecutionEvent],
     ) -> None:
+        tool_events = [event for event in tool_events if event.tool_name != "think"]
         if not tool_events:
             return
 
@@ -1151,7 +1178,26 @@ class GeminiChatCog(commands.Cog):
                 contents = self._build_recent_contents(recent_messages, incoming)
                 assistant_author_name = self._assistant_name(message)
 
+                thinking_msg: Optional[discord.Message] = None
+                _silenced_at_start = self._silent_channels.get(message.channel.id)
+                _silent_at_start = (
+                    _silenced_at_start is not None
+                    and datetime.now(_MSK_TZ) - _silenced_at_start < _SILENT_DURATION
+                )
+
                 async def tool_callback(call: types.FunctionCall) -> types.Part:
+                    nonlocal thinking_msg
+                    if call.name == "think" and not _silent_at_start:
+                        reasoning = (call.args or {}).get("reasoning", "") if call.args else ""
+                        if reasoning:
+                            preview = self._format_thinking_text(str(reasoning))
+                            if thinking_msg is None:
+                                thinking_msg = await self._safe_channel_send(
+                                    message.channel, preview
+                                )
+                            else:
+                                await self._safe_edit_message(thinking_msg, content=preview)
+
                     feedback = await self.process_tool_call(call, message)
                     tool_events.append(
                         ToolExecutionEvent(
@@ -1188,18 +1234,35 @@ class GeminiChatCog(commands.Cog):
                         )
                     if not is_silent:
                         if reply_text is not None and not any_tool_notified:
-                            sent_reply = await self._safe_channel_send(
-                                message.channel,
-                                reply_text or "I could not think of a reply.",
-                            )
+                            final_text = reply_text or "I could not think of a reply."
+                            if thinking_msg is not None and await self._safe_edit_message(
+                                thinking_msg, content=final_text
+                            ):
+                                sent_reply = thinking_msg
+                                thinking_msg = None
+                            else:
+                                sent_reply = await self._safe_channel_send(
+                                    message.channel, final_text
+                                )
                         elif reply_text is None and tool_events and not any_tool_notified:
                             fallback_text = self._tool_result_text(tool_events[-1].response)
-                            sent_reply = await self._safe_channel_send(
-                                message.channel,
-                                fallback_text,
-                            )
+                            if thinking_msg is not None and await self._safe_edit_message(
+                                thinking_msg, content=fallback_text
+                            ):
+                                sent_reply = thinking_msg
+                                thinking_msg = None
+                            else:
+                                sent_reply = await self._safe_channel_send(
+                                    message.channel, fallback_text
+                                )
+                    if thinking_msg is not None:
+                        await self._safe_delete_message(thinking_msg)
+                        thinking_msg = None
                 except Exception as exc:  # noqa: BLE001
                     logger.exception("Gemini response failed")
+                    if thinking_msg is not None:
+                        await self._safe_delete_message(thinking_msg)
+                        thinking_msg = None
                     await self._safe_channel_send(
                         message.channel,
                         f"Failed to generate a response: {exc}",

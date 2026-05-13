@@ -227,9 +227,10 @@ class ResponseGenerator:
             for tool_call in function_calls[:_MAX_TOOL_CALLS_PER_ROUND]:
                 feedback = await tool_callback(tool_call)
                 history.append(types.Content(role="tool", parts=[feedback]))
-                total_tool_calls += 1
-                if total_tool_calls >= _MAX_TOOL_CALLS_PER_TURN:
-                    break
+                if tool_call.name != "think":
+                    total_tool_calls += 1
+                    if total_tool_calls >= _MAX_TOOL_CALLS_PER_TURN:
+                        break
 
             if tool_rounds >= 12 or total_tool_calls >= _MAX_TOOL_CALLS_PER_TURN:
                 final_text = "\n".join(text_parts).strip()
