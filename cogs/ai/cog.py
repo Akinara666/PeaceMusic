@@ -1140,6 +1140,12 @@ class GeminiChatCog(commands.Cog):
             return
 
         async with self._locks[message.channel.id]:
+            reply_text: Optional[str] = None
+            sent_reply: Optional[discord.Message] = None
+            tool_events: list[ToolExecutionEvent] = []
+            thinking_msg: Optional[discord.Message] = None
+            generation_error: Optional[Exception] = None
+
             async with message.channel.typing():
                 incoming = await self._prepare_incoming_message(message)
                 recent_messages = await self._memory_store.get_recent_messages(
@@ -1163,9 +1169,6 @@ class GeminiChatCog(commands.Cog):
                         exclude_ids=[stored.id for stored in recent_messages],
                     )
 
-                reply_text: Optional[str] = None
-                sent_reply: Optional[discord.Message] = None
-                tool_events: list[ToolExecutionEvent] = []
                 temporal_context = self._build_temporal_context(
                     recent_messages=recent_messages,
                     current_message=incoming,
@@ -1178,7 +1181,6 @@ class GeminiChatCog(commands.Cog):
                 contents = self._build_recent_contents(recent_messages, incoming)
                 assistant_author_name = self._assistant_name(message)
 
-                thinking_msg: Optional[discord.Message] = None
                 _silenced_at_start = self._silent_channels.get(message.channel.id)
                 _silent_at_start = (
                     _silenced_at_start is not None
@@ -1221,52 +1223,58 @@ class GeminiChatCog(commands.Cog):
                             reply_text,
                             assistant_name=assistant_author_name,
                         )
-                    any_tool_notified = any(event.user_notified for event in tool_events)
-                    silenced_at = self._silent_channels.get(message.channel.id)
-                    is_silent = (
-                        silenced_at is not None
-                        and datetime.now(_MSK_TZ) - silenced_at < _SILENT_DURATION
-                    )
-                    if silenced_at is not None and not is_silent:
-                        self._silent_channels.pop(message.channel.id, None)
-                        asyncio.create_task(
-                            self._persist_silent_channel(message.channel.id, None)
-                        )
-                    if not is_silent:
-                        if reply_text is not None and not any_tool_notified:
-                            final_text = reply_text or "I could not think of a reply."
-                            if thinking_msg is not None and await self._safe_edit_message(
-                                thinking_msg, content=final_text
-                            ):
-                                sent_reply = thinking_msg
-                                thinking_msg = None
-                            else:
-                                sent_reply = await self._safe_channel_send(
-                                    message.channel, final_text
-                                )
-                        elif reply_text is None and tool_events and not any_tool_notified:
-                            fallback_text = self._tool_result_text(tool_events[-1].response)
-                            if thinking_msg is not None and await self._safe_edit_message(
-                                thinking_msg, content=fallback_text
-                            ):
-                                sent_reply = thinking_msg
-                                thinking_msg = None
-                            else:
-                                sent_reply = await self._safe_channel_send(
-                                    message.channel, fallback_text
-                                )
-                    if thinking_msg is not None:
-                        await self._safe_delete_message(thinking_msg)
-                        thinking_msg = None
                 except Exception as exc:  # noqa: BLE001
                     logger.exception("Gemini response failed")
-                    if thinking_msg is not None:
-                        await self._safe_delete_message(thinking_msg)
-                        thinking_msg = None
-                    await self._safe_channel_send(
-                        message.channel,
-                        f"Failed to generate a response: {exc}",
+                    generation_error = exc
+
+            # ── typing indicator stops here, BEFORE final send/edit ──
+
+            if generation_error is not None:
+                if thinking_msg is not None:
+                    await self._safe_delete_message(thinking_msg)
+                    thinking_msg = None
+                await self._safe_channel_send(
+                    message.channel,
+                    f"Failed to generate a response: {generation_error}",
+                )
+            else:
+                any_tool_notified = any(event.user_notified for event in tool_events)
+                silenced_at = self._silent_channels.get(message.channel.id)
+                is_silent = (
+                    silenced_at is not None
+                    and datetime.now(_MSK_TZ) - silenced_at < _SILENT_DURATION
+                )
+                if silenced_at is not None and not is_silent:
+                    self._silent_channels.pop(message.channel.id, None)
+                    asyncio.create_task(
+                        self._persist_silent_channel(message.channel.id, None)
                     )
+                if not is_silent:
+                    if reply_text is not None and not any_tool_notified:
+                        final_text = reply_text or "I could not think of a reply."
+                        if thinking_msg is not None and await self._safe_edit_message(
+                            thinking_msg, content=final_text
+                        ):
+                            sent_reply = thinking_msg
+                            thinking_msg = None
+                        else:
+                            sent_reply = await self._safe_channel_send(
+                                message.channel, final_text
+                            )
+                    elif reply_text is None and tool_events and not any_tool_notified:
+                        fallback_text = self._tool_result_text(tool_events[-1].response)
+                        if thinking_msg is not None and await self._safe_edit_message(
+                            thinking_msg, content=fallback_text
+                        ):
+                            sent_reply = thinking_msg
+                            thinking_msg = None
+                        else:
+                            sent_reply = await self._safe_channel_send(
+                                message.channel, fallback_text
+                            )
+                if thinking_msg is not None:
+                    await self._safe_delete_message(thinking_msg)
+                    thinking_msg = None
 
             await self._store_message(
                 channel_id=message.channel.id,
