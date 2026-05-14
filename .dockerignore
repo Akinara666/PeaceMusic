@@ -1,0 +1,40 @@
+.git
+.github
+.idea
+.vscode
+.claude
+
+# Virtual environments
+.venv
+.venv_ci
+venv/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Tests & Linting
+tests/
+.pytest_cache/
+.flake8
+
+# Local data & media (mounted via volumes)
+music_files/
+data/
+chat_memory.sqlite3
+chat_context.json
+cookies.txt
+
+# Environment variables
+.env
+.env.example
+
+# Docker / Deployment configs
+docker-compose.yml
+Dockerfile
+
+# Documentation
+README.md
+README.ru.md
