@@ -1147,7 +1147,6 @@ class GeminiChatCog(commands.Cog):
 
         await self._ensure_silent_channels_loaded()
 
-
         if message.attachments and self.music_cog:
             audio_att = next(
                 (
