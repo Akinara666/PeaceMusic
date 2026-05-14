@@ -1019,6 +1019,7 @@ class GeminiChatCog(commands.Cog):
                             name=tool_name,
                             response={"result": f"Reacted with {emoji}"},
                         ),
+                        user_notified=True,
                     )
                 except discord.HTTPException as exc:
                     logger.warning("Failed to add reaction %s: %s", emoji, exc)
@@ -1343,25 +1344,38 @@ class GeminiChatCog(commands.Cog):
             )
             await self._persist_tool_events(message.channel.id, tool_events)
 
-            if sent_reply is not None and reply_text:
+            if reply_text:
                 assistant_created_at = self._current_timestamp()
                 assistant_embedding = await self._safe_embed_document(reply_text)
                 await self._store_message(
                     channel_id=message.channel.id,
-                    discord_message_id=sent_reply.id,
+                    discord_message_id=sent_reply.id if sent_reply else None,
                     role="model",
                     author_id=self.bot.user.id if self.bot.user else None,
                     author_name=assistant_author_name,
                     content_text=reply_text,
                     created_at=assistant_created_at,
                     embedding=assistant_embedding,
-                    content_parts=(
-                        {
-                            "type": "text",
-                            "text": reply_text,
-                        },
-                    ),
+                    content_parts=({"type": "text", "text": reply_text},),
                 )
+            else:
+                non_think_events = [ev for ev in tool_events if ev.tool_name != "think"]
+                if non_think_events:
+                    tool_summary = " ".join(
+                        f"[{ev.tool_name}: {ev.response.get('result', ev.response.get('error', 'ok'))}]"
+                        for ev in non_think_events
+                    )
+                    await self._store_message(
+                        channel_id=message.channel.id,
+                        discord_message_id=sent_reply.id if sent_reply else None,
+                        role="model",
+                        author_id=self.bot.user.id if self.bot.user else None,
+                        author_name=assistant_author_name,
+                        content_text=tool_summary,
+                        created_at=self._current_timestamp(),
+                        embedding=None,
+                        content_parts=({"type": "text", "text": tool_summary},),
+                    )
 
             await self._maybe_schedule_summary(message.channel.id)
 
