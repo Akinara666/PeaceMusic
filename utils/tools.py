@@ -75,13 +75,13 @@ tools = [
         function_declarations=[
             types.FunctionDeclaration(
                 name="set_volume",
-                description="Sets the playback volume (0.0-2.0).",
+                description="Sets the playback volume (0.0-5.0).",
                 parameters=types.Schema(
                     type=types.Type.OBJECT,
                     properties={
                         "level": types.Schema(
                             type=types.Type.NUMBER,
-                            description="A number from 0.0 (mute) to 2.0 (maximum).",
+                            description="A number from 0.0 (mute) to 5.0 (maximum).",
                         ),
                     },
                     required=["level"],
@@ -125,7 +125,10 @@ tools = [
         function_declarations=[
             types.FunctionDeclaration(
                 name="now_playing",
-                description="Returns information about the currently playing track (title, duration, current progress).",
+                description=(
+                    "Returns information about the currently playing track "
+                    "(title, duration, current progress)."
+                ),
             )
         ],
     ),
@@ -181,10 +184,39 @@ tools = [
                     properties={
                         "mode": types.Schema(
                             type=types.Type.STRING,
-                            description="The loop mode. Options: 'off', 'track' (repeat current song), 'queue' (repeat entire queue).",
+                            description=(
+                                "The loop mode. Options: 'off', 'track' "
+                                "(repeat current song), 'queue' (repeat entire queue)."
+                            ),
                         ),
                     },
                     required=["mode"],
+                ),
+            )
+        ],
+    ),
+    types.Tool(
+        function_declarations=[
+            types.FunctionDeclaration(
+                name="think",
+                description=(
+                    "Explicit reasoning step — use this to think out loud before or after actions. "
+                    "Call it before a complex multi-step task to plan the sequence, "
+                    "and after completing actions to verify the outcome and decide if anything else is needed. "
+                    "The reasoning is logged but not shown to the user."
+                ),
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "reasoning": types.Schema(
+                            type=types.Type.STRING,
+                            description=(
+                                "Your reasoning: what you've done, what the current state is, "
+                                "and what (if anything) needs to happen next."
+                            ),
+                        ),
+                    },
+                    required=["reasoning"],
                 ),
             )
         ],

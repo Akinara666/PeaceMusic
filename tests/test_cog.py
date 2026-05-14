@@ -1,0 +1,660 @@
+from __future__ import annotations
+
+import asyncio
+import os
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+import unittest
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock, patch
+
+from tests.stub_modules import import_project_package, install_stubs
+
+install_stubs()
+
+with patch.dict(
+    os.environ,
+    {
+        "DISCORD_BOT_TOKEN": "token",
+        "GEMINI_API_KEY": "key",
+    },
+    clear=True,
+):
+    cog_module = import_project_package("cogs.ai.cog")
+
+GeminiChatCog = cog_module.GeminiChatCog
+PreparedIncomingMessage = cog_module.PreparedIncomingMessage
+StoredMessage = cog_module.StoredMessage
+ToolExecutionEvent = cog_module.ToolExecutionEvent
+_RateLimiter = cog_module._RateLimiter
+types = cog_module.types
+
+
+class RateLimiterTests(unittest.TestCase):
+    def test_zero_max_is_permissive(self) -> None:
+        limiter = _RateLimiter(window_seconds=60, max_requests=0)
+        for _ in range(50):
+            self.assertTrue(limiter.allow(1))
+
+    def test_blocks_after_threshold_within_window(self) -> None:
+        limiter = _RateLimiter(window_seconds=60, max_requests=3)
+        self.assertTrue(limiter.allow(7))
+        self.assertTrue(limiter.allow(7))
+        self.assertTrue(limiter.allow(7))
+        self.assertFalse(limiter.allow(7))
+        # Different key has its own bucket.
+        self.assertTrue(limiter.allow(8))
+
+
+class GeminiChatCogTests(unittest.IsolatedAsyncioTestCase):
+    def test_init_uses_httpx_transports_for_gemini_socks_proxy(self) -> None:
+        captured_kwargs: dict[str, object] = {}
+
+        class FakeHTTPTransport:
+            def __init__(self, *, proxy):
+                self.proxy = proxy
+
+        class FakeAsyncHTTPTransport:
+            def __init__(self, *, proxy):
+                self.proxy = proxy
+
+        fake_httpx = SimpleNamespace(
+            HTTPTransport=FakeHTTPTransport,
+            AsyncHTTPTransport=FakeAsyncHTTPTransport,
+        )
+        fake_settings = SimpleNamespace(
+            gemini=SimpleNamespace(
+                api_key="key",
+                socks_proxy="socks5://127.0.0.1:40000",
+                embedding_model="embed-model",
+                embedding_dimensions=768,
+                response_model="response-model",
+                thinking_budget=1024,
+            ),
+            memory=SimpleNamespace(db_file=Path("chat_memory.sqlite3")),
+            misc=SimpleNamespace(
+                rate_limit_max_requests=0,
+                rate_limit_window_seconds=60.0,
+            ),
+        )
+
+        with patch.object(cog_module, "get_settings", return_value=fake_settings):
+            with patch.object(
+                cog_module.genai,
+                "Client",
+                create=True,
+                side_effect=lambda **kwargs: captured_kwargs.update(kwargs)
+                or SimpleNamespace(),
+            ):
+                with patch.object(cog_module, "MemoryStore", return_value=SimpleNamespace()):
+                    with patch.object(
+                        cog_module,
+                        "AttachmentProcessor",
+                        return_value=SimpleNamespace(),
+                    ):
+                        with patch.object(
+                            cog_module,
+                            "GeminiEmbeddingService",
+                            return_value=SimpleNamespace(model_name="embed-model"),
+                        ):
+                            with patch.object(
+                                cog_module,
+                                "ResponseGenerator",
+                                return_value=SimpleNamespace(),
+                            ):
+                                with patch.dict(sys.modules, {"httpx": fake_httpx}):
+                                    GeminiChatCog(SimpleNamespace())
+
+        http_options = captured_kwargs["http_options"]
+        self.assertEqual(captured_kwargs["api_key"], "key")
+        self.assertEqual(http_options.timeout, 24000)
+        self.assertEqual(
+            http_options.client_args["transport"].proxy,
+            "socks5://127.0.0.1:40000",
+        )
+        self.assertEqual(
+            http_options.async_client_args["transport"].proxy,
+            "socks5://127.0.0.1:40000",
+        )
+
+    async def test_bot_access_command_updates_disabled_users(self) -> None:
+        cog = object.__new__(GeminiChatCog)
+        cog.bot = SimpleNamespace(user=SimpleNamespace(id=999))
+        cog._memory_store = SimpleNamespace(
+            set_user_disabled=AsyncMock(),
+            get_disabled_user_ids=AsyncMock(return_value=set()),
+        )
+        cog._disabled_users = {}
+        cog._disabled_users_loaded = set()
+
+        interaction = SimpleNamespace(
+            guild=SimpleNamespace(id=1),
+            user=SimpleNamespace(
+                guild_permissions=SimpleNamespace(
+                    manage_guild=True,
+                    administrator=False,
+                )
+            ),
+            response=SimpleNamespace(send_message=AsyncMock()),
+        )
+        member = SimpleNamespace(id=42, mention="<@42>")
+
+        await cog.manage_bot_access(
+            interaction,
+            SimpleNamespace(value="disable"),
+            member,
+        )
+
+        cog._memory_store.set_user_disabled.assert_awaited_once_with(
+            1, 42, disabled=True
+        )
+        self.assertEqual(cog._disabled_users[1], {42})
+        interaction.response.send_message.assert_awaited_once_with(
+            "Общение с ботом для <@42> отключено.",
+            ephemeral=True,
+        )
+
+    async def test_on_message_ignores_disabled_user(self) -> None:
+        cog = object.__new__(GeminiChatCog)
+        cog.bot = SimpleNamespace(
+            user=SimpleNamespace(id=999),
+            process_commands=AsyncMock(),
+        )
+        cog._is_user_disabled = AsyncMock(return_value=True)
+
+        message = SimpleNamespace(
+            author=SimpleNamespace(id=10),
+            guild=SimpleNamespace(id=1),
+            channel=SimpleNamespace(id=77),
+            content="привет",
+            attachments=[],
+        )
+
+        with patch.object(cog_module, "CHATBOT_CHANNEL_ID", None):
+            await cog.on_message(message)
+
+        cog._is_user_disabled.assert_awaited_once_with(1, 10)
+        cog.bot.process_commands.assert_not_awaited()
+
+    def test_build_temporal_context_contains_message_times(self) -> None:
+        cog = object.__new__(GeminiChatCog)
+        recent_messages = [
+            StoredMessage(
+                id=1,
+                channel_id=77,
+                discord_message_id=10,
+                role="user",
+                author_id=100,
+                author_name="alice",
+                content_text="first",
+                created_at="2026-04-01 12:00:00",
+            ),
+            StoredMessage(
+                id=2,
+                channel_id=77,
+                discord_message_id=11,
+                role="model",
+                author_id=200,
+                author_name="Mia",
+                content_text="second",
+                created_at="2026-04-01 12:00:05",
+            ),
+        ]
+        current_message = PreparedIncomingMessage(
+            content=types.Content(role="user", parts=[types.Part.from_text(text="alice: third")]),
+            memory_text="third",
+            author_name="alice",
+            created_at="2026-04-01 12:00:10",
+            content_parts=({"type": "text", "text": "alice: third"},),
+        )
+
+        temporal_context = cog._build_temporal_context(
+            recent_messages=recent_messages,
+            current_message=current_message,
+        )
+
+        self.assertIn("sent_at=2026-04-01 12:00:00", temporal_context)
+        self.assertIn("sent_at=2026-04-01 12:00:05", temporal_context)
+        self.assertIn("sent_at=2026-04-01 12:00:10", temporal_context)
+        self.assertIn('text="first"', temporal_context)
+        self.assertIn('text="third"', temporal_context)
+
+    def test_sanitize_outgoing_reply_removes_leading_timestamp(self) -> None:
+        cog = object.__new__(GeminiChatCog)
+
+        cleaned = cog._sanitize_outgoing_reply(
+            "[2026-04-01 12:00:10] Mia: привет",
+            assistant_name="Mia",
+        )
+
+        self.assertEqual(cleaned, "привет")
+
+    async def test_on_message_stops_typing_before_persisting_memory(self) -> None:
+        events: list[str] = []
+
+        class _TypingContext:
+            async def __aenter__(self):
+                events.append("typing_enter")
+                return None
+
+            async def __aexit__(self, exc_type, exc, tb):
+                events.append("typing_exit")
+                return False
+
+        async def fake_store_message(**kwargs):
+            events.append(f"store:{kwargs['role']}")
+            return SimpleNamespace(id=kwargs.get("discord_message_id") or 55)
+
+        cog = object.__new__(GeminiChatCog)
+        cog.bot = SimpleNamespace(
+            user=SimpleNamespace(id=999, display_name="Mia"),
+            get_cog=lambda name: None,
+            process_commands=AsyncMock(),
+        )
+        cog._settings = SimpleNamespace(
+            memory=SimpleNamespace(
+                recent_messages_limit=12,
+                semantic_results_limit=6,
+                semantic_min_score=0.35,
+            )
+        )
+        cog._locks = {77: asyncio.Lock()}
+        cog._silent_channels = {}
+        cog._memory_store = SimpleNamespace(
+            get_recent_messages=AsyncMock(return_value=[]),
+            get_chat_state=AsyncMock(
+                return_value=SimpleNamespace(summary="", last_summarized_message_id=0)
+            ),
+            get_silent_channels=AsyncMock(return_value={}),
+        )
+        cog._prepare_incoming_message = AsyncMock(
+            return_value=PreparedIncomingMessage(
+                content=types.Content(role="user", parts=[types.Part.from_text(text="hi")]),
+                memory_text="hi",
+                author_name="alice",
+                created_at="2026-03-19 10:00:00",
+                content_parts=({"type": "text", "text": "hi"},),
+            )
+        )
+        cog._safe_embed_query = AsyncMock(return_value=None)
+        cog._safe_embed_document = AsyncMock(side_effect=["user-emb", "model-emb"])
+        cog._build_memory_instruction = lambda **kwargs: "system"
+        cog._build_recent_contents = lambda recent_messages, current_message: [current_message.content]
+        cog._response_generator = SimpleNamespace(
+            generate_reply=AsyncMock(return_value="hello")
+        )
+        cog._safe_channel_send = AsyncMock(
+            side_effect=lambda channel, text: events.append("send") or SimpleNamespace(id=56)
+        )
+        cog._store_message = AsyncMock(side_effect=fake_store_message)
+        cog._persist_tool_events = AsyncMock()
+        cog._maybe_schedule_summary = AsyncMock()
+        cog._safe_edit_message = AsyncMock(return_value=True)
+        cog._safe_delete_message = AsyncMock(return_value=True)
+
+        message = SimpleNamespace(
+            id=11,
+            author=SimpleNamespace(id=10, name="alice"),
+            channel=SimpleNamespace(id=77, typing=lambda: _TypingContext()),
+            content="hi",
+            attachments=[],
+            guild=None,
+        )
+
+        with patch.object(cog_module, "CHATBOT_CHANNEL_ID", None):
+            await cog.on_message(message)
+
+        self.assertEqual(events, ["send", "store:user", "store:model"])
+
+    async def test_process_tool_call_propagates_tool_notification_flag(self) -> None:
+        music_cog = SimpleNamespace(
+            search_func=AsyncMock(),
+            play_func=AsyncMock(),
+            skip_func=AsyncMock(),
+            stop_func=AsyncMock(),
+            set_volume_func=AsyncMock(),
+            skip_by_name_func=AsyncMock(),
+            seek_func=AsyncMock(),
+            summon_func=AsyncMock(),
+            disconnect_func=AsyncMock(),
+            pause_func=AsyncMock(
+                return_value=SimpleNamespace(
+                    text="Воспроизведение на паузе",
+                    user_notified=True,
+                )
+            ),
+            resume_func=AsyncMock(),
+            now_playing_func=AsyncMock(),
+            get_queue_func=AsyncMock(),
+            shuffle_queue_func=AsyncMock(),
+            clear_queue_func=AsyncMock(),
+            remove_from_queue_func=AsyncMock(),
+            set_loop_mode_func=AsyncMock(),
+        )
+        cog = object.__new__(GeminiChatCog)
+        cog.bot = SimpleNamespace(get_cog=lambda name: music_cog if name == "Music" else None)
+
+        feedback = await cog.process_tool_call(
+            types.FunctionCall(name="pause_music", args={}),
+            SimpleNamespace(channel=SimpleNamespace()),
+        )
+
+        self.assertTrue(feedback.user_notified)
+        self.assertEqual(
+            feedback.part.function_response.response,
+            {
+                "result": "Воспроизведение на паузе",
+                "user_notified": True,
+            },
+        )
+        music_cog.pause_func.assert_awaited_once()
+
+    async def test_on_message_sends_audio_attachment_fallback_when_tool_sends_nothing(self) -> None:
+        class _TypingContext:
+            async def __aenter__(self):
+                return None
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        fake_result = SimpleNamespace(
+            text="Добавлено в очередь: voice.mp3",
+            user_notified=False,
+        )
+        fake_music_cog = SimpleNamespace(
+            play_attachment_func=AsyncMock(return_value=fake_result)
+        )
+        fake_channel = SimpleNamespace(
+            id=77,
+            typing=lambda: _TypingContext(),
+        )
+        attachment = SimpleNamespace(content_type="audio/mpeg", filename="voice.mp3")
+        message = SimpleNamespace(
+            author=SimpleNamespace(id=10),
+            channel=fake_channel,
+            content="",
+            attachments=[attachment],
+        )
+
+        cog = object.__new__(GeminiChatCog)
+        cog.bot = SimpleNamespace(
+            user=SimpleNamespace(id=999),
+            get_cog=lambda name: fake_music_cog if name == "Music" else None,
+            process_commands=AsyncMock(),
+        )
+        cog._safe_channel_send = AsyncMock(return_value=SimpleNamespace(id=55))
+        cog._silent_channels = {}
+
+        with patch.object(cog_module, "CHATBOT_CHANNEL_ID", None):
+            await cog.on_message(message)
+
+        fake_music_cog.play_attachment_func.assert_awaited_once_with(message, attachment)
+        cog._safe_channel_send.assert_awaited_once_with(
+            fake_channel,
+            "Добавлено в очередь: voice.mp3",
+        )
+        cog.bot.process_commands.assert_awaited_once_with(message)
+
+    def test_attachment_content_type_falls_back_to_filename(self) -> None:
+        cog = object.__new__(GeminiChatCog)
+        attachment = SimpleNamespace(content_type=None, filename="voice-message.mp3")
+
+        content_type = cog._attachment_content_type(attachment)
+
+        self.assertEqual(content_type, "audio/mpeg")
+
+    async def test_persist_tool_events_stores_tool_rows(self) -> None:
+        cog = object.__new__(GeminiChatCog)
+        cog._safe_embed_document = AsyncMock(side_effect=["emb-1", "emb-2"])
+        stored_messages = []
+
+        async def fake_store_message(**kwargs):
+            stored_messages.append(kwargs)
+            return SimpleNamespace(**kwargs)
+
+        cog._store_message = fake_store_message
+
+        events = [
+            ToolExecutionEvent(
+                tool_name="play_music",
+                args={"song_name": "Nujabes"},
+                response={"result": "queued"},
+                created_at="2026-03-15 21:00:00",
+            ),
+            ToolExecutionEvent(
+                tool_name="set_volume",
+                args={"level": 0.5},
+                response={"error": "Nothing is playing"},
+                created_at="2026-03-15 21:00:01",
+            ),
+        ]
+
+        await cog._persist_tool_events(77, events)
+
+        self.assertEqual(len(stored_messages), 2)
+        self.assertEqual(stored_messages[0]["role"], "tool")
+        self.assertEqual(stored_messages[0]["author_name"], "tool:play_music")
+        self.assertEqual(stored_messages[0]["channel_id"], 77)
+        self.assertIsNone(stored_messages[0]["embedding"])
+        self.assertIn('"song_name": "Nujabes"', stored_messages[0]["content_text"])
+        self.assertIn('"result": "queued"', stored_messages[0]["content_text"])
+        self.assertEqual(
+            stored_messages[0]["content_parts"][0]["text"].split("\n", 1)[0],
+            "tool:play_music: [tool] play_music",
+        )
+        self.assertEqual(stored_messages[1]["author_name"], "tool:set_volume")
+        self.assertIn('error: {"error": "Nothing is playing"}', stored_messages[1]["content_text"])
+
+    async def test_persist_manual_music_command_marks_manual_source(self) -> None:
+        cog = object.__new__(GeminiChatCog)
+        cog._safe_embed_document = AsyncMock(return_value="emb-manual")
+        cog._current_timestamp = Mock(return_value="2026-03-15 21:00:03")
+        stored_messages = []
+
+        async def fake_store_message(**kwargs):
+            stored_messages.append(kwargs)
+            return SimpleNamespace(**kwargs)
+
+        cog._store_message = fake_store_message
+
+        await cog.persist_manual_music_command(
+            channel_id=77,
+            tool_name="play_music",
+            args={"song_name": "Nujabes"},
+            response={"result": "queued"},
+            user_notified=True,
+        )
+
+        self.assertEqual(len(stored_messages), 1)
+        self.assertEqual(stored_messages[0]["author_name"], "manual:play_music")
+        self.assertIn("[manual] play_music", stored_messages[0]["content_text"])
+        self.assertIn("trigger: slash_command", stored_messages[0]["content_text"])
+        self.assertEqual(
+            stored_messages[0]["content_parts"][0]["text"].split("\n", 1)[0],
+            "manual:play_music: [manual] play_music",
+        )
+
+    def test_build_recent_contents_restores_serialized_file_parts(self) -> None:
+        cog = object.__new__(GeminiChatCog)
+        stored_message = StoredMessage(
+            id=1,
+            channel_id=77,
+            discord_message_id=10,
+            role="user",
+            author_id=100,
+            author_name="alice",
+            content_text="[Image attachment: cat.png]",
+            created_at="2026-03-15 21:10:00",
+            content_parts=(
+                {"type": "file_data", "uri": "uri://image", "mime_type": "image/png"},
+                {
+                    "type": "text",
+                    "text": "[2026-03-15 21:10:00] alice [Image attachment: cat.png]",
+                },
+            ),
+        )
+        current_message = PreparedIncomingMessage(
+            content=types.Content(
+                role="user",
+                parts=[types.Part.from_text(text="[2026-03-15 21:11:00] bob: what is this?")],
+            ),
+            memory_text="what is this?",
+            author_name="bob",
+            created_at="2026-03-15 21:11:00",
+            content_parts=(
+                {
+                    "type": "text",
+                    "text": "[2026-03-15 21:11:00] bob: what is this?",
+                },
+            ),
+        )
+
+        contents = cog._build_recent_contents([stored_message], current_message)
+
+        self.assertEqual(contents[0].parts[0].file_data.uri, "uri://image")
+        self.assertEqual(
+            contents[0].parts[1].text,
+            "alice [Image attachment: cat.png]",
+        )
+
+    def test_extract_tool_response_payload_and_render_memory_text(self) -> None:
+        cog = object.__new__(GeminiChatCog)
+        feedback = types.Part.from_function_response(
+            name="skip_music",
+            response={"result": "skipped"},
+        )
+
+        payload = cog._extract_tool_response_payload(feedback)
+        text = cog._build_tool_memory_text(
+            ToolExecutionEvent(
+                tool_name="skip_music",
+                args={"index": 1},
+                response=payload,
+                created_at="2026-03-15 21:00:02",
+            )
+        )
+
+        self.assertEqual(payload, {"result": "skipped"})
+        self.assertIn("[tool] skip_music", text)
+        self.assertIn('args: {"index": 1}', text)
+        self.assertIn('result: {"result": "skipped"}', text)
+
+    async def test_silence_command_sets_flag_and_reacts(self) -> None:
+        cog = object.__new__(GeminiChatCog)
+        cog.bot = SimpleNamespace(
+            user=SimpleNamespace(id=999),
+            process_commands=AsyncMock(),
+        )
+        cog._silent_channels = {}
+
+        message = SimpleNamespace(
+            author=SimpleNamespace(id=10),
+            channel=SimpleNamespace(id=77),
+            content="замолчи",
+            attachments=[],
+            add_reaction=AsyncMock(),
+        )
+
+        with patch.object(cog_module, "CHATBOT_CHANNEL_ID", None):
+            await cog.on_message(message)
+
+        self.assertIn(77, cog._silent_channels)
+        self.assertIsInstance(cog._silent_channels[77], datetime)
+        message.add_reaction.assert_awaited_once_with("🤫")
+
+    async def test_silent_mode_suppresses_reply_but_keeps_tools(self) -> None:
+        class _TypingContext:
+            async def __aenter__(self):
+                return None
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        cog = object.__new__(GeminiChatCog)
+        cog.bot = SimpleNamespace(
+            user=SimpleNamespace(id=999, display_name="Mia"),
+            get_cog=lambda name: None,
+            process_commands=AsyncMock(),
+        )
+        cog._settings = SimpleNamespace(
+            memory=SimpleNamespace(
+                recent_messages_limit=12,
+                semantic_results_limit=6,
+                semantic_min_score=0.35,
+            )
+        )
+        cog._locks = {77: asyncio.Lock()}
+        cog._silent_channels = {77: datetime.now(timezone(timedelta(hours=3)))}
+        cog._memory_store = SimpleNamespace(
+            get_recent_messages=AsyncMock(return_value=[]),
+            get_chat_state=AsyncMock(
+                return_value=SimpleNamespace(summary="", last_summarized_message_id=0)
+            ),
+            get_silent_channels=AsyncMock(return_value={}),
+        )
+        cog._prepare_incoming_message = AsyncMock(
+            return_value=PreparedIncomingMessage(
+                content=types.Content(
+                    role="user", parts=[types.Part.from_text(text="включи музыку")]
+                ),
+                memory_text="включи музыку",
+                author_name="alice",
+                created_at="2026-03-31 03:00:00",
+                content_parts=({"type": "text", "text": "включи музыку"},),
+            )
+        )
+        cog._safe_embed_query = AsyncMock(return_value=None)
+        cog._safe_embed_document = AsyncMock(return_value="emb")
+        cog._build_memory_instruction = lambda **kwargs: "system"
+        cog._build_recent_contents = lambda recent_messages, current_message: [
+            current_message.content
+        ]
+        cog._response_generator = SimpleNamespace(
+            generate_reply=AsyncMock(return_value="Включаю!")
+        )
+        cog._safe_channel_send = AsyncMock()
+        cog._store_message = AsyncMock(
+            return_value=SimpleNamespace(id=55)
+        )
+        cog._persist_tool_events = AsyncMock()
+        cog._maybe_schedule_summary = AsyncMock()
+
+        message = SimpleNamespace(
+            id=11,
+            author=SimpleNamespace(id=10, name="alice"),
+            channel=SimpleNamespace(id=77, typing=lambda: _TypingContext()),
+            content="включи музыку",
+            attachments=[],
+            guild=None,
+        )
+
+        with patch.object(cog_module, "CHATBOT_CHANNEL_ID", None):
+            await cog.on_message(message)
+
+        # Gemini was called (tools would have executed)
+        cog._response_generator.generate_reply.assert_awaited_once()
+        # But no text reply was sent
+        cog._safe_channel_send.assert_not_awaited()
+
+    async def test_unsilence_command_clears_flag(self) -> None:
+        cog = object.__new__(GeminiChatCog)
+        cog.bot = SimpleNamespace(
+            user=SimpleNamespace(id=999),
+            process_commands=AsyncMock(),
+        )
+        cog._silent_channels = {77: datetime.now(timezone(timedelta(hours=3)))}
+
+        message = SimpleNamespace(
+            author=SimpleNamespace(id=10),
+            channel=SimpleNamespace(id=77),
+            content="можешь говорить",
+            attachments=[],
+            add_reaction=AsyncMock(),
+        )
+
+        with patch.object(cog_module, "CHATBOT_CHANNEL_ID", None):
+            await cog.on_message(message)
+
+        self.assertNotIn(77, cog._silent_channels)
+        message.add_reaction.assert_awaited_once_with("✅")
