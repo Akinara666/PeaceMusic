@@ -694,7 +694,7 @@ class Music(commands.Cog):
                 current_vc = await author.voice.channel.connect(timeout=15)
         else:
             current_vc = await author.voice.channel.connect(timeout=15)
-            
+
         self.voice_client = current_vc
         return self.voice_client
 
