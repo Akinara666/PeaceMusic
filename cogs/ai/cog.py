@@ -44,32 +44,6 @@ _TEMPORAL_CONTEXT_LIMIT = 8
 _TEMPORAL_PREVIEW_LIMIT = 96
 _TIMESTAMP_PREFIX_RE = re.compile(r"^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]\s*")
 _MSK_TZ = timezone(timedelta(hours=3))
-_SILENCE_RE = re.compile(
-    r"\b("
-    # русские
-    r"замолчи|заткнись|молчи|тихо|помолчи|умолкни"
-    r"|не\s*говори|не\s*отвечай|не\s*пиши|не\s*болтай"
-    r"|закрой\s*рот|рот\s*закрой|хватит\s*болтать|хватит\s*говорить"
-    r"|цыц|тсс|шш+|тише|заглохни|угомонись"
-    r"|завали|завались|помалкивай|притихни"
-    r"|молчать|молчок|тишина"
-    # English
-    r"|shut\s*up|be\s*quiet|silence|hush|stfu|mute|shush|zip\s*it|quiet"
-    r")\b",
-    re.IGNORECASE,
-)
-_UNSILENCE_RE = re.compile(
-    r"\b("
-    # русские
-    r"говори|отомри|отмри|можешь\s+говорить|хватит\s+молчать"
-    r"|можно\s+говорить|давай\s+говори|отвечай|пиши"
-    r"|перестань\s+молчать|хорош\s+молчать|ну\s+говори"
-    r"|разрешаю\s+говорить|болтай|общайся|вернись"
-    # English
-    r"|unmute|speak|talk|you\s+can\s+talk|start\s+talking"
-    r")\b",
-    re.IGNORECASE,
-)
 _SILENT_DURATION = timedelta(minutes=15)
 _SUMMARY_SYSTEM_PROMPT = """
 Ты обновляешь долговременную память Discord-чата.
@@ -365,6 +339,53 @@ class GeminiChatCog(commands.Cog):
             f"Общение с ботом для {member.mention} {status_text}.",
             ephemeral=True,
         )
+
+    @app_commands.command(
+        name="bot_speech",
+        description="Включить или отключить режим тишины для бота в этом канале.",
+    )
+    @app_commands.describe(
+        action="Что сделать с голосом бота.",
+    )
+    @app_commands.choices(
+        action=[
+            app_commands.Choice(name="Mute (Замолчать)", value="mute"),
+            app_commands.Choice(name="Unmute (Говорить)", value="unmute"),
+            app_commands.Choice(name="Status (Статус)", value="status"),
+        ]
+    )
+    @app_commands.default_permissions(manage_messages=True)
+    async def manage_bot_speech(
+        self,
+        interaction: discord.Interaction,
+        action: app_commands.Choice[str],
+    ) -> None:
+        channel_id = interaction.channel_id
+        if not channel_id:
+            await interaction.response.send_message("Канал не определен.", ephemeral=True)
+            return
+
+        await self._ensure_silent_channels_loaded()
+
+        if action.value == "status":
+            is_silent = channel_id in self._silent_channels
+            status_text = "включен (бот молчит)" if is_silent else "отключен (бот говорит)"
+            await interaction.response.send_message(
+                f"Тихий режим в этом канале сейчас {status_text}.",
+                ephemeral=True,
+            )
+            return
+
+        if action.value == "mute":
+            silenced_at = datetime.now(_MSK_TZ)
+            self._silent_channels[channel_id] = silenced_at
+            asyncio.create_task(self._persist_silent_channel(channel_id, silenced_at))
+            await interaction.response.send_message("Бот перешел в тихий режим на 15 минут. 🤫")
+        elif action.value == "unmute":
+            existed = self._silent_channels.pop(channel_id, None)
+            if existed is not None:
+                asyncio.create_task(self._persist_silent_channel(channel_id, None))
+            await interaction.response.send_message("Бот снова может говорить. ✅")
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -1126,32 +1147,6 @@ class GeminiChatCog(commands.Cog):
 
         await self._ensure_silent_channels_loaded()
 
-        # --- Silent mode toggle ---
-        raw_text = (message.content or "").strip()
-        if _UNSILENCE_RE.search(raw_text):
-            existed = self._silent_channels.pop(message.channel.id, None)
-            if existed is not None:
-                asyncio.create_task(
-                    self._persist_silent_channel(message.channel.id, None)
-                )
-            try:
-                await message.add_reaction("✅")
-            except discord.HTTPException:
-                pass
-            await self.bot.process_commands(message)
-            return
-        if _SILENCE_RE.search(raw_text):
-            silenced_at = datetime.now(_MSK_TZ)
-            self._silent_channels[message.channel.id] = silenced_at
-            asyncio.create_task(
-                self._persist_silent_channel(message.channel.id, silenced_at)
-            )
-            try:
-                await message.add_reaction("🤫")
-            except discord.HTTPException:
-                pass
-            await self.bot.process_commands(message)
-            return
 
         if message.attachments and self.music_cog:
             audio_att = next(

@@ -47,7 +47,6 @@ The bot stays coherent across long conversations through a layered memory system
 - **Gemini‑powered chat** with full tool‑calling: the model invokes music commands itself instead of you memorising syntax.
 - **Live "thinking" indicator** — when the agent calls its `think` tool to plan or reflect, you see the reasoning stream into Discord in real time.
 - **Multimodal input** — drop images or short videos and the bot will reason about them via the Gemini API.
-- **Silent mode** — say "shut up" / "замолчи" and the bot mutes itself for 15 minutes (persisted across restarts); say "speak" / "говори" to wake it back up.
 - **Per‑user access control** via the `/bot_access` slash command (requires *Manage Server*).
 - **Per‑user rate limiting** with a configurable sliding window.
 
@@ -244,10 +243,7 @@ You can also attach **images or short videos** and ask the bot about them, or dr
 | Command | Permissions | Description |
 |---|---|---|
 | `/bot_access action:<Disable\|Enable\|Status> member:<user>` | *Manage Server* / Administrator | Block or unblock a specific member from interacting with the AI in text chat. |
-
-### Silent mode
-
-Phrases like `shut up`, `замолчи`, `be quiet`, `тихо` mute the bot for 15 minutes (reaction: 🤫). Say `speak`, `unmute`, `говори` to wake it back up (reaction: ✅). State is persisted in the memory DB.
+| `/bot_speech action:<Mute\|Unmute\|Status>` | *Manage Messages* | Enable or disable silent mode for the current channel. When muted, the bot will not respond to messages. |
 
 ---
 

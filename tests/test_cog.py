@@ -540,28 +540,35 @@ class GeminiChatCogTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('args: {"index": 1}', text)
         self.assertIn('result: {"result": "skipped"}', text)
 
-    async def test_silence_command_sets_flag_and_reacts(self) -> None:
+    async def test_manage_bot_speech_command(self) -> None:
         cog = object.__new__(GeminiChatCog)
-        cog.bot = SimpleNamespace(
-            user=SimpleNamespace(id=999),
-            process_commands=AsyncMock(),
-        )
         cog._silent_channels = {}
+        cog._persist_silent_channel = AsyncMock()
+        cog._ensure_silent_channels_loaded = AsyncMock()
 
-        message = SimpleNamespace(
-            author=SimpleNamespace(id=10),
-            channel=SimpleNamespace(id=77),
-            content="замолчи",
-            attachments=[],
-            add_reaction=AsyncMock(),
-        )
+        interaction = AsyncMock()
+        interaction.channel_id = 77
+        action_mute = SimpleNamespace(value="mute")
 
-        with patch.object(cog_module, "CHATBOT_CHANNEL_ID", None):
-            await cog.on_message(message)
+        await cog.manage_bot_speech(interaction, action_mute)
+        await asyncio.sleep(0)
 
         self.assertIn(77, cog._silent_channels)
         self.assertIsInstance(cog._silent_channels[77], datetime)
-        message.add_reaction.assert_awaited_once_with("🤫")
+        cog._persist_silent_channel.assert_awaited_once()
+        interaction.response.send_message.assert_awaited_once()
+
+        # Test unmute
+        action_unmute = SimpleNamespace(value="unmute")
+        interaction.response.send_message.reset_mock()
+        cog._persist_silent_channel.reset_mock()
+        
+        await cog.manage_bot_speech(interaction, action_unmute)
+        await asyncio.sleep(0)
+        
+        self.assertNotIn(77, cog._silent_channels)
+        cog._persist_silent_channel.assert_awaited_once_with(77, None)
+        interaction.response.send_message.assert_awaited_once()
 
     async def test_silent_mode_suppresses_reply_but_keeps_tools(self) -> None:
         class _TypingContext:
@@ -637,24 +644,3 @@ class GeminiChatCogTests(unittest.IsolatedAsyncioTestCase):
         # But no text reply was sent
         cog._safe_channel_send.assert_not_awaited()
 
-    async def test_unsilence_command_clears_flag(self) -> None:
-        cog = object.__new__(GeminiChatCog)
-        cog.bot = SimpleNamespace(
-            user=SimpleNamespace(id=999),
-            process_commands=AsyncMock(),
-        )
-        cog._silent_channels = {77: datetime.now(timezone(timedelta(hours=3)))}
-
-        message = SimpleNamespace(
-            author=SimpleNamespace(id=10),
-            channel=SimpleNamespace(id=77),
-            content="можешь говорить",
-            attachments=[],
-            add_reaction=AsyncMock(),
-        )
-
-        with patch.object(cog_module, "CHATBOT_CHANNEL_ID", None):
-            await cog.on_message(message)
-
-        self.assertNotIn(77, cog._silent_channels)
-        message.add_reaction.assert_awaited_once_with("✅")
