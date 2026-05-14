@@ -1,8 +1,18 @@
 services:
   peacemusic:
-    build: .
+    image: ghcr.io/akinara666/peacemusic:latest
+    # build: . # Раскомментируйте эту строку и закомментируйте image, если хотите собрать образ локально
     network_mode: "host" # Enables IPv6 (on Linux) and better performance
-    restart: always
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G # Защита сервера от утечек памяти бота
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m" # Ротация логов, чтобы не забить весь диск
+        max-file: "3"
     env_file:
       - .env
     environment:
