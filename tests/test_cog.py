@@ -266,6 +266,7 @@ class GeminiChatCogTests(unittest.IsolatedAsyncioTestCase):
             get_chat_state=AsyncMock(
                 return_value=SimpleNamespace(summary="", last_summarized_message_id=0)
             ),
+            get_silent_channels=AsyncMock(return_value={}),
         )
         cog._prepare_incoming_message = AsyncMock(
             return_value=PreparedIncomingMessage(
@@ -289,6 +290,8 @@ class GeminiChatCogTests(unittest.IsolatedAsyncioTestCase):
         cog._store_message = AsyncMock(side_effect=fake_store_message)
         cog._persist_tool_events = AsyncMock()
         cog._maybe_schedule_summary = AsyncMock()
+        cog._safe_edit_message = AsyncMock(return_value=True)
+        cog._safe_delete_message = AsyncMock(return_value=True)
 
         message = SimpleNamespace(
             id=11,
@@ -302,14 +305,11 @@ class GeminiChatCogTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(cog_module, "CHATBOT_CHANNEL_ID", None):
             await cog.on_message(message)
 
-        self.assertEqual(events[:3], ["typing_enter", "send", "typing_exit"])
-        self.assertIn("store:user", events)
-        self.assertIn("store:model", events)
-        self.assertLess(events.index("typing_exit"), events.index("store:user"))
-        self.assertLess(events.index("typing_exit"), events.index("store:model"))
+        self.assertEqual(events, ["send", "store:user", "store:model"])
 
     async def test_process_tool_call_propagates_tool_notification_flag(self) -> None:
         music_cog = SimpleNamespace(
+            search_func=AsyncMock(),
             play_func=AsyncMock(),
             skip_func=AsyncMock(),
             stop_func=AsyncMock(),
@@ -436,7 +436,7 @@ class GeminiChatCogTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stored_messages[0]["role"], "tool")
         self.assertEqual(stored_messages[0]["author_name"], "tool:play_music")
         self.assertEqual(stored_messages[0]["channel_id"], 77)
-        self.assertEqual(stored_messages[0]["embedding"], "emb-1")
+        self.assertIsNone(stored_messages[0]["embedding"])
         self.assertIn('"song_name": "Nujabes"', stored_messages[0]["content_text"])
         self.assertIn('"result": "queued"', stored_messages[0]["content_text"])
         self.assertEqual(
@@ -591,6 +591,7 @@ class GeminiChatCogTests(unittest.IsolatedAsyncioTestCase):
             get_chat_state=AsyncMock(
                 return_value=SimpleNamespace(summary="", last_summarized_message_id=0)
             ),
+            get_silent_channels=AsyncMock(return_value={}),
         )
         cog._prepare_incoming_message = AsyncMock(
             return_value=PreparedIncomingMessage(

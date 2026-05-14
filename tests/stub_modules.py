@@ -42,6 +42,11 @@ class FakeVector:
     def __truediv__(self, scalar: float) -> "FakeVector":
         return FakeVector([value / scalar for value in self.data])
 
+    def __mul__(self, other):
+        if isinstance(other, FakeVector):
+            return FakeVector([a * b for a, b in zip(self.data, other.data)])
+        return FakeVector([value * other for value in self.data])
+
     def tobytes(self) -> bytes:
         if not self.data:
             return b""
@@ -94,12 +99,18 @@ def _install_numpy_stub() -> None:
             sorted(range(len(vector.data)), key=lambda index: vector.data[index])
         )
 
+    def power(base, exponent):
+        if isinstance(exponent, FakeVector):
+            return FakeVector([math.pow(base, exp) for exp in exponent.data])
+        return math.pow(base, exponent)
+
     numpy_module.asarray = asarray
     numpy_module.ascontiguousarray = ascontiguousarray
     numpy_module.frombuffer = frombuffer
     numpy_module.vstack = vstack
     numpy_module.argpartition = argpartition
     numpy_module.argsort = argsort
+    numpy_module.power = power
     numpy_module.float32 = float
     numpy_module.ndarray = FakeVector
     numpy_module.linalg = SimpleNamespace(

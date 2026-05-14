@@ -3,12 +3,10 @@ from __future__ import annotations
 import unittest
 from types import SimpleNamespace
 
-from tests.stub_modules import install_stubs, load_project_module
+from tests.stub_modules import install_stubs, import_project_package
 
 install_stubs()
-embeddings_module = load_project_module(
-    "test_embeddings_module", "cogs/ai/embeddings.py"
-)
+embeddings_module = import_project_package("cogs.ai.embeddings")
 
 GeminiEmbeddingService = embeddings_module.GeminiEmbeddingService
 

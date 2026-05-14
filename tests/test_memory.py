@@ -136,6 +136,7 @@ class MemoryStoreTests(unittest.IsolatedAsyncioTestCase):
             embedding_model="embed-model",
             limit=2,
             min_score=0.2,
+            half_life_days=0,
         )
 
         self.assertEqual(len(matches), 1)
@@ -149,6 +150,7 @@ class MemoryStoreTests(unittest.IsolatedAsyncioTestCase):
             limit=2,
             min_score=0.0,
             exclude_ids=[first.id],
+            half_life_days=0,
         )
         self.assertEqual([match.content_text for match in excluded_matches], ["dogs"])
 
