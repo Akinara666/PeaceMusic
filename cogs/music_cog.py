@@ -676,14 +676,26 @@ class Music(commands.Cog):
         self, message: discord.Message
     ) -> Optional[discord.VoiceClient]:
         author = message.author
-        if not author.voice or not author.voice.channel:
+        if not isinstance(author, discord.Member) or not author.voice or not author.voice.channel:
             return None
 
-        if self.voice_client and self.voice_client.is_connected():
-            if self.voice_client.channel != author.voice.channel:
-                await self.voice_client.move_to(author.voice.channel)
+        guild = getattr(message, "guild", None)
+        current_vc = guild.voice_client if guild else self.voice_client
+
+        if current_vc:
+            if current_vc.is_connected():
+                if current_vc.channel != author.voice.channel:
+                    await current_vc.move_to(author.voice.channel)
+            else:
+                try:
+                    await current_vc.disconnect(force=True)
+                except Exception:
+                    pass
+                current_vc = await author.voice.channel.connect(timeout=15)
         else:
-            self.voice_client = await author.voice.channel.connect(timeout=15)
+            current_vc = await author.voice.channel.connect(timeout=15)
+            
+        self.voice_client = current_vc
         return self.voice_client
 
     async def _refresh_track_source(
