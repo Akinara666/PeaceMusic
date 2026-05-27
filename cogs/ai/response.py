@@ -75,7 +75,7 @@ class ResponseGenerator:
         for content in history:
             for part in content.parts:
                 file_data = getattr(part, "file_data", None)
-                uri = getattr(file_data, "uri", None)
+                uri = getattr(file_data, "file_uri", getattr(file_data, "uri", None)) if file_data else None
                 if uri:
                     uris_to_check.add(uri)
 
@@ -124,7 +124,7 @@ class ResponseGenerator:
             content_changed = False
             for part in content.parts:
                 file_data = getattr(part, "file_data", None)
-                uri = getattr(file_data, "uri", None)
+                uri = getattr(file_data, "file_uri", getattr(file_data, "uri", None)) if file_data else None
                 if uri and uri in invalid_uris:
                     new_parts.append(types.Part.from_text(text="[Expired Attachment]"))
                     content_changed = True

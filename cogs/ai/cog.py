@@ -572,11 +572,12 @@ class GeminiChatCog(commands.Cog):
                 continue
 
             file_data = getattr(part, "file_data", None)
-            if file_data and getattr(file_data, "uri", None):
+            file_uri = getattr(file_data, "file_uri", getattr(file_data, "uri", None)) if file_data else None
+            if file_data and file_uri:
                 payloads.append(
                     {
                         "type": "file_data",
-                        "uri": getattr(file_data, "uri", ""),
+                        "uri": file_uri,
                         "mime_type": getattr(file_data, "mime_type", None),
                     }
                 )
