@@ -72,13 +72,16 @@ class MemoryStore:
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self._db_path, timeout=30)
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
+        # synchronous and foreign_keys are per-connection PRAGMAs (not persisted
+        # to the DB file), so they must be applied on every connection.
+        # journal_mode=WAL persists for the file and is set once in _initialize.
         conn.execute("PRAGMA synchronous=NORMAL")
         conn.execute("PRAGMA foreign_keys=ON")
         return conn
 
     def _initialize(self) -> None:
         with self._connect() as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS chat_state (

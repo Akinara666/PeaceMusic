@@ -154,12 +154,20 @@ class AttachmentProcessor:
         await asyncio.to_thread(target.unlink, True)
         raise TypeError("Attachment object does not support read() or save()")
 
-    async def _wait_for_file(self, file_name: str) -> types.File:
-        while True:
+    async def _wait_for_file(
+        self, file_name: str, *, max_attempts: int = 60, poll_interval: float = 1.0
+    ) -> types.File:
+        # Bounded poll loop: a file stuck in PROCESSING on Gemini's side must not
+        # block forever, because this is awaited inside the per-channel lock.
+        for _ in range(max_attempts):
             file = await self._client.aio.files.get(name=file_name)
             state = getattr(file.state, "name", "")
             if state == "ACTIVE":
                 return file
             if state != "PROCESSING":
                 raise RuntimeError(f"File {file_name} failed with state {state}")
-            await asyncio.sleep(1)
+            await asyncio.sleep(poll_interval)
+        raise RuntimeError(
+            f"File {file_name} still PROCESSING after "
+            f"{max_attempts * poll_interval:.0f}s; giving up"
+        )

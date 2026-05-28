@@ -946,6 +946,9 @@ class GeminiChatCog(commands.Cog):
                 config=types.GenerateContentConfig(
                     system_instruction=_SUMMARY_SYSTEM_PROMPT,
                     temperature=0.2,
+                    # Summarization is plain compression; reasoning (on by
+                    # default for flash-lite) just burns tokens and latency.
+                    thinking_config=types.ThinkingConfig(thinking_budget=0),
                 ),
             )
         except Exception:  # noqa: BLE001 - keep chat responsive if summary fails
@@ -1176,6 +1179,11 @@ class GeminiChatCog(commands.Cog):
             await self.bot.process_commands(message)
             return
 
+        # Prepare the incoming message (which may upload attachments to Gemini
+        # and poll until they are ACTIVE) BEFORE taking the per-channel lock, so
+        # a slow upload does not stall other messages in the same channel.
+        incoming = await self._prepare_incoming_message(message)
+
         async with self._locks[message.channel.id]:
             reply_text: Optional[str] = None
             sent_reply: Optional[discord.Message] = None
@@ -1189,7 +1197,6 @@ class GeminiChatCog(commands.Cog):
             )
             _usage, _usage_token, _usage_started = api_logger.open_usage(_usage_label)
 
-            incoming = await self._prepare_incoming_message(message)
             recent_messages = await self._memory_store.get_recent_messages(
                 message.channel.id,
                 self._settings.memory.recent_messages_limit,
