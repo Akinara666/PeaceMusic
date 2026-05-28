@@ -214,6 +214,16 @@ def _create_ytdl() -> youtube_dl.YoutubeDL:
     return youtube_dl.YoutubeDL(dict(YTDL_OPTIONS))
 
 
+def _create_search_ytdl() -> youtube_dl.YoutubeDL:
+    # Flat extraction lists search results without resolving each entry's
+    # formats (the slow part). For the search tool we only need
+    # title/url/duration/uploader, so skip format processing entirely.
+    opts = dict(YTDL_OPTIONS)
+    opts["extract_flat"] = "in_playlist"
+    opts.pop("format", None)
+    return youtube_dl.YoutubeDL(opts)
+
+
 def _extract_info_sync(url: str, *, download: bool) -> dict:
     return _create_ytdl().extract_info(url, download=download)
 
@@ -236,6 +246,27 @@ async def _probe_info(
     data = await loop.run_in_executor(None, lambda: _extract_info_sync(url, download=False))
     _info_cache_set(cache_key, data)
     logger.debug("yt_dlp probe took %.2fs for %s", time_module.monotonic() - start, url)
+    return data
+
+
+async def _probe_info_flat(
+    url: str, *, loop: Optional[asyncio.AbstractEventLoop] = None
+) -> dict:
+    """Metadata-only search extraction (no per-entry formats), with cache."""
+    loop = loop or asyncio.get_running_loop()
+    cache_key = f"flat:{url}"
+    cached = _info_cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    start = time_module.monotonic()
+    data = await loop.run_in_executor(
+        None, lambda: _create_search_ytdl().extract_info(url, download=False)
+    )
+    _info_cache_set(cache_key, data)
+    logger.debug(
+        "yt_dlp flat probe took %.2fs for %s", time_module.monotonic() - start, url
+    )
     return data
 
 
@@ -1034,7 +1065,7 @@ class Music(commands.Cog):
             search_query = normalized
 
         try:
-            data = await _probe_info(search_query)
+            data = await _probe_info_flat(search_query)
         except Exception as exc:  # noqa: BLE001
             return self._result(f"Ошибка поиска: {exc}", user_notified=False)
 

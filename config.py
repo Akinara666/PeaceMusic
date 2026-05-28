@@ -152,11 +152,16 @@ def _build_ytdl_options(
     *,
     use_cookies: bool,
     cookies_file: Optional[Path],
+    cache_dir: Path,
 ) -> dict:
     """
     Optimized for 1 vCPU / 2GB RAM.
     - format: Prefer opus/webm when available to reduce transcoding overhead.
     - buffers: Modest chunk sizes to avoid OOM but sufficient for stability.
+    - cachedir: Persist yt-dlp's player/signature cache so the expensive
+      YouTube JS player (n-sig deciphering) is not re-fetched on every track.
+    - extractor_args: Prefer lightweight YouTube clients to cut CPU-heavy
+      signature work and round-trips on a single core.
     """
     options = {
         "format": "bestaudio[acodec=opus]/bestaudio[ext=webm]/bestaudio/best",
@@ -165,7 +170,13 @@ def _build_ytdl_options(
         "logtostderr": False,
         "default_search": "auto",
         "force_ipv4": False,
-        "cachedir": False,
+        "cachedir": str(cache_dir),
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["tv", "web_safari"],
+                "player_skip": ["configs"],
+            }
+        },
         "outtmpl": str(music_dir / "%(extractor)s-%(id)s.%(ext)s"),
         # Limits to prevent long hangs:
         "max_filesize": 50_000_000,
@@ -293,6 +304,15 @@ def load_settings() -> AppSettings:
         _get_env("MEMORY_RAW_RETENTION_DAYS", default="90") or "90"
     )
 
+    # Persistent yt-dlp cache. Defaults under data/ so it lands in the mounted
+    # Docker volume (alongside the chat DB) and survives container restarts.
+    ytdl_cache_dir_raw = (
+        _get_env("YTDL_CACHE_DIR", default="data/ytdl_cache") or "data/ytdl_cache"
+    )
+    ytdl_cache_dir = Path(ytdl_cache_dir_raw)
+    if not ytdl_cache_dir.is_absolute():
+        ytdl_cache_dir = (REPO_ROOT / ytdl_cache_dir).resolve()
+
     prompt_file_raw = _get_env("BOT_PROMPT_FILE")
     ytdl_use_cookies = _get_env_bool("YTDL_USE_COOKIES", default=False)
     cookies_file_raw = (
@@ -354,6 +374,7 @@ def load_settings() -> AppSettings:
             music_directory,
             use_cookies=ytdl_use_cookies,
             cookies_file=cookies_file,
+            cache_dir=ytdl_cache_dir,
         ),
         ffmpeg_options=_build_ffmpeg_options(),
     )
