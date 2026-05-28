@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import signal
 
 import discord
@@ -11,9 +12,17 @@ from cogs.ai_cog import GeminiChatCog
 from cogs.music_cog import Music
 from config import DISCORD_BOT_TOKEN, DISCORD_STATUS_MESSAGE, INTENTS
 
+# LOG_LEVEL controls verbosity (e.g. DEBUG to see yt-dlp timing diagnostics).
+# Invalid values fall back to INFO instead of crashing on startup.
+LOG_LEVEL = getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO)
+
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    level=LOG_LEVEL, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 )
+# Third-party libraries are extremely chatty at DEBUG; keep them at WARNING so
+# the bot's own diagnostic logs stay readable when LOG_LEVEL=DEBUG.
+for _noisy in ("discord", "websockets", "httpx", "httpcore", "google_genai"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
