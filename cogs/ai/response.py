@@ -66,6 +66,20 @@ class ResponseGenerator:
             cfg_kwargs["presence_penalty"] = self._presence_penalty
         return types.GenerateContentConfig(**cfg_kwargs)
 
+    @staticmethod
+    def _part_file_uri(part: types.Part) -> Optional[str]:
+        file_data = getattr(part, "file_data", None)
+        if not file_data:
+            return None
+        return getattr(file_data, "file_uri", getattr(file_data, "uri", None))
+
+    def _history_has_file_data(self, history: List[types.Content]) -> bool:
+        for content in history:
+            for part in content.parts or []:
+                if self._part_file_uri(part):
+                    return True
+        return False
+
     async def _sanitize_history(self, history: List[types.Content]) -> bool:
         """Remove expired file references from history."""
         changed = False
@@ -73,9 +87,8 @@ class ResponseGenerator:
         # Gather all unique file URIs to check
         uris_to_check = set()
         for content in history:
-            for part in content.parts:
-                file_data = getattr(part, "file_data", None)
-                uri = getattr(file_data, "file_uri", getattr(file_data, "uri", None)) if file_data else None
+            for part in content.parts or []:
+                uri = self._part_file_uri(part)
                 if uri:
                     uris_to_check.add(uri)
 
@@ -96,7 +109,7 @@ class ResponseGenerator:
                         return
                     await self._client.aio.files.get(name=name)
                 except Exception as exc:  # noqa: BLE001
-                    logger.warning("Checking file %s. Result or error: %s", name, exc)
+                    logger.warning("File check failed for %s: %s", name, exc)
 
                     code = getattr(exc, "code", None)
                     if code is None:
@@ -122,9 +135,8 @@ class ResponseGenerator:
         for content in history:
             new_parts: List[types.Part] = []
             content_changed = False
-            for part in content.parts:
-                file_data = getattr(part, "file_data", None)
-                uri = getattr(file_data, "file_uri", getattr(file_data, "uri", None)) if file_data else None
+            for part in content.parts or []:
+                uri = self._part_file_uri(part)
                 if uri and uri in invalid_uris:
                     new_parts.append(types.Part.from_text(text="[Expired Attachment]"))
                     content_changed = True
@@ -148,7 +160,7 @@ class ResponseGenerator:
         total_tool_calls = 0
         accumulated_text_parts: list[str] = []
         _MAX_TOOL_CALLS_PER_TURN = 20
-        _MAX_TOOL_CALLS_PER_ROUND = 5
+        _MAX_TOOL_ROUNDS = 12
 
         async def _generate_once() -> Optional[types.GenerateContentResponse]:
             attempts = 3
@@ -168,13 +180,16 @@ class ResponseGenerator:
                     err_str = str(exc)
                     code = getattr(exc, "code", getattr(exc, "status_code", None))
 
-                    if (
+                    # Only treat this as an expired-file problem when the history
+                    # actually carries file references. Otherwise a generic 400
+                    # (e.g. a malformed request) would needlessly trigger a file
+                    # sweep before being re-raised.
+                    looks_like_file_error = (
                         code in {400, 403, 404}
-                        or "403" in err_str
-                        or "404" in err_str
                         or "PERMISSION_DENIED" in err_str
                         or "NOT_FOUND" in err_str
-                    ):
+                    )
+                    if looks_like_file_error and self._history_has_file_data(history):
                         logger.warning(
                             "Caught file permission error generating reply: %s", err_str
                         )
@@ -239,15 +254,22 @@ class ResponseGenerator:
                 return final_text or None
 
             tool_rounds += 1
-            for tool_call in function_calls[:_MAX_TOOL_CALLS_PER_ROUND]:
+            # Every function_call in the appended model turn must receive a
+            # matching function_response, otherwise the next generate_content
+            # call fails with a 400 (mismatched calls/responses). So we answer
+            # all of them and use the limit only to decide whether to loop again.
+            limit_reached = False
+            for tool_call in function_calls:
                 feedback = await tool_callback(tool_call)
-                history.append(types.Content(role="tool", parts=[feedback]))
+                # Function responses are documented to use the "user" role
+                # ('user' or 'model' are the only supported producers).
+                history.append(types.Content(role="user", parts=[feedback]))
                 if tool_call.name != "think":
                     total_tool_calls += 1
                     if total_tool_calls >= _MAX_TOOL_CALLS_PER_TURN:
-                        break
+                        limit_reached = True
 
-            if tool_rounds >= 12 or total_tool_calls >= _MAX_TOOL_CALLS_PER_TURN:
+            if limit_reached or tool_rounds >= _MAX_TOOL_ROUNDS:
                 final_text = "\n".join(accumulated_text_parts).strip()
                 return final_text or None
 

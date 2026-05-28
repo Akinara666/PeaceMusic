@@ -80,9 +80,7 @@ class _RateLimiter:
     def allow(self, key: int) -> bool:
         if self._max <= 0 or self._window <= 0:
             return True
-        from time import monotonic
-
-        now = monotonic()
+        now = time.monotonic()
         bucket = self._hits[key]
         cutoff = now - self._window
         while bucket and bucket[0] < cutoff:
@@ -133,7 +131,9 @@ class GeminiChatCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self._settings = get_settings()
-        http_options_kwargs: dict[str, object] = {"timeout": 24000}
+        http_options_kwargs: dict[str, object] = {
+            "timeout": self._settings.gemini.request_timeout_ms
+        }
         if self._settings.gemini.socks_proxy:
             try:
                 import httpx
@@ -188,8 +188,8 @@ class GeminiChatCog(commands.Cog):
             model_name=self._settings.gemini.response_model,
             tools=tools,
             system_instruction=BOT_PROMPT_TEXT,
-            temperature=1.0,
-            top_p=0.95,
+            temperature=self._settings.gemini.temperature,
+            top_p=self._settings.gemini.top_p,
             thinking_budget=self._settings.gemini.thinking_budget,
         )
 

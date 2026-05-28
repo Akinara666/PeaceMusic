@@ -88,6 +88,9 @@ class GeminiSettings:
     embedding_model: str = "gemini-embedding-2-preview"
     embedding_dimensions: int = 768
     thinking_budget: int = 8192
+    temperature: float = 1.0
+    top_p: float = 0.95
+    request_timeout_ms: int = 24000
     socks_proxy: Optional[str] = None
 
     @property
@@ -245,6 +248,13 @@ def load_settings() -> AppSettings:
     gemini_thinking_budget = int(
         _get_env("GEMINI_THINKING_BUDGET", default="8192") or "8192"
     )
+    gemini_temperature = float(
+        _get_env("GEMINI_TEMPERATURE", default="1.0") or "1.0"
+    )
+    gemini_top_p = float(_get_env("GEMINI_TOP_P", default="0.95") or "0.95")
+    gemini_request_timeout_ms = int(
+        _get_env("GEMINI_REQUEST_TIMEOUT_MS", default="24000") or "24000"
+    )
     gemini_socks_proxy = _get_env("GEMINI_SOCKS_PROXY") or None
 
     music_directory = Path(
@@ -361,6 +371,9 @@ def load_settings() -> AppSettings:
             embedding_model=gemini_embedding_model,
             embedding_dimensions=gemini_embedding_dimensions,
             thinking_budget=gemini_thinking_budget,
+            temperature=gemini_temperature,
+            top_p=gemini_top_p,
+            request_timeout_ms=gemini_request_timeout_ms,
             socks_proxy=gemini_socks_proxy,
         ),
         memory=memory_settings,

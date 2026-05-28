@@ -35,6 +35,21 @@ def current_usage() -> Optional[ApiUsage]:
     return _current.get()
 
 
+def _log_usage(label: str, usage: ApiUsage, wall_elapsed: float) -> None:
+    logger.info(
+        "%s: generate=%d embed=%d tokens(in/out/thoughts)=%d/%d/%d "
+        "api=%.2fs wall=%.2fs",
+        label,
+        usage.generate_calls,
+        usage.embed_calls,
+        usage.input_tokens,
+        usage.output_tokens,
+        usage.thoughts_tokens,
+        usage.total_api_seconds,
+        wall_elapsed,
+    )
+
+
 @contextmanager
 def track_usage(label: str) -> Iterator[ApiUsage]:
     """Open a usage accumulator for the duration of a logical request.
@@ -48,19 +63,7 @@ def track_usage(label: str) -> Iterator[ApiUsage]:
         yield usage
     finally:
         _current.reset(token)
-        wall_elapsed = time.monotonic() - wall_started
-        logger.info(
-            "%s: generate=%d embed=%d tokens(in/out/thoughts)=%d/%d/%d "
-            "api=%.2fs wall=%.2fs",
-            label,
-            usage.generate_calls,
-            usage.embed_calls,
-            usage.input_tokens,
-            usage.output_tokens,
-            usage.thoughts_tokens,
-            usage.total_api_seconds,
-            wall_elapsed,
-        )
+        _log_usage(label, usage, time.monotonic() - wall_started)
 
 
 def _extract_token_counts(usage_meta: Optional[Any]) -> tuple[int, int, int]:
@@ -123,16 +126,4 @@ def close_usage(
         # Token was set in a different context (e.g. nested misuse); fall back
         # to clearing globally.
         _current.set(None)
-    wall_elapsed = time.monotonic() - wall_started
-    logger.info(
-        "%s: generate=%d embed=%d tokens(in/out/thoughts)=%d/%d/%d "
-        "api=%.2fs wall=%.2fs",
-        label,
-        usage.generate_calls,
-        usage.embed_calls,
-        usage.input_tokens,
-        usage.output_tokens,
-        usage.thoughts_tokens,
-        usage.total_api_seconds,
-        wall_elapsed,
-    )
+    _log_usage(label, usage, time.monotonic() - wall_started)

@@ -71,6 +71,9 @@ class GeminiChatCogTests(unittest.IsolatedAsyncioTestCase):
                 embedding_dimensions=768,
                 response_model="response-model",
                 thinking_budget=1024,
+                temperature=1.0,
+                top_p=0.95,
+                request_timeout_ms=24000,
             ),
             memory=SimpleNamespace(db_file=Path("chat_memory.sqlite3")),
             misc=SimpleNamespace(
