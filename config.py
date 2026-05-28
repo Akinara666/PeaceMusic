@@ -160,8 +160,11 @@ def _build_ytdl_options(
     - buffers: Modest chunk sizes to avoid OOM but sufficient for stability.
     - cachedir: Persist yt-dlp's player/signature cache so the expensive
       YouTube JS player (n-sig deciphering) is not re-fetched on every track.
-    - extractor_args: Prefer lightweight YouTube clients to cut CPU-heavy
-      signature work and round-trips on a single core.
+
+    NOTE: do not pin youtube `player_client` here. Letting yt-dlp pick its
+    default clients keeps playback working as YouTube rolls out SABR/DRM
+    experiments; hard-pinning clients (e.g. tv/web_safari) breaks extraction
+    on datacenter IPs without a PO token.
     """
     options = {
         "format": "bestaudio[acodec=opus]/bestaudio[ext=webm]/bestaudio/best",
@@ -171,12 +174,6 @@ def _build_ytdl_options(
         "default_search": "auto",
         "force_ipv4": False,
         "cachedir": str(cache_dir),
-        "extractor_args": {
-            "youtube": {
-                "player_client": ["tv", "web_safari"],
-                "player_skip": ["configs"],
-            }
-        },
         "outtmpl": str(music_dir / "%(extractor)s-%(id)s.%(ext)s"),
         # Limits to prevent long hangs:
         "max_filesize": 50_000_000,
