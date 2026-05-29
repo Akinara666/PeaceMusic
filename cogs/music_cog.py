@@ -1508,6 +1508,77 @@ class Music(commands.Cog):
             f"Сейчас играет: {self.current.title} (Прогресс: {prog_str} / {dur_str})"
         )
 
+    async def get_player_state_func(
+        self, message: discord.Message
+    ) -> UserNotificationResult:
+        """One-shot snapshot of the whole player for situational awareness."""
+        voice_client = self.voice_client
+        connected = bool(voice_client and voice_client.is_connected())
+
+        lines: list[str] = []
+        if connected and voice_client.channel:
+            lines.append(f"Голосовой канал: {voice_client.channel.name}")
+        else:
+            lines.append("Не подключена к голосовому каналу.")
+
+        if self.current:
+            paused = bool(voice_client and voice_client.is_paused())
+            state = "на паузе" if paused else "играет"
+            progress = format_duration(self._current_progress_seconds())
+            duration = (
+                format_duration(self.current.duration)
+                if self.current.duration
+                else "?"
+            )
+            lines.append(
+                f"Сейчас {state}: {self.current.title} ({progress} / {duration})"
+            )
+            if self.current.uploader:
+                lines.append(f"Автор: {self.current.uploader}")
+        else:
+            lines.append("Сейчас ничего не играет.")
+
+        lines.append(f"Громкость: {int(self._volume * 100)}%")
+        loop_labels = {"off": "выключен", "track": "трек", "queue": "очередь"}
+        lines.append(f"Повтор: {loop_labels.get(self.loop_mode, self.loop_mode)}")
+
+        if self.queue:
+            preview = "; ".join(
+                f"{index}. {track.title}"
+                for index, track in enumerate(list(self.queue)[:5], start=1)
+            )
+            extra = len(self.queue) - 5
+            suffix = f" (+ ещё {extra})" if extra > 0 else ""
+            lines.append(f"В очереди {len(self.queue)}: {preview}{suffix}")
+        else:
+            lines.append("Очередь пуста.")
+
+        return self._result("\n".join(lines), user_notified=False)
+
+    async def who_is_listening_func(
+        self, message: discord.Message
+    ) -> UserNotificationResult:
+        """List the non-bot members currently in the bot's voice channel."""
+        voice_client = self.voice_client
+        if not voice_client or not voice_client.is_connected() or not voice_client.channel:
+            return self._result("Бот не в голосовом канале.", user_notified=False)
+
+        listeners = [
+            member
+            for member in voice_client.channel.members
+            if not getattr(member, "bot", False)
+        ]
+        if not listeners:
+            return self._result(
+                "В голосовом канале нет слушателей (только бот).",
+                user_notified=False,
+            )
+
+        names = ", ".join(member.display_name for member in listeners)
+        return self._result(
+            f"Слушают ({len(listeners)}): {names}", user_notified=False
+        )
+
     async def get_queue_func(
         self, message: discord.Message
     ) -> UserNotificationResult:

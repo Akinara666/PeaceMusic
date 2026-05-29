@@ -239,4 +239,81 @@ tools = [
             )
         ],
     ),
+    types.Tool(
+        function_declarations=[
+            types.FunctionDeclaration(
+                name="remember",
+                description=(
+                    "Save a durable fact to long-term memory (a user's lasting "
+                    "preference, an inside joke, a recurring plan, an important "
+                    "detail). Use it when you learn something worth keeping across "
+                    "conversations. Saved facts resurface automatically later when "
+                    "relevant, so do not save fleeting one-off chatter."
+                ),
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "content": types.Schema(
+                            type=types.Type.STRING,
+                            description="The fact to remember, phrased concisely.",
+                        ),
+                        "about": types.Schema(
+                            type=types.Type.STRING,
+                            description=(
+                                "Optional: who or what the fact is about "
+                                "(a user's name or a topic)."
+                            ),
+                        ),
+                    },
+                    required=["content"],
+                ),
+            )
+        ],
+    ),
+    types.Tool(
+        function_declarations=[
+            types.FunctionDeclaration(
+                name="recall",
+                description=(
+                    "Search your long-term memory for facts and past conversation "
+                    "relevant to a query. Use it when you need to deliberately recall "
+                    "something that is not already in the visible context."
+                ),
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "query": types.Schema(
+                            type=types.Type.STRING,
+                            description="What to look for in memory.",
+                        ),
+                    },
+                    required=["query"],
+                ),
+            )
+        ],
+    ),
+    types.Tool(
+        function_declarations=[
+            types.FunctionDeclaration(
+                name="get_player_state",
+                description=(
+                    "Get a single snapshot of the player: voice channel, current "
+                    "track and progress, pause state, volume, loop mode, and the "
+                    "queue. Prefer this over several separate calls when you need "
+                    "situational awareness before acting."
+                ),
+            )
+        ],
+    ),
+    types.Tool(
+        function_declarations=[
+            types.FunctionDeclaration(
+                name="who_is_listening",
+                description=(
+                    "List the (non-bot) members currently in the bot's voice "
+                    "channel, so you know who is actually listening."
+                ),
+            )
+        ],
+    ),
 ]

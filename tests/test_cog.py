@@ -26,6 +26,7 @@ with patch.dict(
 GeminiChatCog = cog_module.GeminiChatCog
 PreparedIncomingMessage = cog_module.PreparedIncomingMessage
 StoredMessage = cog_module.StoredMessage
+SemanticMatch = cog_module.SemanticMatch
 ToolExecutionEvent = cog_module.ToolExecutionEvent
 _RateLimiter = cog_module._RateLimiter
 types = cog_module.types
@@ -329,6 +330,8 @@ class GeminiChatCogTests(unittest.IsolatedAsyncioTestCase):
             ),
             resume_func=AsyncMock(),
             now_playing_func=AsyncMock(),
+            get_player_state_func=AsyncMock(),
+            who_is_listening_func=AsyncMock(),
             get_queue_func=AsyncMock(),
             shuffle_queue_func=AsyncMock(),
             clear_queue_func=AsyncMock(),
@@ -542,6 +545,87 @@ class GeminiChatCogTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("[tool] skip_music", text)
         self.assertIn('args: {"index": 1}', text)
         self.assertIn('result: {"result": "skipped"}', text)
+
+    async def test_process_tool_call_remember_stores_memory_fact(self) -> None:
+        cog = object.__new__(GeminiChatCog)
+        cog._safe_embed_document = AsyncMock(return_value="emb")
+        cog._current_timestamp = Mock(return_value="2026-05-29 12:00:00")
+        stored = []
+
+        async def fake_store_message(**kwargs):
+            stored.append(kwargs)
+            return SimpleNamespace(id=1)
+
+        cog._store_message = fake_store_message
+
+        feedback = await cog.process_tool_call(
+            types.FunctionCall(
+                name="remember",
+                args={"content": "любит synthwave", "about": "Боб"},
+            ),
+            SimpleNamespace(channel=SimpleNamespace(id=77)),
+        )
+
+        self.assertEqual(len(stored), 1)
+        self.assertEqual(stored[0]["role"], "memory")
+        self.assertEqual(stored[0]["channel_id"], 77)
+        self.assertEqual(stored[0]["content_text"], "Боб: любит synthwave")
+        self.assertEqual(stored[0]["author_name"], "memory:Боб")
+        self.assertEqual(stored[0]["embedding"], "emb")
+        self.assertIn("Запомнил", feedback.part.function_response.response["result"])
+
+    async def test_process_tool_call_remember_rejects_empty_content(self) -> None:
+        cog = object.__new__(GeminiChatCog)
+        cog._store_message = AsyncMock()
+
+        feedback = await cog.process_tool_call(
+            types.FunctionCall(name="remember", args={"content": "   "}),
+            SimpleNamespace(channel=SimpleNamespace(id=77)),
+        )
+
+        self.assertIn("error", feedback.part.function_response.response)
+        cog._store_message.assert_not_awaited()
+
+    async def test_process_tool_call_recall_returns_memory_block(self) -> None:
+        cog = object.__new__(GeminiChatCog)
+        cog._safe_embed_query = AsyncMock(return_value="qemb")
+        cog._embedding_service = SimpleNamespace(model_name="embed-model")
+        cog._settings = SimpleNamespace(
+            memory=SimpleNamespace(
+                semantic_results_limit=6,
+                semantic_min_score=0.35,
+                semantic_candidate_limit=1000,
+                semantic_half_life_days=30.0,
+            )
+        )
+        match = SemanticMatch(
+            id=1,
+            channel_id=77,
+            discord_message_id=None,
+            role="memory",
+            author_id=None,
+            author_name="memory:Боб",
+            content_text="Боб любит synthwave",
+            created_at="2026-05-01 10:00:00",
+            embedding_model="embed-model",
+            score=0.9,
+        )
+        cog._memory_store = SimpleNamespace(
+            get_semantic_matches=AsyncMock(return_value=[match])
+        )
+
+        feedback = await cog.process_tool_call(
+            types.FunctionCall(name="recall", args={"query": "что любит Боб"}),
+            SimpleNamespace(channel=SimpleNamespace(id=77)),
+        )
+
+        result = feedback.part.function_response.response["result"]
+        self.assertIn("synthwave", result)
+        cog._memory_store.get_semantic_matches.assert_awaited_once()
+        kwargs = cog._memory_store.get_semantic_matches.await_args.kwargs
+        self.assertEqual(kwargs["channel_id"], 77)
+        self.assertEqual(kwargs["query_embedding"], "qemb")
+        self.assertEqual(kwargs["embedding_model"], "embed-model")
 
     async def test_manage_bot_speech_command(self) -> None:
         cog = object.__new__(GeminiChatCog)

@@ -44,6 +44,13 @@ _TEMPORAL_PREVIEW_LIMIT = 96
 _TIMESTAMP_PREFIX_RE = re.compile(r"^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]\s*")
 _MSK_TZ = timezone(timedelta(hours=3))
 _SILENT_DURATION = timedelta(minutes=15)
+# Role for facts the agent deliberately saves via the `remember` tool. It is a
+# first-class memory row (not 'tool', so semantic recall picks it up) but is not
+# a real dialogue turn, so it is never replayed as a user/model message.
+_MEMORY_ROLE = "memory"
+# Meta/read-only tools that should not be logged as separate 'tool' memory rows:
+# `think` is a no-op, and `remember`/`recall` manage memory themselves.
+_NON_PERSISTED_TOOL_NAMES = frozenset({"think", "remember", "recall"})
 _SUMMARY_SYSTEM_PROMPT = """
 Ты обновляешь долговременную память Discord-чата.
 
@@ -849,7 +856,11 @@ class GeminiChatCog(commands.Cog):
         channel_id: int,
         tool_events: list[ToolExecutionEvent],
     ) -> None:
-        tool_events = [event for event in tool_events if event.tool_name != "think"]
+        tool_events = [
+            event
+            for event in tool_events
+            if event.tool_name not in _NON_PERSISTED_TOOL_NAMES
+        ]
         if not tool_events:
             return
 
@@ -1028,6 +1039,77 @@ class GeminiChatCog(commands.Cog):
         chunks = [part.text.strip() for part in parts if getattr(part, "text", None)]
         return "\n".join(chunk for chunk in chunks if chunk).strip()
 
+    @staticmethod
+    def _memory_feedback(
+        name: str, payload: dict[str, object]
+    ) -> ToolExecutionFeedback:
+        return ToolExecutionFeedback(
+            part=types.Part.from_function_response(name=name, response=payload),
+        )
+
+    async def _handle_remember(
+        self, tool_args: dict[str, object], message: discord.Message
+    ) -> ToolExecutionFeedback:
+        """Persist a durable fact the agent chose to remember."""
+        content = str(tool_args.get("content", "")).strip()
+        if not content:
+            return self._memory_feedback(
+                "remember", {"error": "Nothing to remember: 'content' is empty."}
+            )
+
+        about = str(tool_args.get("about", "")).strip()
+        fact_text = f"{about}: {content}" if about else content
+
+        # Embed the fact so it resurfaces via semantic recall; if embedding is
+        # unavailable, still store it as plain text for summaries and recency.
+        embedding = await self._safe_embed_document(fact_text)
+        await self._store_message(
+            channel_id=message.channel.id,
+            discord_message_id=None,
+            role=_MEMORY_ROLE,
+            author_id=None,
+            author_name=f"{_MEMORY_ROLE}:{about}" if about else _MEMORY_ROLE,
+            content_text=fact_text,
+            created_at=self._current_timestamp(),
+            embedding=embedding,
+            content_parts=({"type": "text", "text": fact_text},),
+        )
+        logger.info("Agent remembered: %s", fact_text)
+        return self._memory_feedback("remember", {"result": f"Запомнил: {fact_text}"})
+
+    async def _handle_recall(
+        self, tool_args: dict[str, object], message: discord.Message
+    ) -> ToolExecutionFeedback:
+        """Search long-term memory on demand and return the matches."""
+        query = str(tool_args.get("query", "")).strip()
+        if not query:
+            return self._memory_feedback(
+                "recall", {"error": "Cannot recall: 'query' is empty."}
+            )
+
+        query_embedding = await self._safe_embed_query(query)
+        if query_embedding is None:
+            return self._memory_feedback(
+                "recall", {"error": "Recall is unavailable right now."}
+            )
+
+        memory = self._settings.memory
+        matches = await self._memory_store.get_semantic_matches(
+            channel_id=message.channel.id,
+            query_embedding=query_embedding,
+            embedding_model=self._embedding_service.model_name,
+            limit=memory.semantic_results_limit,
+            min_score=memory.semantic_min_score,
+            candidate_limit=memory.semantic_candidate_limit,
+            half_life_days=memory.semantic_half_life_days,
+        )
+        if not matches:
+            return self._memory_feedback(
+                "recall", {"result": "Ничего релевантного не найдено."}
+            )
+        block = format_memory_block(matches, include_timestamps=True)
+        return self._memory_feedback("recall", {"result": block})
+
     async def process_tool_call(
         self, tool_call: types.FunctionCall, message: discord.Message
     ) -> ToolExecutionFeedback:
@@ -1076,6 +1158,13 @@ class GeminiChatCog(commands.Cog):
                 ),
             )
 
+        # Memory tools are owned by this cog (they touch the memory store, not the
+        # player), so they work even when the music cog is unavailable.
+        if tool_name == "remember":
+            return await self._handle_remember(tool_args, message)
+        if tool_name == "recall":
+            return await self._handle_recall(tool_args, message)
+
         if not self.music_cog:
             error_msg = "Music controls are not available right now."
             user_notified = (await self._safe_channel_send(message.channel, error_msg)) is not None
@@ -1100,6 +1189,8 @@ class GeminiChatCog(commands.Cog):
             "pause_music": self.music_cog.pause_func,
             "resume_music": self.music_cog.resume_func,
             "now_playing": self.music_cog.now_playing_func,
+            "get_player_state": self.music_cog.get_player_state_func,
+            "who_is_listening": self.music_cog.who_is_listening_func,
             "get_queue": self.music_cog.get_queue_func,
             "shuffle_queue": self.music_cog.shuffle_queue_func,
             "clear_queue": self.music_cog.clear_queue_func,
