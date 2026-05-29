@@ -17,6 +17,18 @@ if TYPE_CHECKING:  # pragma: no cover - imported for type hints only
 logger = logging.getLogger(__name__)
 
 
+def resolve_attachment_content_type(attachment: discord.Attachment) -> str:
+    """Best-effort MIME type for an attachment, inferring from the filename
+    when Discord does not provide ``content_type``."""
+    content_type = (getattr(attachment, "content_type", None) or "").lower().strip()
+    if content_type:
+        return content_type
+
+    filename = Path(getattr(attachment, "filename", "")).name
+    guessed, _ = mimetypes.guess_type(filename)
+    return (guessed or "").lower()
+
+
 class AttachmentProcessor:
     """Convert Discord attachments into Gemini-friendly content."""
 
@@ -84,13 +96,7 @@ class AttachmentProcessor:
         return types.Content(role="user", parts=parts), memory_text or "[Attachment]"
 
     def _resolve_content_type(self, attachment: discord.Attachment) -> str:
-        content_type = (getattr(attachment, "content_type", None) or "").lower().strip()
-        if content_type:
-            return content_type
-
-        filename = Path(getattr(attachment, "filename", "")).name
-        guessed, _ = mimetypes.guess_type(filename)
-        return (guessed or "").lower()
+        return resolve_attachment_content_type(attachment)
 
     def _media_kind(self, content_type: str) -> str | None:
         if content_type.startswith("image/"):

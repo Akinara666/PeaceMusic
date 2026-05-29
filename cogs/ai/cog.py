@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import mimetypes
 import re
 import time
 from collections import defaultdict, deque
@@ -20,7 +19,7 @@ from google.genai import types
 
 from config import BOT_PROMPT_TEXT, CHATBOT_CHANNEL_ID, get_settings
 from utils.tools import tools
-from .attachments import AttachmentProcessor
+from .attachments import AttachmentProcessor, resolve_attachment_content_type
 from .embeddings import GeminiEmbeddingService
 from .memory import (
     ChatState,
@@ -115,6 +114,25 @@ class ToolExecutionEvent:
 class ToolExecutionFeedback:
     part: types.Part
     user_notified: bool = False
+
+
+@dataclass(frozen=True)
+class _TurnContext:
+    """Everything the model needs to answer one incoming message."""
+
+    system_instruction: str
+    contents: list[types.Content]
+    assistant_name: str
+    user_embedding: object
+
+
+@dataclass(frozen=True)
+class _TurnOutcome:
+    """The result of generating and delivering one reply."""
+
+    reply_text: Optional[str]
+    sent_reply: Optional[discord.Message]
+    tool_events: list[ToolExecutionEvent]
 
 
 _PERMISSIVE_RATE_LIMITER = _RateLimiter(window_seconds=0, max_requests=0)
@@ -247,6 +265,13 @@ class GeminiChatCog(commands.Cog):
             logger.exception(
                 "Failed to persist silent flag for channel %s", channel_id
             )
+
+    def _is_channel_silent(self, channel_id: int) -> bool:
+        silenced_at = self._silent_channels.get(channel_id)
+        return (
+            silenced_at is not None
+            and datetime.now(_MSK_TZ) - silenced_at < _SILENT_DURATION
+        )
 
     async def _load_disabled_users(self, guild_id: int) -> set[int]:
         if guild_id not in self._disabled_users_loaded:
@@ -531,13 +556,7 @@ class GeminiChatCog(commands.Cog):
         return json.dumps(response, ensure_ascii=False)
 
     def _attachment_content_type(self, attachment: discord.Attachment) -> str:
-        content_type = (getattr(attachment, "content_type", None) or "").lower().strip()
-        if content_type:
-            return content_type
-
-        filename = Path(getattr(attachment, "filename", "")).name
-        guessed, _ = mimetypes.guess_type(filename)
-        return (guessed or "").lower()
+        return resolve_attachment_content_type(attachment)
 
     def _ensure_json_safe(self, payload: object) -> object:
         try:
@@ -901,12 +920,8 @@ class GeminiChatCog(commands.Cog):
 
     async def _refresh_summary(self, channel_id: int) -> None:
         async with self._locks[channel_id]:
-            _summary_label = f"summary.refresh channel={channel_id}"
-            _su, _stok, _sstart = api_logger.open_usage(_summary_label)
-            try:
+            with api_logger.track_usage(f"summary.refresh channel={channel_id}"):
                 await self._refresh_summary_impl(channel_id)
-            finally:
-                api_logger.close_usage(_su, _stok, _sstart, _summary_label)
 
     async def _refresh_summary_impl(self, channel_id: int) -> None:
         chat_state = await self._memory_store.get_chat_state(channel_id)
@@ -1152,22 +1167,7 @@ class GeminiChatCog(commands.Cog):
         await self._ensure_silent_channels_loaded()
 
         if message.attachments and self.music_cog:
-            audio_att = next(
-                (
-                    attachment
-                    for attachment in message.attachments
-                    if self._attachment_content_type(attachment).startswith("audio/")
-                ),
-                None,
-            )
-            if audio_att:
-                async with message.channel.typing():
-                    result = await self.music_cog.play_attachment_func(message, audio_att)
-                    if result is not None and not bool(
-                        getattr(result, "user_notified", False)
-                    ):
-                        fallback_text = getattr(result, "text", str(result))
-                        await self._safe_channel_send(message.channel, fallback_text)
+            if await self._try_play_audio_attachment(message):
                 await self.bot.process_commands(message)
                 return
 
@@ -1185,204 +1185,261 @@ class GeminiChatCog(commands.Cog):
         incoming = await self._prepare_incoming_message(message)
 
         async with self._locks[message.channel.id]:
-            reply_text: Optional[str] = None
-            sent_reply: Optional[discord.Message] = None
-            tool_events: list[ToolExecutionEvent] = []
-            thinking_msg: Optional[discord.Message] = None
-            generation_error: Optional[Exception] = None
+            with api_logger.track_usage(
+                f"agent.cycle channel={message.channel.id} user={message.author.id}"
+            ):
+                await self._handle_chat_turn(message, incoming)
 
-            _usage_label = (
-                f"agent.cycle channel={message.channel.id} "
-                f"user={message.author.id}"
-            )
-            _usage, _usage_token, _usage_started = api_logger.open_usage(_usage_label)
+        await self.bot.process_commands(message)
 
-            recent_messages = await self._memory_store.get_recent_messages(
-                message.channel.id,
-                self._settings.memory.recent_messages_limit,
-            )
-            chat_state = await self._memory_store.get_chat_state(message.channel.id)
-            query_embedding, user_embedding = await asyncio.gather(
-                self._safe_embed_query(incoming.memory_text),
-                self._safe_embed_document(incoming.memory_text),
+    async def _try_play_audio_attachment(self, message: discord.Message) -> bool:
+        """Play the first audio attachment, if any. Returns True when handled."""
+        audio_att = next(
+            (
+                attachment
+                for attachment in message.attachments
+                if self._attachment_content_type(attachment).startswith("audio/")
+            ),
+            None,
+        )
+        if audio_att is None:
+            return False
+        async with message.channel.typing():
+            result = await self.music_cog.play_attachment_func(message, audio_att)
+            if result is not None and not bool(
+                getattr(result, "user_notified", False)
+            ):
+                fallback_text = getattr(result, "text", str(result))
+                await self._safe_channel_send(message.channel, fallback_text)
+        return True
+
+    async def _handle_chat_turn(
+        self, message: discord.Message, incoming: PreparedIncomingMessage
+    ) -> None:
+        """Run one full agent cycle: gather context, reply, persist memory."""
+        context = await self._build_turn_context(message, incoming)
+        outcome = await self._generate_and_deliver(message, context)
+        await self._persist_turn(message, incoming, context, outcome)
+        await self._maybe_schedule_summary(message.channel.id)
+
+    async def _build_turn_context(
+        self, message: discord.Message, incoming: PreparedIncomingMessage
+    ) -> _TurnContext:
+        """Assemble the layered-memory system prompt and dialogue history."""
+        channel_id = message.channel.id
+        recent_messages = await self._memory_store.get_recent_messages(
+            channel_id,
+            self._settings.memory.recent_messages_limit,
+        )
+        chat_state = await self._memory_store.get_chat_state(channel_id)
+        query_embedding, user_embedding = await asyncio.gather(
+            self._safe_embed_query(incoming.memory_text),
+            self._safe_embed_document(incoming.memory_text),
+        )
+
+        semantic_matches: list[SemanticMatch] = []
+        if query_embedding is not None:
+            semantic_matches = await self._memory_store.get_semantic_matches(
+                channel_id=channel_id,
+                query_embedding=query_embedding,
+                embedding_model=self._embedding_service.model_name,
+                limit=self._settings.memory.semantic_results_limit,
+                min_score=self._settings.memory.semantic_min_score,
+                exclude_ids=[stored.id for stored in recent_messages],
+                candidate_limit=self._settings.memory.semantic_candidate_limit,
+                half_life_days=self._settings.memory.semantic_half_life_days,
             )
 
-            semantic_matches: list[SemanticMatch] = []
-            if query_embedding is not None:
-                semantic_matches = await self._memory_store.get_semantic_matches(
-                    channel_id=message.channel.id,
-                    query_embedding=query_embedding,
-                    embedding_model=self._embedding_service.model_name,
-                    limit=self._settings.memory.semantic_results_limit,
-                    min_score=self._settings.memory.semantic_min_score,
-                    exclude_ids=[stored.id for stored in recent_messages],
-                    candidate_limit=self._settings.memory.semantic_candidate_limit,
-                    half_life_days=self._settings.memory.semantic_half_life_days,
-                )
-
-            temporal_context = self._build_temporal_context(
-                recent_messages=recent_messages,
-                current_message=incoming,
-            )
-            system_instruction = self._build_memory_instruction(
+        temporal_context = self._build_temporal_context(
+            recent_messages=recent_messages,
+            current_message=incoming,
+        )
+        return _TurnContext(
+            system_instruction=self._build_memory_instruction(
                 chat_state=chat_state,
                 semantic_matches=semantic_matches,
                 temporal_context=temporal_context,
+            ),
+            contents=self._build_recent_contents(recent_messages, incoming),
+            assistant_name=self._assistant_name(message),
+            user_embedding=user_embedding,
+        )
+
+    async def _generate_and_deliver(
+        self, message: discord.Message, context: _TurnContext
+    ) -> _TurnOutcome:
+        """Call Gemini (running any tool calls) and send the reply to Discord."""
+        channel = message.channel
+        tool_events: list[ToolExecutionEvent] = []
+        thinking_msg: Optional[discord.Message] = None
+        silent_at_start = self._is_channel_silent(channel.id)
+
+        # Visible activity indicator (replaces Discord's typing trigger, which
+        # leaves a ghost indicator for up to 10s after the bot sends its
+        # message). It is updated by `think` calls and finally edited into the
+        # bot's reply.
+        if not silent_at_start:
+            thinking_msg = await self._safe_channel_send(channel, "-# 💭 *...*")
+
+        async def tool_callback(call: types.FunctionCall) -> types.Part:
+            nonlocal thinking_msg
+            if call.name == "think" and not silent_at_start:
+                reasoning = (call.args or {}).get("reasoning", "") if call.args else ""
+                if reasoning:
+                    preview = self._format_thinking_text(str(reasoning))
+                    if thinking_msg is None:
+                        thinking_msg = await self._safe_channel_send(channel, preview)
+                    else:
+                        await self._safe_edit_message(thinking_msg, content=preview)
+
+            feedback = await self.process_tool_call(call, message)
+            tool_events.append(
+                ToolExecutionEvent(
+                    tool_name=call.name or "unknown_tool",
+                    args=self._coerce_payload_dict(call.args or {}),
+                    response=self._extract_tool_response_payload(feedback.part),
+                    created_at=self._current_timestamp(),
+                    user_notified=feedback.user_notified,
+                )
             )
-            contents = self._build_recent_contents(recent_messages, incoming)
-            assistant_author_name = self._assistant_name(message)
+            return feedback.part
 
-            _silenced_at_start = self._silent_channels.get(message.channel.id)
-            _silent_at_start = (
-                _silenced_at_start is not None
-                and datetime.now(_MSK_TZ) - _silenced_at_start < _SILENT_DURATION
+        reply_text: Optional[str] = None
+        generation_error: Optional[Exception] = None
+        try:
+            reply_text = await self._response_generator.generate_reply(
+                context.contents,
+                tool_callback,
+                system_instruction=context.system_instruction,
             )
-
-            # Visible activity indicator (replaces Discord's typing trigger,
-            # which leaves a ghost indicator for up to 10s after the bot
-            # actually sends its message). This message is updated by
-            # `think` calls and finally edited into the bot's reply.
-            if not _silent_at_start:
-                thinking_msg = await self._safe_channel_send(
-                    message.channel, "-# 💭 *...*"
+            if reply_text is not None:
+                reply_text = self._sanitize_outgoing_reply(
+                    reply_text, assistant_name=context.assistant_name
                 )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Gemini response failed")
+            generation_error = exc
 
-            async def tool_callback(call: types.FunctionCall) -> types.Part:
-                nonlocal thinking_msg
-                if call.name == "think" and not _silent_at_start:
-                    reasoning = (call.args or {}).get("reasoning", "") if call.args else ""
-                    if reasoning:
-                        preview = self._format_thinking_text(str(reasoning))
-                        if thinking_msg is None:
-                            thinking_msg = await self._safe_channel_send(
-                                message.channel, preview
-                            )
-                        else:
-                            await self._safe_edit_message(thinking_msg, content=preview)
+        sent_reply: Optional[discord.Message] = None
+        if generation_error is not None:
+            if thinking_msg is not None:
+                await self._safe_delete_message(thinking_msg)
+                thinking_msg = None
+            await self._safe_channel_send(
+                channel, f"Failed to generate a response: {generation_error}"
+            )
+        else:
+            # Re-check silence after generation: it may have expired (and the
+            # stale flag is then cleared) or been toggled while we waited.
+            silenced_at = self._silent_channels.get(channel.id)
+            is_silent = self._is_channel_silent(channel.id)
+            if silenced_at is not None and not is_silent:
+                self._silent_channels.pop(channel.id, None)
+                asyncio.create_task(self._persist_silent_channel(channel.id, None))
 
-                feedback = await self.process_tool_call(call, message)
-                tool_events.append(
-                    ToolExecutionEvent(
-                        tool_name=call.name or "unknown_tool",
-                        args=self._coerce_payload_dict(call.args or {}),
-                        response=self._extract_tool_response_payload(feedback.part),
-                        created_at=self._current_timestamp(),
-                        user_notified=feedback.user_notified,
+            if not is_silent:
+                content = self._choose_reply_content(reply_text, tool_events)
+                if content is not None:
+                    sent_reply, thinking_msg = await self._send_or_edit(
+                        channel, content, thinking_msg
                     )
-                )
-                return feedback.part
+            if thinking_msg is not None:
+                await self._safe_delete_message(thinking_msg)
 
-            try:
-                reply_text = await self._response_generator.generate_reply(
-                    contents,
-                    tool_callback,
-                    system_instruction=system_instruction,
-                )
-                if reply_text is not None:
-                    reply_text = self._sanitize_outgoing_reply(
-                        reply_text,
-                        assistant_name=assistant_author_name,
-                    )
-            except Exception as exc:  # noqa: BLE001
-                logger.exception("Gemini response failed")
-                generation_error = exc
+        return _TurnOutcome(
+            reply_text=reply_text, sent_reply=sent_reply, tool_events=tool_events
+        )
 
-            if generation_error is not None:
-                if thinking_msg is not None:
-                    await self._safe_delete_message(thinking_msg)
-                    thinking_msg = None
-                await self._safe_channel_send(
-                    message.channel,
-                    f"Failed to generate a response: {generation_error}",
-                )
-            else:
-                any_tool_notified = any(event.user_notified for event in tool_events)
-                silenced_at = self._silent_channels.get(message.channel.id)
-                is_silent = (
-                    silenced_at is not None
-                    and datetime.now(_MSK_TZ) - silenced_at < _SILENT_DURATION
-                )
-                if silenced_at is not None and not is_silent:
-                    self._silent_channels.pop(message.channel.id, None)
-                    asyncio.create_task(
-                        self._persist_silent_channel(message.channel.id, None)
-                    )
-                if not is_silent:
-                    if reply_text:
-                        if thinking_msg is not None and await self._safe_edit_message(
-                            thinking_msg, content=reply_text
-                        ):
-                            sent_reply = thinking_msg
-                            thinking_msg = None
-                        else:
-                            sent_reply = await self._safe_channel_send(
-                                message.channel, reply_text
-                            )
-                    elif tool_events and not any_tool_notified:
-                        fallback_text = self._tool_result_text(tool_events[-1].response)
-                        if thinking_msg is not None and await self._safe_edit_message(
-                            thinking_msg, content=fallback_text
-                        ):
-                            sent_reply = thinking_msg
-                            thinking_msg = None
-                        else:
-                            sent_reply = await self._safe_channel_send(
-                                message.channel, fallback_text
-                            )
-                if thinking_msg is not None:
-                    await self._safe_delete_message(thinking_msg)
-                    thinking_msg = None
+    def _choose_reply_content(
+        self,
+        reply_text: Optional[str],
+        tool_events: list[ToolExecutionEvent],
+    ) -> Optional[str]:
+        """Pick what to show the user: the model's text, or a tool fallback."""
+        if reply_text:
+            return reply_text
+        any_tool_notified = any(event.user_notified for event in tool_events)
+        if tool_events and not any_tool_notified:
+            return self._tool_result_text(tool_events[-1].response)
+        return None
 
+    async def _send_or_edit(
+        self,
+        channel: discord.abc.Messageable,
+        content: str,
+        thinking_msg: Optional[discord.Message],
+    ) -> tuple[Optional[discord.Message], Optional[discord.Message]]:
+        """Deliver ``content`` by reusing the thinking placeholder when possible.
+
+        Returns ``(sent_message, leftover_thinking_msg)``; the leftover is
+        ``None`` once the placeholder has been repurposed into the reply.
+        """
+        if thinking_msg is not None and await self._safe_edit_message(
+            thinking_msg, content=content
+        ):
+            return thinking_msg, None
+        return await self._safe_channel_send(channel, content), thinking_msg
+
+    async def _persist_turn(
+        self,
+        message: discord.Message,
+        incoming: PreparedIncomingMessage,
+        context: _TurnContext,
+        outcome: _TurnOutcome,
+    ) -> None:
+        """Store the user message, any tool rows, and the assistant turn."""
+        channel_id = message.channel.id
+        await self._store_message(
+            channel_id=channel_id,
+            discord_message_id=message.id,
+            role="user",
+            author_id=message.author.id,
+            author_name=incoming.author_name,
+            content_text=incoming.memory_text,
+            created_at=incoming.created_at,
+            embedding=context.user_embedding,
+            content_parts=incoming.content_parts,
+        )
+        await self._persist_tool_events(channel_id, outcome.tool_events)
+
+        bot_user_id = self.bot.user.id if self.bot.user else None
+        reply_message_id = outcome.sent_reply.id if outcome.sent_reply else None
+
+        if outcome.reply_text:
+            assistant_created_at = self._current_timestamp()
+            assistant_embedding = await self._safe_embed_document(outcome.reply_text)
             await self._store_message(
-                channel_id=message.channel.id,
-                discord_message_id=message.id,
-                role="user",
-                author_id=message.author.id,
-                author_name=incoming.author_name,
-                content_text=incoming.memory_text,
-                created_at=incoming.created_at,
-                embedding=user_embedding,
-                content_parts=incoming.content_parts,
+                channel_id=channel_id,
+                discord_message_id=reply_message_id,
+                role="model",
+                author_id=bot_user_id,
+                author_name=context.assistant_name,
+                content_text=outcome.reply_text,
+                created_at=assistant_created_at,
+                embedding=assistant_embedding,
+                content_parts=({"type": "text", "text": outcome.reply_text},),
             )
-            await self._persist_tool_events(message.channel.id, tool_events)
+            return
 
-            if reply_text:
-                assistant_created_at = self._current_timestamp()
-                assistant_embedding = await self._safe_embed_document(reply_text)
-                await self._store_message(
-                    channel_id=message.channel.id,
-                    discord_message_id=sent_reply.id if sent_reply else None,
-                    role="model",
-                    author_id=self.bot.user.id if self.bot.user else None,
-                    author_name=assistant_author_name,
-                    content_text=reply_text,
-                    created_at=assistant_created_at,
-                    embedding=assistant_embedding,
-                    content_parts=({"type": "text", "text": reply_text},),
-                )
-            else:
-                non_think_events = [ev for ev in tool_events if ev.tool_name != "think"]
-                if non_think_events:
-                    tool_summary = " ".join(
-                        f"[{ev.tool_name}: {ev.response.get('result', ev.response.get('error', 'ok'))}]"
-                        for ev in non_think_events
-                    )
-                    await self._store_message(
-                        channel_id=message.channel.id,
-                        discord_message_id=sent_reply.id if sent_reply else None,
-                        role="model",
-                        author_id=self.bot.user.id if self.bot.user else None,
-                        author_name=assistant_author_name,
-                        content_text=tool_summary,
-                        created_at=self._current_timestamp(),
-                        embedding=None,
-                        content_parts=({"type": "text", "text": tool_summary},),
-                    )
-
-            await self._maybe_schedule_summary(message.channel.id)
-
-            api_logger.close_usage(
-                _usage, _usage_token, _usage_started, _usage_label
+        # No prose reply: persist a compact summary of the tools that ran so the
+        # assistant turn is not lost from history (skipping `think` no-ops).
+        non_think_events = [
+            event for event in outcome.tool_events if event.tool_name != "think"
+        ]
+        if non_think_events:
+            tool_summary = " ".join(
+                f"[{event.tool_name}: "
+                f"{event.response.get('result', event.response.get('error', 'ok'))}]"
+                for event in non_think_events
             )
-
-        await self.bot.process_commands(message)
+            await self._store_message(
+                channel_id=channel_id,
+                discord_message_id=reply_message_id,
+                role="model",
+                author_id=bot_user_id,
+                author_name=context.assistant_name,
+                content_text=tool_summary,
+                created_at=self._current_timestamp(),
+                embedding=None,
+                content_parts=({"type": "text", "text": tool_summary},),
+            )
