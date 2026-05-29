@@ -1,10 +1,10 @@
 """Lightweight Gemini API usage tracking.
 
 A :class:`ContextVar` holds an :class:`ApiUsage` accumulator for the duration
-of a logical request (a Discord message turn, a summary refresh, etc.). Every
-embedding and generate call records its own timing/tokens into the active
-accumulator and emits a DEBUG line. When the accumulator is closed via
-:func:`track_usage`, an INFO summary is written for the whole cycle.
+of a logical request (a Discord message turn, a summary refresh, etc.). Open a
+scope with the :func:`track_usage` context manager; every embedding and generate
+call made inside it records its own timing/tokens into the active accumulator and
+emits a DEBUG line. On exit an INFO summary is written for the whole cycle.
 """
 from __future__ import annotations
 
@@ -29,10 +29,6 @@ class ApiUsage:
 
 
 _current: ContextVar[Optional[ApiUsage]] = ContextVar("peace_music_api_usage", default=None)
-
-
-def current_usage() -> Optional[ApiUsage]:
-    return _current.get()
 
 
 def _log_usage(label: str, usage: ApiUsage, wall_elapsed: float) -> None:
@@ -103,27 +99,3 @@ def record_embed(model: str, task: str, elapsed: float) -> None:
         counter.embed_calls += 1
         counter.total_api_seconds += elapsed
     logger.debug("embed: model=%s task=%s elapsed=%.2fs", model, task, elapsed)
-
-
-def open_usage(label: str) -> tuple[ApiUsage, Any, float]:
-    """Manual scope opener for sites where `with` is awkward (e.g. wrapping
-    a long async-with body without re-indenting). Pair with :func:`close_usage`.
-
-    The label is captured here and replayed at close time.
-    """
-    usage = ApiUsage()
-    token = _current.set(usage)
-    return usage, token, time.monotonic()
-
-
-def close_usage(
-    usage: ApiUsage, token: Any, wall_started: float, label: str
-) -> None:
-    """Counterpart to :func:`open_usage`. Emits the INFO summary line."""
-    try:
-        _current.reset(token)
-    except (ValueError, LookupError):
-        # Token was set in a different context (e.g. nested misuse); fall back
-        # to clearing globally.
-        _current.set(None)
-    _log_usage(label, usage, time.monotonic() - wall_started)

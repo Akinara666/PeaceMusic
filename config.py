@@ -61,6 +61,32 @@ def _get_env_bool(name: str, default: bool = False) -> bool:
     return default
 
 
+def _get_env_int(name: str, default: int) -> int:
+    """Read an integer env var, falling back to ``default`` when unset/empty.
+
+    Raises ``RuntimeError`` with a clear message for non-integer values so a
+    typo in the environment fails fast instead of crashing deep in startup.
+    """
+    raw = (_get_env(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise RuntimeError(f"{name} must be an integer, got {raw!r}") from exc
+
+
+def _get_env_float(name: str, default: float) -> float:
+    """Read a float env var, falling back to ``default`` when unset/empty."""
+    raw = (_get_env(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise RuntimeError(f"{name} must be a number, got {raw!r}") from exc
+
+
 def _load_default_prompt() -> str:
     try:
         text = DEFAULT_PROMPT_PATH.read_text(encoding="utf-8")
@@ -227,16 +253,9 @@ def _build_ffmpeg_options() -> dict:
 def load_settings() -> AppSettings:
     discord_token = _get_env("DISCORD_BOT_TOKEN", required=True)
     chatbot_channel_id_raw = (_get_env("CHATBOT_CHANNEL_ID") or "").strip()
-    chatbot_channel_id: Optional[int]
-    if chatbot_channel_id_raw:
-        try:
-            chatbot_channel_id = int(chatbot_channel_id_raw)
-        except ValueError as exc:
-            raise RuntimeError(
-                f"CHATBOT_CHANNEL_ID must be an integer, got {chatbot_channel_id_raw!r}"
-            ) from exc
-    else:
-        chatbot_channel_id = None
+    chatbot_channel_id: Optional[int] = (
+        _get_env_int("CHATBOT_CHANNEL_ID", 0) if chatbot_channel_id_raw else None
+    )
 
     gemini_key = _get_env("GEMINI_API_KEY", required=True)
     gemini_response_model = (
@@ -250,19 +269,11 @@ def load_settings() -> AppSettings:
     gemini_embedding_model = (
         _get_env("GEMINI_EMBEDDING_MODEL") or "gemini-embedding-2-preview"
     )
-    gemini_embedding_dimensions = int(
-        _get_env("GEMINI_EMBEDDING_DIMENSIONS", default="768") or "768"
-    )
-    gemini_thinking_budget = int(
-        _get_env("GEMINI_THINKING_BUDGET", default="8192") or "8192"
-    )
-    gemini_temperature = float(
-        _get_env("GEMINI_TEMPERATURE", default="1.0") or "1.0"
-    )
-    gemini_top_p = float(_get_env("GEMINI_TOP_P", default="0.95") or "0.95")
-    gemini_request_timeout_ms = int(
-        _get_env("GEMINI_REQUEST_TIMEOUT_MS", default="24000") or "24000"
-    )
+    gemini_embedding_dimensions = _get_env_int("GEMINI_EMBEDDING_DIMENSIONS", 768)
+    gemini_thinking_budget = _get_env_int("GEMINI_THINKING_BUDGET", 8192)
+    gemini_temperature = _get_env_float("GEMINI_TEMPERATURE", 1.0)
+    gemini_top_p = _get_env_float("GEMINI_TOP_P", 0.95)
+    gemini_request_timeout_ms = _get_env_int("GEMINI_REQUEST_TIMEOUT_MS", 24000)
     gemini_socks_proxy = _get_env("GEMINI_SOCKS_PROXY") or None
 
     music_directory = Path(
@@ -276,30 +287,14 @@ def load_settings() -> AppSettings:
     status_message = (
         _get_env("DISCORD_STATUS_MESSAGE", default="PeaceMusic") or "PeaceMusic"
     )
-    recent_messages_limit = int(
-        _get_env("MEMORY_RECENT_MESSAGES", default="12") or "12"
-    )
-    semantic_results_limit = int(
-        _get_env("MEMORY_SEMANTIC_RESULTS", default="6") or "6"
-    )
-    semantic_min_score = float(
-        _get_env("MEMORY_SEMANTIC_MIN_SCORE", default="0.35") or "0.35"
-    )
-    summary_trigger_messages = int(
-        _get_env("MEMORY_SUMMARY_TRIGGER", default="30") or "30"
-    )
-    summary_window_messages = int(
-        _get_env("MEMORY_SUMMARY_WINDOW", default="40") or "40"
-    )
-    semantic_half_life_days = float(
-        _get_env("MEMORY_SEMANTIC_HALF_LIFE_DAYS", default="30") or "30"
-    )
-    semantic_candidate_limit = int(
-        _get_env("MEMORY_SEMANTIC_CANDIDATES", default="1000") or "1000"
-    )
-    raw_retention_days = int(
-        _get_env("MEMORY_RAW_RETENTION_DAYS", default="90") or "90"
-    )
+    recent_messages_limit = _get_env_int("MEMORY_RECENT_MESSAGES", 12)
+    semantic_results_limit = _get_env_int("MEMORY_SEMANTIC_RESULTS", 6)
+    semantic_min_score = _get_env_float("MEMORY_SEMANTIC_MIN_SCORE", 0.35)
+    summary_trigger_messages = _get_env_int("MEMORY_SUMMARY_TRIGGER", 30)
+    summary_window_messages = _get_env_int("MEMORY_SUMMARY_WINDOW", 40)
+    semantic_half_life_days = _get_env_float("MEMORY_SEMANTIC_HALF_LIFE_DAYS", 30.0)
+    semantic_candidate_limit = _get_env_int("MEMORY_SEMANTIC_CANDIDATES", 1000)
+    raw_retention_days = _get_env_int("MEMORY_RAW_RETENTION_DAYS", 90)
 
     # Persistent yt-dlp cache. Defaults under data/ so it lands in the mounted
     # Docker volume (alongside the chat DB) and survives container restarts.
@@ -335,14 +330,10 @@ def load_settings() -> AppSettings:
         except (FileNotFoundError, OSError):
             pass
 
-    rate_limit_max_requests = int(
-        _get_env("AI_RATE_LIMIT_MAX_REQUESTS", default="20") or "20"
-    )
-    rate_limit_window_seconds = float(
-        _get_env("AI_RATE_LIMIT_WINDOW_SECONDS", default="60") or "60"
-    )
+    rate_limit_max_requests = _get_env_int("AI_RATE_LIMIT_MAX_REQUESTS", 20)
+    rate_limit_window_seconds = _get_env_float("AI_RATE_LIMIT_WINDOW_SECONDS", 60.0)
 
-    queue_max_size = int(_get_env("MUSIC_QUEUE_MAX_SIZE", default="50") or "50")
+    queue_max_size = _get_env_int("MUSIC_QUEUE_MAX_SIZE", 50)
 
     misc_settings = MiscSettings(
         music_directory=music_directory,

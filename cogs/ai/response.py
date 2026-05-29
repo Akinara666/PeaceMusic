@@ -17,6 +17,11 @@ logger = logging.getLogger(__name__)
 
 ToolCallback = Callable[[types.FunctionCall], Awaitable[types.Part]]
 
+# Safety valves for the agentic tool loop: cap total tool executions and the
+# number of model<->tool round-trips so a misbehaving model cannot loop forever.
+_MAX_TOOL_CALLS_PER_TURN = 20
+_MAX_TOOL_ROUNDS = 12
+
 
 class ResponseGenerator:
     """Generate Gemini responses while handling tool calls."""
@@ -44,12 +49,7 @@ class ResponseGenerator:
         self._presence_penalty = presence_penalty
         self._thinking_budget = thinking_budget
 
-    def build_generation_config(self) -> types.GenerateContentConfig:
-        return self.build_generation_config_with_instruction(self._base_instruction)
-
-    def build_generation_config_with_instruction(
-        self, system_instruction: str
-    ) -> types.GenerateContentConfig:
+    def _build_config(self, system_instruction: str) -> types.GenerateContentConfig:
         cfg_kwargs = {
             "tools": self._tools,
             "thinking_config": types.ThinkingConfig(
@@ -159,13 +159,11 @@ class ResponseGenerator:
         tool_rounds = 0
         total_tool_calls = 0
         accumulated_text_parts: list[str] = []
-        _MAX_TOOL_CALLS_PER_TURN = 20
-        _MAX_TOOL_ROUNDS = 12
 
         async def _generate_once() -> Optional[types.GenerateContentResponse]:
             attempts = 3
             delay = 2.0
-            config = self.build_generation_config_with_instruction(active_instruction)
+            config = self._build_config(active_instruction)
 
             while attempts:
                 started = time.monotonic()
@@ -272,11 +270,3 @@ class ResponseGenerator:
             if limit_reached or tool_rounds >= _MAX_TOOL_ROUNDS:
                 final_text = "\n".join(accumulated_text_parts).strip()
                 return final_text or None
-
-    async def generate_reply_legacy(
-        self,
-        history: List[types.Content],
-        tool_callback: ToolCallback,
-    ) -> Optional[str]:
-        """Backward-compatible alias kept for external imports."""
-        return await self.generate_reply(history, tool_callback)
