@@ -14,12 +14,19 @@ services:
         max-file: "3"
     env_file:
       - .env
+    extra_hosts:
+      # Linux Docker Engine does not create this name automatically. host-gateway
+      # keeps bridge networking while allowing access to host services (e.g. xray).
+      - "host.docker.internal:host-gateway"
     environment:
       CHAT_MEMORY_DB: /app/data/chat_memory.sqlite3
       MUSIC_DIRECTORY: /app/music_files
+      BOT_PROMPT_FILE: /app/config/prompt.txt
     volumes:
       - music_files:/app/music_files
       - app_data:/app/data
+      # Override BOT_PROMPT_HOST_FILE in .env to use a custom host-side prompt.
+      - ${BOT_PROMPT_HOST_FILE:-./utils/default_prompt.txt}:/app/config/prompt.txt:ro
     healthcheck:
       test: ["CMD-SHELL", "kill -0 1"]
       interval: 30s

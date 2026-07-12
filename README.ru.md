@@ -59,6 +59,72 @@ python main.py
 - **Логи**: `docker-compose logs -f --tail=100`
 - **Остановка**: `docker-compose down`
 
+### Переход со старых bind mounts на named volumes
+
+Сначала проверьте, откуда работающий контейнер читает данные:
+
+```bash
+docker inspect "$(docker compose ps -q peacemusic)" \
+  --format '{{range .Mounts}}{{println .Type .Source "->" .Destination}}{{end}}'
+```
+
+Если `/app/data` имеет тип `bind`, актуальная база находится в `./data`. Перед
+первым запуском нового Compose выполните:
+
+```bash
+docker compose down
+cp -a data "data.backup-$(date +%F-%H%M%S)"
+cp -a music_files "music_files.backup-$(date +%F-%H%M%S)"
+
+docker compose run --rm --user root \
+  -v "$PWD/data:/source:ro" \
+  --entrypoint sh peacemusic \
+  -c 'cp -a /source/. /app/data/ && chown -R peacemusic:peacemusic /app/data'
+
+docker compose run --rm --user root \
+  -v "$PWD/music_files:/source:ro" \
+  --entrypoint sh peacemusic \
+  -c 'cp -a /source/. /app/music_files/ && chown -R peacemusic:peacemusic /app/music_files'
+
+docker compose up -d --build
+```
+
+Не используйте `docker compose down -v`: `-v` удаляет named volumes.
+
+### SOCKS-прокси на Docker-хосте
+
+В bridge-режиме `127.0.0.1` означает сам контейнер. Compose явно добавляет
+`host.docker.internal` через `host-gateway`, поэтому в `.env` нужно указать:
+
+```env
+GEMINI_SOCKS_PROXY=socks5://host.docker.internal:40000
+```
+
+xray должен слушать адрес Docker gateway или `0.0.0.0`, а не только
+`127.0.0.1`. Закройте порт 40000 от внешнего интернета firewall-ом, разрешив
+доступ только из Docker-сети.
+
+Проверка из контейнера:
+
+```bash
+docker compose exec peacemusic python -c \
+  "import socket; s=socket.create_connection(('host.docker.internal',40000),5); print('SOCKS reachable'); s.close()"
+```
+
+### Кастомный prompt в Docker
+
+По умолчанию Compose монтирует `./utils/default_prompt.txt`. Для своего файла
+добавьте в `.env`:
+
+```env
+BOT_PROMPT_HOST_FILE=./prompt.txt
+```
+
+Файл должен существовать до создания контейнера. Внутри контейнера он доступен
+как `/app/config/prompt.txt`; значение `BOT_PROMPT_FILE` Compose выставляет
+автоматически. У пользователя контейнера должно быть право чтения файла
+(например, `chmod 644 prompt.txt`).
+
 
 ## Переменные окружения
 Заполняются в `.env` (см. шаблон `.env.example`).
@@ -66,7 +132,7 @@ python main.py
 - `DISCORD_BOT_TOKEN` — токен Discord‑бота
 - `CHATBOT_CHANNEL_ID` — ID текстового канала; если пусто, на сервере бот отвечает только на упоминания
 - `GEMINI_API_KEY` — ключ Gemini Developer API
-- `GEMINI_SOCKS_PROXY` — опциональный SOCKS5-прокси для трафика Gemini API, например `socks5://127.0.0.1:40000`
+- `GEMINI_SOCKS_PROXY` — опциональный SOCKS5-прокси; для прокси на Docker-хосте используйте `socks5://host.docker.internal:40000`
 - `CHAT_MEMORY_DB` — путь к SQLite‑базе памяти (по умолчанию `chat_memory.sqlite3`; в Docker переопределяется на `/app/data/chat_memory.sqlite3`)
 - `GEMINI_RESPONSE_MODEL` — модель генерации ответов (по умолчанию `gemini-3.1-flash-lite`)
 - `GEMINI_SUMMARY_MODEL` — модель для фонового summary (по умолчанию `gemini-3.1-flash-lite`)

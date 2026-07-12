@@ -155,6 +155,48 @@ docker compose up -d --build
 
 The container uses Docker's isolated bridge network and named volumes by default.
 
+### Existing bind-mounted data
+
+Older releases mounted `./data` and `./music_files` directly. Check the running
+container before upgrading:
+
+```bash
+docker inspect "$(docker compose ps -q peacemusic)" \
+  --format '{{range .Mounts}}{{println .Type .Source "->" .Destination}}{{end}}'
+```
+
+If `/app/data` is reported as `bind`, stop the old container and copy the data
+into the new named volume before starting the upgraded bot. Do not use
+`docker compose down -v`, because `-v` deletes named volumes. See the Russian
+README for copy commands.
+
+### Host-side SOCKS proxy
+
+On Linux, Compose maps `host.docker.internal` to Docker's host gateway. To use
+an xray/SOCKS service running on the host, configure:
+
+```env
+GEMINI_SOCKS_PROXY=socks5://host.docker.internal:40000
+```
+
+The proxy must listen on the host gateway (or `0.0.0.0`), not only on
+`127.0.0.1`. Restrict port 40000 to the Docker subnet with the host firewall;
+do not expose an unauthenticated SOCKS proxy to the internet.
+
+### Custom prompt in Docker
+
+Compose mounts a host prompt read-only. The default is
+`./utils/default_prompt.txt`; override it in `.env` without rebuilding:
+
+```env
+BOT_PROMPT_HOST_FILE=./prompt.txt
+```
+
+The file must exist before the container is created. Recreate the container
+after changing the path; editing the contents of the already-mounted file only
+requires a bot restart. Ensure the container user can read the host file (for
+example, `chmod 644 prompt.txt`).
+
 ---
 
 ## Configuration
@@ -184,7 +226,7 @@ All settings live in `.env` (see [`.env.example`](.env.example)).
 | `GEMINI_EMBEDDING_MODEL` | `gemini-embedding-2` | Model used to vectorise messages for semantic recall. |
 | `GEMINI_EMBEDDING_DIMENSIONS` | `768` | Output dimensionality for embeddings. |
 | `GEMINI_THINKING_BUDGET` | `8192` | Max tokens for Gemini's hidden reasoning per turn. |
-| `GEMINI_SOCKS_PROXY` | *(off)* | e.g. `socks5://127.0.0.1:40000`. Applied to **all** Gemini SDK calls. Requires `httpx[socks]` (already in `requirements.txt`). |
+| `GEMINI_SOCKS_PROXY` | *(off)* | In Docker bridge mode use `socks5://host.docker.internal:40000`. Applied to **all** Gemini SDK calls. |
 
 ### Memory
 
