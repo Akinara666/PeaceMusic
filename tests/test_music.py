@@ -41,9 +41,7 @@ class MusicHelperTests(unittest.TestCase):
         self.assertTrue(
             music_module._is_allowed_media_url("https://music.youtube.com/watch?v=x")
         )
-        self.assertFalse(
-            music_module._is_allowed_media_url("http://127.0.0.1/private")
-        )
+        self.assertFalse(music_module._is_allowed_media_url("http://127.0.0.1/private"))
         self.assertFalse(
             music_module._is_allowed_media_url("https://youtube.com@example.org/x")
         )
