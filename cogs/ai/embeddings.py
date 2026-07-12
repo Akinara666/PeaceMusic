@@ -41,15 +41,27 @@ class GeminiEmbeddingService:
         if not clean_text:
             raise ValueError("Cannot embed empty text")
 
+        config_kwargs: dict[str, object] = {
+            "output_dimensionality": self._output_dimensionality
+        }
+        contents = clean_text
+        if self._model_name == "gemini-embedding-2":
+            # Embedding 2 replaced the legacy task_type field with explicit text
+            # instructions. Keep query/document formatting asymmetric so cosine
+            # retrieval retains the semantics the old task types provided.
+            if task_type == "RETRIEVAL_QUERY":
+                contents = f"task: search result | query: {clean_text}"
+            else:
+                contents = f"title: none | text: {clean_text}"
+        else:
+            config_kwargs["task_type"] = task_type
+
         started = time.monotonic()
         try:
             response = await self._client.aio.models.embed_content(
                 model=self._model_name,
-                contents=clean_text,
-                config=types.EmbedContentConfig(
-                    task_type=task_type,
-                    output_dimensionality=self._output_dimensionality,
-                ),
+                contents=contents,
+                config=types.EmbedContentConfig(**config_kwargs),
             )
         finally:
             api_logger.record_embed(

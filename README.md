@@ -39,19 +39,19 @@ Powered by Google Gemini for conversation and tool‑calling, and by `yt‑dlp` 
 
 Most Discord music bots are just remote controls — type `!play`, get a song. PeaceMusic is built around a **conversational agent** that decides which actions to take. Ask it to *"throw on something chill from the 80s and skip when it gets boring"* and it will search, queue, monitor, and skip — invoking the right tools at the right time.
 
-The bot stays coherent across long conversations through a layered memory system: recent turns, semantic recall via embeddings, and a rolling global summary. It can see images and videos you drop into chat, hear audio attachments and play them, and explains its reasoning live as it works.
+The bot stays coherent across long conversations through a layered memory system: recent turns, semantic recall via embeddings, and a rolling global summary. It can see images and videos you drop into chat and play audio attachments.
 
 ## Features
 
 ### Conversational AI
 - **Gemini‑powered chat** with full tool‑calling: the model invokes music commands itself instead of you memorising syntax.
-- **Live "thinking" indicator** — when the agent calls its `think` tool to plan or reflect, you see the reasoning stream into Discord in real time.
+- **Private model reasoning** with a generic progress indicator; internal chain-of-thought is never posted to Discord.
 - **Multimodal input** — drop images or short videos and the bot will reason about them via the Gemini API.
 - **Per‑user access control** via the `/bot_access` slash command (requires *Manage Server*).
 - **Per‑user rate limiting** with a configurable sliding window.
 
 ### Music Playback
-- **YouTube, SoundCloud, and any `yt‑dlp`‑supported source** — by URL or natural‑language search.
+- **YouTube and SoundCloud** — by trusted URL or natural‑language search. Additional domains can be explicitly allowlisted.
 - **Queue management**: play, skip, skip‑by‑name, seek, pause/resume, volume (0.0–5.0×), shuffle, clear, remove by index, loop (off / track / queue).
 - **Audio attachment auto‑play** — drop an `.mp3`/`.ogg`/`.wav` and the bot plays it.
 - **Local cache** of downloaded tracks with bounded file size limits.
@@ -139,7 +139,7 @@ python main.py
 
 ## Docker Deployment
 
-Recommended for any long‑running server. Both the SQLite memory and the music cache are bind‑mounted so they survive container rebuilds.
+Recommended for any long‑running server. Both the SQLite memory and the music cache use named volumes so they survive container rebuilds.
 
 ```bash
 # Edit .env first (DISCORD_BOT_TOKEN, GEMINI_API_KEY, etc.)
@@ -149,11 +149,11 @@ docker compose up -d --build
 | Action | Command |
 |---|---|
 | View logs | `docker compose logs -f --tail=100` |
-| Restart (e.g. after editing `.env`) | `docker compose restart` |
+| Recreate (required after editing `.env`) | `docker compose up -d --force-recreate` |
 | Stop | `docker compose down` |
 | Rebuild after `git pull` | `docker compose up -d --build` |
 
-The container uses `network_mode: host` on Linux for IPv6 + lower latency to Discord's voice servers.
+The container uses Docker's isolated bridge network and named volumes by default.
 
 ---
 
@@ -172,16 +172,16 @@ All settings live in `.env` (see [`.env.example`](.env.example)).
 
 | Variable | Default | Description |
 |---|---|---|
-| `CHATBOT_CHANNEL_ID` | *(any channel)* | Restrict AI chat to a single text channel. Leave empty to respond anywhere. |
+| `CHATBOT_CHANNEL_ID` | *(mentions in any channel)* | Restrict AI chat to one channel. When empty, guild messages must mention the bot by default. |
 | `DISCORD_STATUS_MESSAGE` | `PeaceMusic` | "Listening to …" status text. |
 
 ### Gemini
 
 | Variable | Default | Description |
 |---|---|---|
-| `GEMINI_RESPONSE_MODEL` | `gemini-3.1-flash-lite-preview` | Model used for chat replies. |
-| `GEMINI_SUMMARY_MODEL` | `gemini-3.1-flash-lite-preview` | Model used for background memory summarisation. |
-| `GEMINI_EMBEDDING_MODEL` | `gemini-embedding-2-preview` | Model used to vectorise messages for semantic recall. |
+| `GEMINI_RESPONSE_MODEL` | `gemini-3.1-flash-lite` | Model used for chat replies. |
+| `GEMINI_SUMMARY_MODEL` | `gemini-3.1-flash-lite` | Model used for background memory summarisation. |
+| `GEMINI_EMBEDDING_MODEL` | `gemini-embedding-2` | Model used to vectorise messages for semantic recall. |
 | `GEMINI_EMBEDDING_DIMENSIONS` | `768` | Output dimensionality for embeddings. |
 | `GEMINI_THINKING_BUDGET` | `8192` | Max tokens for Gemini's hidden reasoning per turn. |
 | `GEMINI_SOCKS_PROXY` | *(off)* | e.g. `socks5://127.0.0.1:40000`. Applied to **all** Gemini SDK calls. Requires `httpx[socks]` (already in `requirements.txt`). |
@@ -219,7 +219,7 @@ Just send a message in the configured channel. The agent figures out what you wa
 
 > **You:** can you put on some lo‑fi and crank it a little
 >
-> **Bot:** 💭 *searching lo‑fi hip hop mixes and queueing the top result; bumping volume to ~1.3×*
+> **Bot:** 💭 *...*
 >
 > **Bot:** queued "Lofi Hip Hop Radio 📚 — beats to relax/study to" • volume set to 1.3
 

@@ -33,11 +33,19 @@ class AttachmentProcessor:
     """Convert Discord attachments into Gemini-friendly content."""
 
     def __init__(
-        self, client: "genai.Client", image_name: Path, video_name: Path
+        self,
+        client: "genai.Client",
+        image_name: Path,
+        video_name: Path,
+        *,
+        max_bytes: int = 25_000_000,
+        max_count: int = 4,
     ) -> None:
         self._client = client
         self._image_name = image_name
         self._video_name = video_name
+        self._max_bytes = max_bytes
+        self._max_count = max_count
 
     async def to_content(
         self,
@@ -50,10 +58,22 @@ class AttachmentProcessor:
         attachment_markers: list[str] = []
         prompt_markers: list[str] = []
 
-        for attachment in message.attachments:
+        attachments = list(message.attachments[: self._max_count])
+        for attachment in attachments:
             content_type = self._resolve_content_type(attachment)
             marker = self._build_marker(attachment, content_type)
             attachment_markers.append(marker)
+
+            size = int(getattr(attachment, "size", 0) or 0)
+            if size > self._max_bytes:
+                logger.warning(
+                    "Ignoring oversized attachment %s (%d bytes; limit=%d)",
+                    getattr(attachment, "filename", "<unknown>"),
+                    size,
+                    self._max_bytes,
+                )
+                prompt_markers.append(f"{marker} [too large to process]")
+                continue
 
             if self._media_kind(content_type) is None:
                 prompt_markers.append(marker)
@@ -75,6 +95,12 @@ class AttachmentProcessor:
                     mime_type=file.mime_type or content_type or None,
                 )
             )
+
+        skipped_count = max(0, len(message.attachments) - len(attachments))
+        if skipped_count:
+            marker = f"[{skipped_count} additional attachment(s) omitted]"
+            attachment_markers.append(marker)
+            prompt_markers.append(marker)
 
         if not clean_raw_text:
             prompt_markers = attachment_markers
@@ -137,21 +163,32 @@ class AttachmentProcessor:
         target = Path(temp_name)
 
         try:
-            reader = getattr(attachment, "read", None)
-            if callable(reader):
-                try:
-                    data = await reader(use_cached=True)
-                except TypeError:
-                    data = await reader()
-                await asyncio.to_thread(target.write_bytes, data)
-                return target
-
+            # Attachment.save streams the response into the file and avoids holding
+            # the whole Discord upload in memory. Prefer it over read() whenever the
+            # real discord.py object (or a compatible test double) provides it.
             saver = getattr(attachment, "save", None)
             if callable(saver):
                 try:
                     await saver(target, use_cached=True)
                 except TypeError:
                     await saver(target)
+                if target.stat().st_size > self._max_bytes:
+                    raise ValueError(
+                        f"Attachment exceeds {self._max_bytes} byte processing limit"
+                    )
+                return target
+
+            reader = getattr(attachment, "read", None)
+            if callable(reader):
+                try:
+                    data = await reader(use_cached=True)
+                except TypeError:
+                    data = await reader()
+                if len(data) > self._max_bytes:
+                    raise ValueError(
+                        f"Attachment exceeds {self._max_bytes} byte processing limit"
+                    )
+                await asyncio.to_thread(target.write_bytes, data)
                 return target
         except Exception:
             await asyncio.to_thread(target.unlink, True)

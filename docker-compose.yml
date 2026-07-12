@@ -1,13 +1,12 @@
 services:
   peacemusic:
+    build: .
     image: ghcr.io/akinara666/peacemusic:latest
-    # build: . # Раскомментируйте эту строку и закомментируйте image, если хотите собрать образ локально
-    network_mode: "host" # Enables IPv6 (on Linux) and better performance
+    init: true
     restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          memory: 1G # Защита сервера от утечек памяти бота
+    mem_limit: 1g
+    cpus: 2.0
+    pids_limit: 256
     logging:
       driver: "json-file"
       options:
@@ -17,6 +16,17 @@ services:
       - .env
     environment:
       CHAT_MEMORY_DB: /app/data/chat_memory.sqlite3
+      MUSIC_DIRECTORY: /app/music_files
     volumes:
-      - ./music_files:/app/music_files
-      - ./data:/app/data
+      - music_files:/app/music_files
+      - app_data:/app/data
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  music_files:
+  app_data:

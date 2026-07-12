@@ -40,7 +40,17 @@ _load_env_file()
 def _get_env(
     name: str, default: Optional[str] = None, *, required: bool = False
 ) -> Optional[str]:
-    value = os.getenv(name, default)
+    value = os.getenv(name)
+    file_name = os.getenv(f"{name}_FILE")
+    if value is None and file_name:
+        try:
+            value = Path(file_name).read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise RuntimeError(
+                f"Unable to read {name}_FILE from {file_name!r}: {exc}"
+            ) from exc
+    if value is None:
+        value = default
     if required and (value is None or value == ""):
         raise RuntimeError(
             f"Required environment variable '{name}' is missing. "
@@ -58,7 +68,9 @@ def _get_env_bool(name: str, default: bool = False) -> bool:
         return True
     if normalized in {"0", "false", "no", "off"}:
         return False
-    return default
+    raise RuntimeError(
+        f"{name} must be a boolean (true/false, yes/no, on/off, 1/0), got {value!r}"
+    )
 
 
 def _get_env_int(name: str, default: int) -> int:
@@ -109,9 +121,9 @@ class DiscordSettings:
 @dataclass(frozen=True)
 class GeminiSettings:
     api_key: str
-    response_model: str = "gemini-3.1-flash-lite-preview"
-    summary_model: str = "gemini-3.1-flash-lite-preview"
-    embedding_model: str = "gemini-embedding-2-preview"
+    response_model: str = "gemini-3.1-flash-lite"
+    summary_model: str = "gemini-3.1-flash-lite"
+    embedding_model: str = "gemini-embedding-2"
     embedding_dimensions: int = 768
     thinking_budget: int = 8192
     temperature: float = 1.0
@@ -146,12 +158,19 @@ class MiscSettings:
     rate_limit_max_requests: int = 0
     rate_limit_window_seconds: float = 60.0
     queue_max_size: int = 50
+    ai_attachment_max_bytes: int = 25_000_000
+    music_attachment_max_bytes: int = 25_000_000
+    attachment_max_count: int = 4
+    ai_max_concurrent_turns: int = 4
+    ai_turn_timeout_seconds: float = 120.0
+    require_mention_when_unscoped: bool = True
 
 
 @dataclass(frozen=True)
 class AudioSettings:
     ytdl_options: dict
     ffmpeg_options: dict
+    allowed_media_domains: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -164,13 +183,27 @@ class AppSettings:
 
 
 def _build_intents() -> discord.Intents:
-    intents = discord.Intents.all()
+    intents = discord.Intents.default()
     intents.message_content = True
     intents.members = True
     intents.guilds = True
     intents.messages = True
     intents.voice_states = True
+    intents.presences = False
     return intents
+
+
+def _require_range(
+    name: str,
+    value: int | float,
+    *,
+    minimum: int | float | None = None,
+    maximum: int | float | None = None,
+) -> None:
+    if minimum is not None and value < minimum:
+        raise RuntimeError(f"{name} must be >= {minimum}, got {value!r}")
+    if maximum is not None and value > maximum:
+        raise RuntimeError(f"{name} must be <= {maximum}, got {value!r}")
 
 
 def _build_ytdl_options(
@@ -235,9 +268,7 @@ def _build_ffmpeg_options() -> dict:
 
     return {
         "before_options_stream": f"{reconnect_args} -nostdin",
-        "before_options_stream_youtube_hls": (
-            f"{youtube_hls_reconnect_args} -nostdin"
-        ),
+        "before_options_stream_youtube_hls": (f"{youtube_hls_reconnect_args} -nostdin"),
         "before_options_file": "-nostdin",
         "options": (
             "-vn -sn -dn "
@@ -261,14 +292,10 @@ def load_settings() -> AppSettings:
     gemini_response_model = (
         _get_env("GEMINI_RESPONSE_MODEL")
         or _get_env("GEMINI_MODEL")
-        or "gemini-3.1-flash-lite-preview"
+        or "gemini-3.1-flash-lite"
     )
-    gemini_summary_model = (
-        _get_env("GEMINI_SUMMARY_MODEL") or "gemini-3.1-flash-lite-preview"
-    )
-    gemini_embedding_model = (
-        _get_env("GEMINI_EMBEDDING_MODEL") or "gemini-embedding-2-preview"
-    )
+    gemini_summary_model = _get_env("GEMINI_SUMMARY_MODEL") or "gemini-3.1-flash-lite"
+    gemini_embedding_model = _get_env("GEMINI_EMBEDDING_MODEL") or "gemini-embedding-2"
     gemini_embedding_dimensions = _get_env_int("GEMINI_EMBEDDING_DIMENSIONS", 768)
     gemini_thinking_budget = _get_env_int("GEMINI_THINKING_BUDGET", 8192)
     gemini_temperature = _get_env_float("GEMINI_TEMPERATURE", 1.0)
@@ -276,9 +303,21 @@ def load_settings() -> AppSettings:
     gemini_request_timeout_ms = _get_env_int("GEMINI_REQUEST_TIMEOUT_MS", 24000)
     gemini_socks_proxy = _get_env("GEMINI_SOCKS_PROXY") or None
 
+    _require_range(
+        "GEMINI_EMBEDDING_DIMENSIONS",
+        gemini_embedding_dimensions,
+        minimum=128,
+        maximum=3072,
+    )
+    _require_range("GEMINI_TEMPERATURE", gemini_temperature, minimum=0.0, maximum=2.0)
+    _require_range("GEMINI_TOP_P", gemini_top_p, minimum=0.0, maximum=1.0)
+    _require_range("GEMINI_REQUEST_TIMEOUT_MS", gemini_request_timeout_ms, minimum=1)
+
     music_directory = Path(
         _get_env("MUSIC_DIRECTORY", default="music_files") or "music_files"
     )
+    if not music_directory.is_absolute():
+        music_directory = (REPO_ROOT / music_directory).resolve()
 
     memory_db_file = Path(
         _get_env("CHAT_MEMORY_DB", default="chat_memory.sqlite3")
@@ -296,6 +335,21 @@ def load_settings() -> AppSettings:
     semantic_candidate_limit = _get_env_int("MEMORY_SEMANTIC_CANDIDATES", 1000)
     raw_retention_days = _get_env_int("MEMORY_RAW_RETENTION_DAYS", 90)
 
+    _require_range("MEMORY_RECENT_MESSAGES", recent_messages_limit, minimum=1)
+    _require_range("MEMORY_SEMANTIC_RESULTS", semantic_results_limit, minimum=0)
+    _require_range(
+        "MEMORY_SEMANTIC_MIN_SCORE", semantic_min_score, minimum=0.0, maximum=1.0
+    )
+    _require_range("MEMORY_SUMMARY_TRIGGER", summary_trigger_messages, minimum=1)
+    _require_range("MEMORY_SUMMARY_WINDOW", summary_window_messages, minimum=1)
+    _require_range("MEMORY_SEMANTIC_HALF_LIFE_DAYS", semantic_half_life_days, minimum=0)
+    _require_range("MEMORY_SEMANTIC_CANDIDATES", semantic_candidate_limit, minimum=1)
+    _require_range("MEMORY_RAW_RETENTION_DAYS", raw_retention_days, minimum=0)
+    if semantic_results_limit > semantic_candidate_limit:
+        raise RuntimeError(
+            "MEMORY_SEMANTIC_RESULTS cannot exceed MEMORY_SEMANTIC_CANDIDATES"
+        )
+
     # Persistent yt-dlp cache. Defaults under data/ so it lands in the mounted
     # Docker volume (alongside the chat DB) and survives container restarts.
     ytdl_cache_dir_raw = (
@@ -307,9 +361,7 @@ def load_settings() -> AppSettings:
 
     prompt_file_raw = _get_env("BOT_PROMPT_FILE")
     ytdl_use_cookies = _get_env_bool("YTDL_USE_COOKIES", default=False)
-    cookies_file_raw = (
-        _get_env("YTDL_COOKIE_FILE") or "data/cookies.txt"
-    )
+    cookies_file_raw = _get_env("YTDL_COOKIE_FILE") or "data/cookies.txt"
     cookies_file: Optional[Path] = None
     if ytdl_use_cookies:
         candidate = Path(cookies_file_raw)
@@ -334,6 +386,35 @@ def load_settings() -> AppSettings:
     rate_limit_window_seconds = _get_env_float("AI_RATE_LIMIT_WINDOW_SECONDS", 60.0)
 
     queue_max_size = _get_env_int("MUSIC_QUEUE_MAX_SIZE", 50)
+    ai_attachment_max_bytes = _get_env_int("AI_ATTACHMENT_MAX_BYTES", 25_000_000)
+    music_attachment_max_bytes = _get_env_int("MUSIC_ATTACHMENT_MAX_BYTES", 25_000_000)
+    attachment_max_count = _get_env_int("AI_ATTACHMENT_MAX_COUNT", 4)
+    ai_max_concurrent_turns = _get_env_int("AI_MAX_CONCURRENT_TURNS", 4)
+    ai_turn_timeout_seconds = _get_env_float("AI_TURN_TIMEOUT_SECONDS", 120.0)
+    require_mention_when_unscoped = _get_env_bool(
+        "AI_REQUIRE_MENTION_WHEN_UNSCOPED", default=True
+    )
+
+    _require_range("AI_RATE_LIMIT_MAX_REQUESTS", rate_limit_max_requests, minimum=0)
+    _require_range("AI_RATE_LIMIT_WINDOW_SECONDS", rate_limit_window_seconds, minimum=0)
+    _require_range("MUSIC_QUEUE_MAX_SIZE", queue_max_size, minimum=1)
+    _require_range("AI_ATTACHMENT_MAX_BYTES", ai_attachment_max_bytes, minimum=1)
+    _require_range("MUSIC_ATTACHMENT_MAX_BYTES", music_attachment_max_bytes, minimum=1)
+    _require_range("AI_ATTACHMENT_MAX_COUNT", attachment_max_count, minimum=1)
+    _require_range("AI_MAX_CONCURRENT_TURNS", ai_max_concurrent_turns, minimum=1)
+    _require_range("AI_TURN_TIMEOUT_SECONDS", ai_turn_timeout_seconds, minimum=1)
+
+    allowed_media_domains = tuple(
+        domain.strip().lower().lstrip(".")
+        for domain in (
+            _get_env(
+                "MEDIA_ALLOWED_DOMAINS",
+                "youtube.com,youtu.be,music.youtube.com,soundcloud.com,on.soundcloud.com",
+            )
+            or ""
+        ).split(",")
+        if domain.strip()
+    )
 
     misc_settings = MiscSettings(
         music_directory=music_directory,
@@ -343,6 +424,12 @@ def load_settings() -> AppSettings:
         rate_limit_max_requests=rate_limit_max_requests,
         rate_limit_window_seconds=rate_limit_window_seconds,
         queue_max_size=queue_max_size,
+        ai_attachment_max_bytes=ai_attachment_max_bytes,
+        music_attachment_max_bytes=music_attachment_max_bytes,
+        attachment_max_count=attachment_max_count,
+        ai_max_concurrent_turns=ai_max_concurrent_turns,
+        ai_turn_timeout_seconds=ai_turn_timeout_seconds,
+        require_mention_when_unscoped=require_mention_when_unscoped,
     )
 
     memory_settings = MemorySettings(
@@ -365,6 +452,7 @@ def load_settings() -> AppSettings:
             cache_dir=ytdl_cache_dir,
         ),
         ffmpeg_options=_build_ffmpeg_options(),
+        allowed_media_domains=allowed_media_domains,
     )
 
     return AppSettings(
@@ -420,6 +508,10 @@ BOT_PROMPT_TEXT = _settings.misc.prompt_text
 YTDL_OPTIONS = _settings.audio.ytdl_options
 FFMPEG_OPTIONS = _settings.audio.ffmpeg_options
 MUSIC_QUEUE_MAX_SIZE = _settings.misc.queue_max_size
+AI_ATTACHMENT_MAX_BYTES = _settings.misc.ai_attachment_max_bytes
+MUSIC_ATTACHMENT_MAX_BYTES = _settings.misc.music_attachment_max_bytes
+AI_ATTACHMENT_MAX_COUNT = _settings.misc.attachment_max_count
+MEDIA_ALLOWED_DOMAINS = _settings.audio.allowed_media_domains
 
 
 def get_settings() -> AppSettings:
