@@ -82,8 +82,7 @@ class MemoryStore:
     def _initialize(self) -> None:
         with self._connect() as conn:
             conn.execute("PRAGMA journal_mode=WAL")
-            conn.executescript(
-                """
+            conn.executescript("""
                 CREATE TABLE IF NOT EXISTS chat_state (
                     channel_id INTEGER PRIMARY KEY,
                     summary TEXT NOT NULL DEFAULT '',
@@ -122,8 +121,7 @@ class MemoryStore:
                     channel_id INTEGER PRIMARY KEY,
                     silenced_at TEXT NOT NULL
                 );
-                """
-            )
+                """)
             columns = {
                 row["name"]
                 for row in conn.execute("PRAGMA table_info(messages)").fetchall()
@@ -232,6 +230,7 @@ class MemoryStore:
                         content_parts_json
                     FROM messages
                     WHERE channel_id = ?
+                      AND role IN ('user', 'model')
                     ORDER BY id DESC
                     LIMIT ?
                     """,
@@ -242,6 +241,34 @@ class MemoryStore:
             return messages
 
         return await asyncio.to_thread(_load)
+
+    async def update_message_embedding(
+        self,
+        message_id: int,
+        embedding: np.ndarray,
+        embedding_model: str,
+    ) -> None:
+        """Backfill an embedding without delaying the interactive response."""
+        normalized = np.ascontiguousarray(np.asarray(embedding, dtype=np.float32))
+
+        def _write() -> None:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    UPDATE messages
+                    SET embedding = ?, embedding_dim = ?, embedding_model = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        normalized.tobytes(),
+                        int(normalized.shape[0]),
+                        embedding_model,
+                        message_id,
+                    ),
+                )
+
+        async with self._write_lock:
+            await asyncio.to_thread(_write)
 
     async def get_chat_state(self, channel_id: int) -> ChatState:
         def _load() -> ChatState:
@@ -419,6 +446,7 @@ class MemoryStore:
                         """
                         SELECT id FROM messages
                         WHERE channel_id = ?
+                          AND role != 'memory'
                         ORDER BY id DESC
                         LIMIT 1 OFFSET ?
                         """,
@@ -437,6 +465,7 @@ class MemoryStore:
                     WHERE channel_id = ?
                       AND id < ?
                       AND created_at < ?
+                      AND role != 'memory'
                     """,
                     (channel_id, cutoff_id, older_than_iso),
                 )
@@ -463,35 +492,32 @@ class MemoryStore:
         return await asyncio.to_thread(_count)
 
     async def get_recent_summary_window(
-        self, channel_id: int, limit: int
+        self, channel_id: int, limit: int, after_message_id: Optional[int] = None
     ) -> tuple[int, list[StoredMessage]]:
         def _load() -> tuple[int, list[StoredMessage]]:
             with self._connect() as conn:
-                rows = conn.execute(
-                    """
-                    SELECT
-                        id,
-                        channel_id,
-                        discord_message_id,
-                        role,
-                        author_id,
-                        author_name,
-                        content_text,
-                        created_at,
-                        embedding_model,
-                        content_parts_json
+                select = """
+                    SELECT id, channel_id, discord_message_id, role, author_id,
+                           author_name, content_text, created_at, embedding_model,
+                           content_parts_json
                     FROM messages
-                    WHERE channel_id = ?
-                    ORDER BY id DESC
-                    LIMIT ?
-                    """,
-                    (channel_id, limit),
-                ).fetchall()
+                """
+                if after_message_id is None:
+                    rows = conn.execute(
+                        select + " WHERE channel_id = ? ORDER BY id DESC LIMIT ?",
+                        (channel_id, limit),
+                    ).fetchall()
+                    rows.reverse()
+                else:
+                    rows = conn.execute(
+                        select
+                        + " WHERE channel_id = ? AND id > ? ORDER BY id ASC LIMIT ?",
+                        (channel_id, after_message_id, limit),
+                    ).fetchall()
             if not rows:
                 return 0, []
-            latest_id = int(rows[0]["id"])
+            latest_id = int(rows[-1]["id"])
             messages = [self._row_to_message(row) for row in rows]
-            messages.reverse()
             return latest_id, messages
 
         return await asyncio.to_thread(_load)
@@ -532,7 +558,7 @@ class MemoryStore:
                     WHERE channel_id = ?
                       AND embedding_model = ?
                       AND embedding IS NOT NULL
-                      AND role != 'tool'
+                      AND role NOT IN ('tool', 'memory')
                     ORDER BY id DESC
                     LIMIT ?
                     """,
@@ -599,8 +625,12 @@ class MemoryStore:
         if raw_content_parts:
             try:
                 payload = json.loads(raw_content_parts)
-            except Exception:  # noqa: BLE001 - malformed historical payloads are ignored
-                logger.warning("Failed to decode content_parts_json for message %s", row["id"])
+            except (
+                Exception
+            ):  # noqa: BLE001 - malformed historical payloads are ignored
+                logger.warning(
+                    "Failed to decode content_parts_json for message %s", row["id"]
+                )
             else:
                 if isinstance(payload, list):
                     content_parts = tuple(

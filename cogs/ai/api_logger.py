@@ -6,6 +6,7 @@ scope with the :func:`track_usage` context manager; every embedding and generate
 call made inside it records its own timing/tokens into the active accumulator and
 emits a DEBUG line. On exit an INFO summary is written for the whole cycle.
 """
+
 from __future__ import annotations
 
 import logging
@@ -28,7 +29,9 @@ class ApiUsage:
     total_api_seconds: float = 0.0
 
 
-_current: ContextVar[Optional[ApiUsage]] = ContextVar("peace_music_api_usage", default=None)
+_current: ContextVar[Optional[ApiUsage]] = ContextVar(
+    "peace_music_api_usage", default=None
+)
 
 
 def _log_usage(label: str, usage: ApiUsage, wall_elapsed: float) -> None:

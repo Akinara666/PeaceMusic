@@ -107,7 +107,9 @@ class ResponseGeneratorTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, "done")
         self.assertEqual(seen_calls, [("react", {"emoji": "🔥"})])
-        self.assertEqual(models.calls[0]["config"].system_instruction, "override prompt")
+        self.assertEqual(
+            models.calls[0]["config"].system_instruction, "override prompt"
+        )
         self.assertEqual(len(history), 4)
 
     async def test_generate_reply_sanitizes_expired_files_and_retries(self) -> None:
@@ -137,6 +139,39 @@ class ResponseGeneratorTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, "recovered")
         self.assertEqual(history[0].parts[0].text, "[Expired Attachment]")
+
+    async def test_parallel_tool_responses_share_turn_and_preserve_ids(self) -> None:
+        first_call = types.Part.from_function_call(name="first", args={})
+        first_call.function_call.id = "call-1"
+        second_call = types.Part.from_function_call(name="second", args={})
+        second_call.function_call.id = "call-2"
+        models = FakeAsyncModels(
+            [
+                make_response([first_call, second_call]),
+                make_response([types.Part.from_text(text="done")]),
+            ]
+        )
+        client = SimpleNamespace(
+            aio=SimpleNamespace(models=models, files=FakeAsyncFiles())
+        )
+        generator = ResponseGenerator(
+            client=client,
+            model_name="reply-model",
+            tools=[],
+            system_instruction="base prompt",
+        )
+        history = [types.Content(role="user", parts=[types.Part.from_text("go")])]
+
+        result = await generator.generate_reply(history, self._tool_callback)
+
+        self.assertEqual(result, "done")
+        tool_turn = history[2]
+        self.assertEqual(tool_turn.role, "user")
+        self.assertEqual(len(tool_turn.parts), 2)
+        self.assertEqual(
+            [part.function_response.id for part in tool_turn.parts],
+            ["call-1", "call-2"],
+        )
 
     async def _tool_callback(self, function_call):
         return types.Part.from_function_response(

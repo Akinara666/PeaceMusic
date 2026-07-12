@@ -175,6 +175,11 @@ class ResponseGenerator:
                         config=config,
                     )
                 except Exception as exc:
+                    api_logger.record_generate(
+                        self._model_name,
+                        time.monotonic() - started,
+                        getattr(response, "usage_metadata", None),
+                    )
                     err_str = str(exc)
                     code = getattr(exc, "code", getattr(exc, "status_code", None))
 
@@ -199,8 +204,10 @@ class ResponseGenerator:
 
                     if (
                         isinstance(exc, errors.ServerError)
+                        or code == 429
                         or "503" in err_str
                         or "overloaded" in err_str.lower()
+                        or "resource_exhausted" in err_str.lower()
                     ):
                         attempts -= 1
                         if not attempts:
@@ -252,20 +259,37 @@ class ResponseGenerator:
                 return final_text or None
 
             tool_rounds += 1
-            # Every function_call in the appended model turn must receive a
-            # matching function_response, otherwise the next generate_content
-            # call fails with a 400 (mismatched calls/responses). So we answer
-            # all of them and use the limit only to decide whether to loop again.
             limit_reached = False
+            response_parts: list[types.Part] = []
             for tool_call in function_calls:
-                feedback = await tool_callback(tool_call)
-                # Function responses are documented to use the "user" role
-                # ('user' or 'model' are the only supported producers).
-                history.append(types.Content(role="user", parts=[feedback]))
-                if tool_call.name != "think":
+                if total_tool_calls >= _MAX_TOOL_CALLS_PER_TURN:
+                    feedback = types.Part.from_function_response(
+                        name=tool_call.name or "unknown_tool",
+                        response={
+                            "error": "Per-turn tool execution limit reached; call was not executed."
+                        },
+                    )
+                    limit_reached = True
+                else:
+                    feedback = await tool_callback(tool_call)
                     total_tool_calls += 1
-                    if total_tool_calls >= _MAX_TOOL_CALLS_PER_TURN:
-                        limit_reached = True
+
+                # Gemini 3 assigns every function call an ID. The helper in some
+                # google-genai versions does not expose an id argument, but the
+                # underlying FunctionResponse model does, so preserve it here.
+                call_id = getattr(tool_call, "id", None)
+                function_response = getattr(feedback, "function_response", None)
+                if call_id and function_response is not None:
+                    setattr(function_response, "id", call_id)
+                response_parts.append(feedback)
+
+            # Parallel calls belong to one matching user turn containing all
+            # FunctionResponse parts. Consecutive one-part user turns are rejected
+            # by current Gemini 3 strict response matching.
+            history.append(types.Content(role="user", parts=response_parts))
+            limit_reached = (
+                limit_reached or total_tool_calls >= _MAX_TOOL_CALLS_PER_TURN
+            )
 
             if limit_reached or tool_rounds >= _MAX_TOOL_ROUNDS:
                 final_text = "\n".join(accumulated_text_parts).strip()

@@ -55,7 +55,7 @@ python main.py
     Бот запустится в фоне и будет автоматически подниматься при перезагрузке сервера.
 
 ### Полезные команды
-- **Перезапуск**: `docker-compose restart` (например, после смены конфига)
+- **Пересоздание после изменения `.env`**: `docker compose up -d --force-recreate`
 - **Логи**: `docker-compose logs -f --tail=100`
 - **Остановка**: `docker-compose down`
 
@@ -64,13 +64,13 @@ python main.py
 Заполняются в `.env` (см. шаблон `.env.example`).
 
 - `DISCORD_BOT_TOKEN` — токен Discord‑бота
-- `CHATBOT_CHANNEL_ID` — ID текстового канала для общения с ассистентом (опционально; если пусто — слушает все)
+- `CHATBOT_CHANNEL_ID` — ID текстового канала; если пусто, на сервере бот отвечает только на упоминания
 - `GEMINI_API_KEY` — ключ Gemini Developer API
 - `GEMINI_SOCKS_PROXY` — опциональный SOCKS5-прокси для трафика Gemini API, например `socks5://127.0.0.1:40000`
 - `CHAT_MEMORY_DB` — путь к SQLite‑базе памяти (по умолчанию `chat_memory.sqlite3`; в Docker переопределяется на `/app/data/chat_memory.sqlite3`)
 - `GEMINI_RESPONSE_MODEL` — модель генерации ответов (по умолчанию `gemini-3.1-flash-lite`)
 - `GEMINI_SUMMARY_MODEL` — модель для фонового summary (по умолчанию `gemini-3.1-flash-lite`)
-- `GEMINI_EMBEDDING_MODEL` — модель эмбеддингов для семантической памяти (по умолчанию `gemini-embedding-2-preview`)
+- `GEMINI_EMBEDDING_MODEL` — модель эмбеддингов для семантической памяти (по умолчанию `gemini-embedding-2`)
 - `MUSIC_DIRECTORY` — путь для кэша/локальных файлов (по умолчанию `music_files`)
 - `YTDL_USE_COOKIES` — включает cookies для `yt-dlp` (по умолчанию `false`)
 - `YTDL_COOKIE_FILE` — путь к cookies-файлу в формате Netscape, если cookies включены (по умолчанию `data/cookies.txt`)

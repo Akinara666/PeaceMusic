@@ -36,7 +36,11 @@ class PeaceMusicBot(commands.Bot):
         await self.tree.sync()
 
 
-bot = PeaceMusicBot(command_prefix="!", intents=INTENTS)
+bot = PeaceMusicBot(
+    command_prefix="!",
+    intents=INTENTS,
+    allowed_mentions=discord.AllowedMentions.none(),
+)
 
 
 @bot.event
@@ -54,16 +58,15 @@ async def _shutdown(reason: str) -> None:
     # Disconnect from voice cleanly so the queue/state cleanup hooks fire.
     music_cog = bot.get_cog("Music")
     if music_cog is not None:
-        voice_client = getattr(music_cog, "voice_client", None)
-        if voice_client is not None:
-            try:
-                await voice_client.disconnect(force=True)
-            except Exception:  # noqa: BLE001 - best effort
-                logger.exception("Error disconnecting voice during shutdown")
+        try:
+            await music_cog.disconnect_all()
+        except Exception:  # noqa: BLE001 - best effort
+            logger.exception("Error disconnecting voice during shutdown")
     # Cancel pending summary tasks; cog_unload will not be awaited otherwise.
     chat_cog = bot.get_cog("GeminiChatCog")
     if chat_cog is not None:
         pending = list(getattr(chat_cog, "_summary_tasks", {}).values())
+        pending.extend(getattr(chat_cog, "_embedding_tasks", set()))
         for task in pending:
             task.cancel()
         if pending:

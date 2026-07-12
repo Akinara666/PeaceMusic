@@ -16,7 +16,9 @@ AttachmentProcessor = attachments_module.AttachmentProcessor
 
 
 class AttachmentProcessorTests(unittest.IsolatedAsyncioTestCase):
-    async def test_to_content_for_generic_attachment_keeps_marker_in_prompt(self) -> None:
+    async def test_to_content_for_generic_attachment_keeps_marker_in_prompt(
+        self,
+    ) -> None:
         client = SimpleNamespace(aio=SimpleNamespace(files=SimpleNamespace()))
         processor = AttachmentProcessor(client, Path("image.png"), Path("video.mp4"))
         message = SimpleNamespace(
@@ -143,7 +145,9 @@ class AttachmentProcessorTests(unittest.IsolatedAsyncioTestCase):
     async def test_to_content_falls_back_to_text_when_upload_fails(self) -> None:
         client = SimpleNamespace(aio=SimpleNamespace(files=SimpleNamespace()))
         processor = AttachmentProcessor(client, Path("image.png"), Path("video.mp4"))
-        processor._upload_attachment = AsyncMock(side_effect=RuntimeError("upload failed"))
+        processor._upload_attachment = AsyncMock(
+            side_effect=RuntimeError("upload failed")
+        )
         message = SimpleNamespace(
             attachments=[
                 SimpleNamespace(
@@ -179,7 +183,9 @@ class AttachmentProcessorTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(
             attachments_module.asyncio,
             "to_thread",
-            new=AsyncMock(side_effect=lambda func, *args, **kwargs: func(*args, **kwargs)),
+            new=AsyncMock(
+                side_effect=lambda func, *args, **kwargs: func(*args, **kwargs)
+            ),
         ):
             result = await processor._download_attachment(attachment, "image/png")
             payload = result.read_bytes()
@@ -203,7 +209,9 @@ class AttachmentProcessorTests(unittest.IsolatedAsyncioTestCase):
         client = SimpleNamespace(aio=SimpleNamespace(files=files_api))
         processor = AttachmentProcessor(client, Path("image.png"), Path("video.mp4"))
 
-        with patch.object(attachments_module.asyncio, "sleep", new=AsyncMock()) as sleep_mock:
+        with patch.object(
+            attachments_module.asyncio, "sleep", new=AsyncMock()
+        ) as sleep_mock:
             result = await processor._wait_for_file("file-1")
 
         self.assertEqual(result.state.name, "ACTIVE")

@@ -20,6 +20,11 @@ cogs/ai/__pycache__/history.cpython-310.pyc
 cogs/ai/__pycache__/response.cpython-310.pyc
 cogs/chat_context.json
 __pycache__/
+*.py[cod]
+.coverage
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 .venv_ci/
 .vscode/
 # Runtime data: chat DB, yt-dlp cache, downloaded media (mounted in Docker)

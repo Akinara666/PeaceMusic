@@ -91,7 +91,9 @@ class GeminiChatCogTests(unittest.IsolatedAsyncioTestCase):
                 side_effect=lambda **kwargs: captured_kwargs.update(kwargs)
                 or SimpleNamespace(),
             ):
-                with patch.object(cog_module, "MemoryStore", return_value=SimpleNamespace()):
+                with patch.object(
+                    cog_module, "MemoryStore", return_value=SimpleNamespace()
+                ):
                     with patch.object(
                         cog_module,
                         "AttachmentProcessor",
@@ -165,6 +167,9 @@ class GeminiChatCogTests(unittest.IsolatedAsyncioTestCase):
             user=SimpleNamespace(id=999),
             process_commands=AsyncMock(),
         )
+        cog._settings = SimpleNamespace(
+            misc=SimpleNamespace(require_mention_when_unscoped=False)
+        )
         cog._is_user_disabled = AsyncMock(return_value=True)
 
         message = SimpleNamespace(
@@ -206,7 +211,9 @@ class GeminiChatCogTests(unittest.IsolatedAsyncioTestCase):
             ),
         ]
         current_message = PreparedIncomingMessage(
-            content=types.Content(role="user", parts=[types.Part.from_text(text="alice: third")]),
+            content=types.Content(
+                role="user", parts=[types.Part.from_text(text="alice: third")]
+            ),
             memory_text="third",
             author_name="alice",
             created_at="2026-04-01 12:00:10",
@@ -220,9 +227,9 @@ class GeminiChatCogTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("sent_at=2026-04-01 12:00:00", temporal_context)
         self.assertIn("sent_at=2026-04-01 12:00:05", temporal_context)
-        self.assertIn("sent_at=2026-04-01 12:00:10", temporal_context)
+        self.assertNotIn("sent_at=2026-04-01 12:00:10", temporal_context)
         self.assertIn('text="first"', temporal_context)
-        self.assertIn('text="third"', temporal_context)
+        self.assertNotIn('text="third"', temporal_context)
 
     def test_sanitize_outgoing_reply_removes_leading_timestamp(self) -> None:
         cog = object.__new__(GeminiChatCog)
@@ -261,9 +268,12 @@ class GeminiChatCogTests(unittest.IsolatedAsyncioTestCase):
                 recent_messages_limit=12,
                 semantic_results_limit=6,
                 semantic_min_score=0.35,
-            )
+            ),
+            misc=SimpleNamespace(ai_turn_timeout_seconds=120),
         )
         cog._locks = {77: asyncio.Lock()}
+        cog._turn_semaphore = asyncio.Semaphore(1)
+        cog._embedding_tasks = set()
         cog._silent_channels = {}
         cog._memory_store = SimpleNamespace(
             get_recent_messages=AsyncMock(return_value=[]),
@@ -274,7 +284,9 @@ class GeminiChatCogTests(unittest.IsolatedAsyncioTestCase):
         )
         cog._prepare_incoming_message = AsyncMock(
             return_value=PreparedIncomingMessage(
-                content=types.Content(role="user", parts=[types.Part.from_text(text="hi")]),
+                content=types.Content(
+                    role="user", parts=[types.Part.from_text(text="hi")]
+                ),
                 memory_text="hi",
                 author_name="alice",
                 created_at="2026-03-19 10:00:00",
@@ -284,12 +296,15 @@ class GeminiChatCogTests(unittest.IsolatedAsyncioTestCase):
         cog._safe_embed_query = AsyncMock(return_value=None)
         cog._safe_embed_document = AsyncMock(side_effect=["user-emb", "model-emb"])
         cog._build_memory_instruction = lambda **kwargs: "system"
-        cog._build_recent_contents = lambda recent_messages, current_message: [current_message.content]
+        cog._build_recent_contents = (
+            lambda recent_messages, current_message, **kwargs: [current_message.content]
+        )
         cog._response_generator = SimpleNamespace(
             generate_reply=AsyncMock(return_value="hello")
         )
         cog._safe_channel_send = AsyncMock(
-            side_effect=lambda channel, text: events.append("send") or SimpleNamespace(id=56)
+            side_effect=lambda channel, text: events.append("send")
+            or SimpleNamespace(id=56)
         )
         cog._store_message = AsyncMock(side_effect=fake_store_message)
         cog._persist_tool_events = AsyncMock()
@@ -339,7 +354,9 @@ class GeminiChatCogTests(unittest.IsolatedAsyncioTestCase):
             set_loop_mode_func=AsyncMock(),
         )
         cog = object.__new__(GeminiChatCog)
-        cog.bot = SimpleNamespace(get_cog=lambda name: music_cog if name == "Music" else None)
+        cog.bot = SimpleNamespace(
+            get_cog=lambda name: music_cog if name == "Music" else None
+        )
 
         feedback = await cog.process_tool_call(
             types.FunctionCall(name="pause_music", args={}),
@@ -356,7 +373,9 @@ class GeminiChatCogTests(unittest.IsolatedAsyncioTestCase):
         )
         music_cog.pause_func.assert_awaited_once()
 
-    async def test_on_message_sends_audio_attachment_fallback_when_tool_sends_nothing(self) -> None:
+    async def test_on_message_sends_audio_attachment_fallback_when_tool_sends_nothing(
+        self,
+    ) -> None:
         class _TypingContext:
             async def __aenter__(self):
                 return None
@@ -391,11 +410,17 @@ class GeminiChatCogTests(unittest.IsolatedAsyncioTestCase):
         )
         cog._safe_channel_send = AsyncMock(return_value=SimpleNamespace(id=55))
         cog._silent_channels = {}
+        cog._silent_channels_loaded = True
+        cog._rate_limiter = _RateLimiter(window_seconds=60, max_requests=0)
+        cog._locks = {77: asyncio.Lock()}
+        cog._turn_semaphore = asyncio.Semaphore(1)
 
         with patch.object(cog_module, "CHATBOT_CHANNEL_ID", None):
             await cog.on_message(message)
 
-        fake_music_cog.play_attachment_func.assert_awaited_once_with(message, attachment)
+        fake_music_cog.play_attachment_func.assert_awaited_once_with(
+            message, attachment
+        )
         cog._safe_channel_send.assert_awaited_once_with(
             fake_channel,
             "Добавлено в очередь: voice.mp3",
@@ -420,6 +445,7 @@ class GeminiChatCogTests(unittest.IsolatedAsyncioTestCase):
             return SimpleNamespace(**kwargs)
 
         cog._store_message = fake_store_message
+        cog._maybe_schedule_summary = AsyncMock()
 
         events = [
             ToolExecutionEvent(
@@ -450,7 +476,9 @@ class GeminiChatCogTests(unittest.IsolatedAsyncioTestCase):
             "tool:play_music: [tool] play_music",
         )
         self.assertEqual(stored_messages[1]["author_name"], "tool:set_volume")
-        self.assertIn('error: {"error": "Nothing is playing"}', stored_messages[1]["content_text"])
+        self.assertIn(
+            'error: {"error": "Nothing is playing"}', stored_messages[1]["content_text"]
+        )
 
     async def test_persist_manual_music_command_marks_manual_source(self) -> None:
         cog = object.__new__(GeminiChatCog)
@@ -463,6 +491,7 @@ class GeminiChatCogTests(unittest.IsolatedAsyncioTestCase):
             return SimpleNamespace(**kwargs)
 
         cog._store_message = fake_store_message
+        cog._maybe_schedule_summary = AsyncMock()
 
         await cog.persist_manual_music_command(
             channel_id=77,
@@ -503,7 +532,11 @@ class GeminiChatCogTests(unittest.IsolatedAsyncioTestCase):
         current_message = PreparedIncomingMessage(
             content=types.Content(
                 role="user",
-                parts=[types.Part.from_text(text="[2026-03-15 21:11:00] bob: what is this?")],
+                parts=[
+                    types.Part.from_text(
+                        text="[2026-03-15 21:11:00] bob: what is this?"
+                    )
+                ],
             ),
             memory_text="what is this?",
             author_name="bob",
@@ -649,15 +682,15 @@ class GeminiChatCogTests(unittest.IsolatedAsyncioTestCase):
         action_unmute = SimpleNamespace(value="unmute")
         interaction.response.send_message.reset_mock()
         cog._persist_silent_channel.reset_mock()
-        
+
         await cog.manage_bot_speech(interaction, action_unmute)
         await asyncio.sleep(0)
-        
+
         self.assertNotIn(77, cog._silent_channels)
         cog._persist_silent_channel.assert_awaited_once_with(77, None)
         interaction.response.send_message.assert_awaited_once()
 
-    async def test_silent_mode_suppresses_reply_but_keeps_tools(self) -> None:
+    async def test_silent_mode_suppresses_the_entire_turn(self) -> None:
         class _TypingContext:
             async def __aenter__(self):
                 return None
@@ -708,9 +741,7 @@ class GeminiChatCogTests(unittest.IsolatedAsyncioTestCase):
             generate_reply=AsyncMock(return_value="Включаю!")
         )
         cog._safe_channel_send = AsyncMock()
-        cog._store_message = AsyncMock(
-            return_value=SimpleNamespace(id=55)
-        )
+        cog._store_message = AsyncMock(return_value=SimpleNamespace(id=55))
         cog._persist_tool_events = AsyncMock()
         cog._maybe_schedule_summary = AsyncMock()
 
@@ -726,8 +757,6 @@ class GeminiChatCogTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(cog_module, "CHATBOT_CHANNEL_ID", None):
             await cog.on_message(message)
 
-        # Gemini was called (tools would have executed)
-        cog._response_generator.generate_reply.assert_awaited_once()
-        # But no text reply was sent
+        cog._response_generator.generate_reply.assert_not_awaited()
         cog._safe_channel_send.assert_not_awaited()
-
+        cog.bot.process_commands.assert_awaited_once_with(message)

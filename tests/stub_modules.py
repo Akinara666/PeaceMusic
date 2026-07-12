@@ -55,7 +55,9 @@ class FakeVector:
 
 class FakeMatrix:
     def __init__(self, rows):
-        self.rows = [row if isinstance(row, FakeVector) else FakeVector(row) for row in rows]
+        self.rows = [
+            row if isinstance(row, FakeVector) else FakeVector(row) for row in rows
+        ]
 
     def __matmul__(self, vector: FakeVector) -> FakeVector:
         return FakeVector(
@@ -124,8 +126,13 @@ def _install_discord_stub() -> None:
     app_commands_module = py_types.ModuleType("discord.app_commands")
     discord_ext_module = py_types.ModuleType("discord.ext")
     commands_module = py_types.ModuleType("discord.ext.commands")
+    tasks_module = py_types.ModuleType("discord.ext.tasks")
 
     class Intents:
+        @classmethod
+        def default(cls):
+            return cls()
+
         @classmethod
         def all(cls):
             return cls()
@@ -140,6 +147,64 @@ def _install_discord_stub() -> None:
 
     class Bot:
         pass
+
+    class AudioSource:
+        def read(self):
+            return b""
+
+        def cleanup(self):
+            return None
+
+    class PCMVolumeTransformer(AudioSource):
+        def __init__(self, original, volume=1.0):
+            self.original = original
+            self.volume = volume
+
+        def read(self):
+            return self.original.read()
+
+        def cleanup(self):
+            return self.original.cleanup()
+
+    class FFmpegPCMAudio(AudioSource):
+        def __init__(self, source, **kwargs):
+            self.source = source
+            self.options = kwargs
+
+    class Color:
+        @classmethod
+        def purple(cls):
+            return cls()
+
+        @classmethod
+        def green(cls):
+            return cls()
+
+        @classmethod
+        def blue(cls):
+            return cls()
+
+    class _Loop:
+        def __init__(self, coro):
+            self.coro = coro
+
+        def __get__(self, instance, owner):
+            return self
+
+        def start(self):
+            return None
+
+        def cancel(self):
+            return None
+
+        def before_loop(self, func):
+            return func
+
+    def _loop_decorator(**kwargs):
+        def decorator(func):
+            return _Loop(func)
+
+        return decorator
 
     class Choice:
         def __init__(self, *, name, value):
@@ -170,6 +235,13 @@ def _install_discord_stub() -> None:
     app_commands_module.checks = _ChecksNamespace()
 
     discord_module.Intents = Intents
+    discord_module.AudioSource = AudioSource
+    discord_module.PCMVolumeTransformer = PCMVolumeTransformer
+    discord_module.FFmpegPCMAudio = FFmpegPCMAudio
+    discord_module.VoiceClient = type("VoiceClient", (), {})
+    discord_module.Color = Color
+    discord_module.Embed = type("Embed", (), {})
+    discord_module.VoiceState = type("VoiceState", (), {})
     discord_module.Message = type("Message", (), {})
     discord_module.Attachment = type("Attachment", (), {})
     discord_module.Member = type("Member", (), {})
@@ -178,12 +250,15 @@ def _install_discord_stub() -> None:
     discord_module.app_commands = app_commands_module
     commands_module.Cog = Cog
     commands_module.Bot = Bot
+    tasks_module.loop = _loop_decorator
     discord_ext_module.commands = commands_module
+    discord_ext_module.tasks = tasks_module
     discord_module.ext = discord_ext_module
     sys.modules["discord.app_commands"] = app_commands_module
     sys.modules["discord"] = discord_module
     sys.modules["discord.ext"] = discord_ext_module
     sys.modules["discord.ext.commands"] = commands_module
+    sys.modules["discord.ext.tasks"] = tasks_module
 
 
 def _install_google_stub() -> None:
@@ -209,14 +284,16 @@ def _install_google_stub() -> None:
             self.__dict__.update(kwargs)
 
     class FunctionCall:
-        def __init__(self, name="", args=None):
+        def __init__(self, name="", args=None, id=None):
             self.name = name
             self.args = args or {}
+            self.id = id
 
     class FunctionResponse:
-        def __init__(self, name="", response=None):
+        def __init__(self, name="", response=None, id=None):
             self.name = name
             self.response = response or {}
+            self.id = id
 
     class FileData:
         def __init__(self, uri="", mime_type=None):

@@ -226,7 +226,10 @@ class MemoryStoreTests(unittest.IsolatedAsyncioTestCase):
             embedding_model=None,
             content_parts=(
                 {"type": "file_data", "uri": "uri://image", "mime_type": "image/png"},
-                {"type": "text", "text": "[2026-03-15 21:00:00] alice [Image attachment: cat.png]"},
+                {
+                    "type": "text",
+                    "text": "[2026-03-15 21:00:00] alice [Image attachment: cat.png]",
+                },
             ),
         )
 
@@ -276,11 +279,12 @@ class MemoryStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(await self.store.is_user_disabled(100, 200))
         self.assertEqual(await self.store.get_disabled_user_ids(100), set())
 
-    async def test_existing_database_is_migrated_with_content_parts_column(self) -> None:
+    async def test_existing_database_is_migrated_with_content_parts_column(
+        self,
+    ) -> None:
         legacy_db = Path(self._tmpdir.name) / "legacy.sqlite3"
         with sqlite3.connect(legacy_db) as conn:
-            conn.executescript(
-                """
+            conn.executescript("""
                 CREATE TABLE messages (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     channel_id INTEGER NOT NULL,
@@ -300,8 +304,7 @@ class MemoryStoreTests(unittest.IsolatedAsyncioTestCase):
                     last_summarized_message_id INTEGER NOT NULL DEFAULT 0,
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
-                """
-            )
+                """)
 
         store = MemoryStore(legacy_db)
         await store.store_message(
@@ -314,7 +317,9 @@ class MemoryStoreTests(unittest.IsolatedAsyncioTestCase):
             created_at="2026-03-15 21:01:00",
             embedding=None,
             embedding_model=None,
-            content_parts=({"type": "text", "text": "[2026-03-15 21:01:00] alice: hello"},),
+            content_parts=(
+                {"type": "text", "text": "[2026-03-15 21:01:00] alice: hello"},
+            ),
         )
 
         recent = await store.get_recent_messages(12, 10)
