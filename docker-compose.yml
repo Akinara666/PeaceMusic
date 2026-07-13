@@ -22,11 +22,16 @@ services:
       CHAT_MEMORY_DB: /app/data/chat_memory.sqlite3
       MUSIC_DIRECTORY: /app/music_files
       BOT_PROMPT_FILE: /app/config/prompt.txt
+      # The host path is selected separately below; the app always sees this path.
+      YTDL_COOKIE_FILE: /app/config/cookies.txt
     volumes:
       - music_files:/app/music_files
       - app_data:/app/data
       # Override BOT_PROMPT_HOST_FILE in .env to use a custom host-side prompt.
       - ${BOT_PROMPT_HOST_FILE:-./utils/default_prompt.txt}:/app/config/prompt.txt:ro
+      # Keep authentication cookies on the host. The placeholder makes cookies
+      # optional; when enabled, YTDL_COOKIE_HOST_FILE must point to a real file.
+      - ${YTDL_COOKIE_HOST_FILE:-./utils/empty_cookies.txt}:/app/config/cookies.txt:ro
     healthcheck:
       test: ["CMD-SHELL", "kill -0 1"]
       interval: 30s
