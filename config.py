@@ -111,6 +111,24 @@ def _load_default_prompt() -> str:
     return _FALLBACK_PROMPT
 
 
+def _validate_cookie_file(path: Path) -> None:
+    """Fail at startup when enabled cookies are missing or malformed."""
+    try:
+        with path.open("r", encoding="utf-8") as cookie_file:
+            header = cookie_file.readline().strip()
+    except OSError as exc:
+        raise RuntimeError(
+            f"YTDL_COOKIE_FILE is not readable at {str(path)!r}: {exc}"
+        ) from exc
+
+    valid_headers = {"# HTTP Cookie File", "# Netscape HTTP Cookie File"}
+    if header not in valid_headers:
+        raise RuntimeError(
+            "YTDL_COOKIE_FILE must be a Mozilla/Netscape cookies file; "
+            f"invalid header in {str(path)!r}"
+        )
+
+
 @dataclass(frozen=True)
 class DiscordSettings:
     token: str
@@ -371,6 +389,7 @@ def load_settings() -> AppSettings:
         candidate = Path(cookies_file_raw)
         if not candidate.is_absolute():
             candidate = (REPO_ROOT / candidate).resolve()
+        _validate_cookie_file(candidate)
         cookies_file = candidate
     prompt_file: Optional[Path] = None
     prompt_text = _load_default_prompt()

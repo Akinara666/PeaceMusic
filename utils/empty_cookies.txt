@@ -1,0 +1,1 @@
+# Placeholder only. Set YTDL_COOKIE_HOST_FILE when cookies are enabled.

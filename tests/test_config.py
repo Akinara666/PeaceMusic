@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from tests.stub_modules import install_stubs, load_project_module
@@ -48,23 +50,41 @@ class ConfigTests(unittest.TestCase):
         )
 
     def test_load_settings_enables_cookiefile_only_when_requested(self) -> None:
-        mock_env = {
-            "DISCORD_BOT_TOKEN": "test_token",
-            "GEMINI_API_KEY": "test_key",
-            "YTDL_USE_COOKIES": "true",
-            "YTDL_COOKIE_FILE": "custom/cookies.txt",
-        }
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            cookie_path = Path(temporary_directory) / "cookies.txt"
+            cookie_path.write_text("# Netscape HTTP Cookie File\n", encoding="utf-8")
+            mock_env = {
+                "DISCORD_BOT_TOKEN": "test_token",
+                "GEMINI_API_KEY": "test_key",
+                "YTDL_USE_COOKIES": "true",
+                "YTDL_COOKIE_FILE": str(cookie_path),
+            }
 
-        with patch.dict(os.environ, mock_env, clear=True):
-            config_module = load_project_module(
-                "test_config_module_cookies", "config.py"
-            )
-            settings = config_module.load_settings()
+            with patch.dict(os.environ, mock_env, clear=True):
+                config_module = load_project_module(
+                    "test_config_module_cookies", "config.py"
+                )
+                settings = config_module.load_settings()
 
         self.assertIn("cookiefile", settings.audio.ytdl_options)
-        self.assertTrue(
-            settings.audio.ytdl_options["cookiefile"].endswith("custom/cookies.txt")
-        )
+        self.assertEqual(settings.audio.ytdl_options["cookiefile"], str(cookie_path))
+
+    def test_load_settings_rejects_invalid_cookie_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            cookie_path = Path(temporary_directory) / "cookies.txt"
+            cookie_path.write_text("not a cookie jar\n", encoding="utf-8")
+            mock_env = {
+                "DISCORD_BOT_TOKEN": "test_token",
+                "GEMINI_API_KEY": "test_key",
+                "YTDL_USE_COOKIES": "true",
+                "YTDL_COOKIE_FILE": str(cookie_path),
+            }
+
+            with patch.dict(os.environ, mock_env, clear=True):
+                with self.assertRaisesRegex(RuntimeError, "Mozilla/Netscape"):
+                    load_project_module(
+                        "test_config_module_invalid_cookies", "config.py"
+                    )
 
     def test_load_settings_reads_optional_gemini_socks_proxy(self) -> None:
         mock_env = {

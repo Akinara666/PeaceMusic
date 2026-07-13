@@ -139,14 +139,16 @@ BOT_PROMPT_HOST_FILE=./prompt.txt
 - `GEMINI_EMBEDDING_MODEL` — модель эмбеддингов для семантической памяти (по умолчанию `gemini-embedding-2`)
 - `MUSIC_DIRECTORY` — путь для кэша/локальных файлов (по умолчанию `music_files`)
 - `YTDL_USE_COOKIES` — включает cookies для `yt-dlp` (по умолчанию `false`)
-- `YTDL_COOKIE_FILE` — путь к cookies-файлу в формате Netscape, если cookies включены (по умолчанию `data/cookies.txt`)
+- `YTDL_COOKIE_FILE` — путь к cookies-файлу в формате Netscape для локального запуска; внутри Docker Compose задаёт путь автоматически
+- `YTDL_COOKIE_HOST_FILE` — путь к cookies-файлу на Docker-хосте, например `./data/cookies.txt`
 
 `GEMINI_SOCKS_PROXY` применяется ко всем вызовам Gemini SDK: генерации ответов, эмбеддингам, проверкам файлов и фоновому summary.
 
 ## Cookies для yt-dlp
 - По умолчанию cookies выключены.
-- Если они нужны, выставь `YTDL_USE_COOKIES=true` и положи Netscape `cookies.txt` в `data/cookies.txt`, либо укажи свой путь через `YTDL_COOKIE_FILE`.
-- Docker больше не монтирует `cogs/cookies.txt`, поэтому удаление этого файла не ломает запуск контейнера.
+- Для Docker выставь `YTDL_USE_COOKIES=true` и `YTDL_COOKIE_HOST_FILE=./data/cookies.txt`. Compose монтирует файл с хоста read-only как `/app/config/cookies.txt`; в named volume он не копируется.
+- После изменения пути или содержимого файла выполни `docker compose up -d --force-recreate`: редактор может заменить inode файла, а обычный `restart` не пересоздаёт bind mount.
+- Файл должен начинаться с `# Netscape HTTP Cookie File` и быть доступен пользователю контейнера для чтения (например, `chmod 644 data/cookies.txt`).
 
 ## Команды/возможности (в чате)
 Ассистент сам вызывает музыкальные функции через Tool Calling — просто пиши: «включи <трек>», «перемотай на 1:23», «сделай громкость 50%», «пропусти трек», «останови музыку», «зайди ко мне в голосовой» и т.п.
