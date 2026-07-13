@@ -4,7 +4,7 @@ import asyncio
 import os
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from tests.stub_modules import import_project_package, install_stubs
 
@@ -86,3 +86,89 @@ class MusicHelperTests(unittest.TestCase):
         self.assertTrue(refreshed)
         self.assertTrue(track.source_prepared)
         self.assertEqual(track.source.original.source, track.stream_url)
+
+    def test_active_stream_refresh_leaves_old_source_for_player_cleanup(self) -> None:
+        player = music_module.Music(SimpleNamespace())
+        old_source = Mock()
+        new_source = Mock()
+        track = music_module.QueuedTrack(
+            source=old_source,
+            title="Track",
+            requester=SimpleNamespace(),
+            stream_url="https://example.test/audio.webm",
+            should_stream=True,
+        )
+
+        with patch.object(
+            player,
+            "_create_stream_track_source",
+            return_value=new_source,
+        ):
+            refreshed = asyncio.run(
+                player._refresh_track_source(track, cleanup_existing=False)
+            )
+
+        self.assertTrue(refreshed)
+        self.assertIs(track.source, new_source)
+        old_source.cleanup.assert_not_called()
+
+    def test_transient_voice_disconnect_preserves_playback_source(self) -> None:
+        player = music_module.Music(SimpleNamespace())
+        source = Mock()
+        track = music_module.QueuedTrack(
+            source=source,
+            title="Track",
+            requester=SimpleNamespace(),
+        )
+        voice_client = SimpleNamespace(
+            is_connected=Mock(return_value=False),
+            is_playing=Mock(return_value=True),
+            is_paused=Mock(return_value=False),
+            stop=Mock(),
+        )
+        guild = SimpleNamespace(voice_client=voice_client)
+        player.voice_client = voice_client
+        player.current = track
+
+        with patch.object(music_module.asyncio, "sleep", new=AsyncMock()):
+            asyncio.run(player._handle_voice_disconnect_event(guild))
+
+        self.assertIs(player.voice_client, voice_client)
+        self.assertIs(player.current, track)
+        source.cleanup.assert_not_called()
+        voice_client.stop.assert_not_called()
+
+    def test_permanent_voice_disconnect_stops_without_racing_source(self) -> None:
+        player = music_module.Music(SimpleNamespace())
+        source = Mock()
+        queued_source = Mock()
+        player.current = music_module.QueuedTrack(
+            source=source,
+            title="Current",
+            requester=SimpleNamespace(),
+        )
+        player.queue.append(
+            music_module.QueuedTrack(
+                source=queued_source,
+                title="Queued",
+                requester=SimpleNamespace(),
+            )
+        )
+        voice_client = SimpleNamespace(
+            is_connected=Mock(return_value=False),
+            is_playing=Mock(return_value=True),
+            is_paused=Mock(return_value=False),
+            stop=Mock(),
+        )
+        player.voice_client = voice_client
+        guild = SimpleNamespace(voice_client=None)
+
+        with patch.object(music_module.asyncio, "sleep", new=AsyncMock()):
+            asyncio.run(player._handle_voice_disconnect_event(guild))
+
+        self.assertIsNone(player.voice_client)
+        self.assertIsNone(player.current)
+        self.assertFalse(player.queue)
+        voice_client.stop.assert_called_once_with()
+        source.cleanup.assert_not_called()
+        queued_source.cleanup.assert_called_once_with()
