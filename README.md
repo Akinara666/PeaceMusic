@@ -146,12 +146,16 @@ Recommended for any long‑running server. Both the SQLite memory and the music 
 docker compose up -d --build
 ```
 
+The command above builds from the checked-out source. To deploy the published
+image instead, run `docker compose pull` before `docker compose up -d`.
+
 | Action | Command |
 |---|---|
 | View logs | `docker compose logs -f --tail=100` |
 | Recreate (required after editing `.env`) | `docker compose up -d --force-recreate` |
 | Stop | `docker compose down` |
-| Rebuild after `git pull` | `docker compose up -d --build` |
+| Update from the published image | `git pull && docker compose pull && docker compose up -d --force-recreate` |
+| Rebuild the checked-out source | `git pull && docker compose up -d --build` |
 
 The container uses Docker's isolated bridge network and named volumes by default.
 
@@ -192,10 +196,27 @@ Compose mounts a host prompt read-only. The default is
 BOT_PROMPT_HOST_FILE=./prompt.txt
 ```
 
-The file must exist before the container is created. Recreate the container
-after changing the path; editing the contents of the already-mounted file only
-requires a bot restart. Ensure the container user can read the host file (for
-example, `chmod 644 prompt.txt`).
+The file must exist before the container is created. After changing either its
+path or contents, run `docker compose up -d --force-recreate`. This also works
+when an editor replaces the file's inode, which a plain container restart does
+not remount. Ensure the container user can read the host file (for example,
+`chmod 644 prompt.txt`).
+
+### yt-dlp cookies in Docker
+
+Cookies are disabled by default. Keep the real file on the host and configure:
+
+```env
+YTDL_USE_COOKIES=true
+YTDL_COOKIE_HOST_FILE=./data/cookies.txt
+```
+
+Compose mounts it read-only at `/app/config/cookies.txt`; it is not copied into
+a named volume or the image. The export must use Netscape format and start with
+`# Netscape HTTP Cookie File` (the shorter `# HTTP Cookie File` header is also
+accepted). Make it readable by the container user, for example with
+`chmod 644 data/cookies.txt`. After changing the path or contents, recreate the
+container with `docker compose up -d --force-recreate`.
 
 ---
 
@@ -226,22 +247,47 @@ All settings live in `.env` (see [`.env.example`](.env.example)).
 | `GEMINI_EMBEDDING_MODEL` | `gemini-embedding-2` | Model used to vectorise messages for semantic recall. |
 | `GEMINI_EMBEDDING_DIMENSIONS` | `768` | Output dimensionality for embeddings. |
 | `GEMINI_THINKING_BUDGET` | `8192` | Max tokens for Gemini's hidden reasoning per turn. |
+| `GEMINI_TEMPERATURE` | `1.0` | Response sampling temperature. |
+| `GEMINI_TOP_P` | `0.95` | Nucleus-sampling threshold. |
+| `GEMINI_REQUEST_TIMEOUT_MS` | `24000` | Timeout for a Gemini SDK request, in milliseconds. |
 | `GEMINI_SOCKS_PROXY` | *(off)* | In Docker bridge mode use `socks5://host.docker.internal:40000`. Applied to **all** Gemini SDK calls. |
+
+`DISCORD_BOT_TOKEN_FILE` and `GEMINI_API_KEY_FILE` may be used instead of
+putting those secrets directly in the environment.
+
+### Paths and prompt
+
+| Variable | Default | Description |
+|---|---|---|
+| `BOT_PROMPT_FILE` | `utils/default_prompt.txt` | Prompt path for local Python runs. Compose sets the internal path automatically. |
+| `BOT_PROMPT_HOST_FILE` | `./utils/default_prompt.txt` | Host prompt mounted read-only by Compose. |
 
 ### Memory
 
 | Variable | Default | Description |
 |---|---|---|
 | `CHAT_MEMORY_DB` | `chat_memory.sqlite3` *(`/app/data/…` in Docker)* | SQLite database path. |
+| `MEMORY_RECENT_MESSAGES` | `12` | Full recent messages replayed to the model. |
+| `MEMORY_SEMANTIC_RESULTS` | `6` | Semantically relevant messages added to context. |
+| `MEMORY_SEMANTIC_MIN_SCORE` | `0.35` | Minimum semantic similarity score. |
+| `MEMORY_SUMMARY_TRIGGER` | `30` | Unsummarised messages that trigger a summary. |
+| `MEMORY_SUMMARY_WINDOW` | `40` | Messages processed in one summary pass. |
+| `MEMORY_SEMANTIC_HALF_LIFE_DAYS` | `30` | Age-decay half-life for semantic results; `0` disables decay. |
+| `MEMORY_SEMANTIC_CANDIDATES` | `1000` | Maximum rows considered during semantic search. |
+| `MEMORY_RAW_RETENTION_DAYS` | `90` | Summarised raw-message retention; `0` disables age pruning. |
 
 ### Music & yt‑dlp
 
 | Variable | Default | Description |
 |---|---|---|
 | `MUSIC_DIRECTORY` | `music_files` | Where downloaded/cached tracks are written. |
+| `YTDL_CACHE_DIR` | `data/ytdl_cache` | Persistent yt-dlp player/signature cache. |
 | `YTDL_USE_COOKIES` | `false` | Enable cookies for `yt‑dlp`. |
 | `YTDL_COOKIE_FILE` | `data/cookies.txt` | Netscape‑format cookies file for local Python runs. Compose sets the internal path automatically. |
 | `YTDL_COOKIE_HOST_FILE` | *(off)* | Docker host file mounted at `/app/config/cookies.txt`; for example `./data/cookies.txt`. |
+| `MUSIC_QUEUE_MAX_SIZE` | `50` | Maximum tracks in a guild queue. |
+| `MUSIC_ATTACHMENT_MAX_BYTES` | `25000000` | Maximum downloaded music-attachment size. |
+| `MEDIA_ALLOWED_DOMAINS` | YouTube and SoundCloud domains | Hosts accepted for remotely downloaded media. |
 
 ### Rate limiting
 
@@ -249,6 +295,11 @@ All settings live in `.env` (see [`.env.example`](.env.example)).
 |---|---|---|
 | `AI_RATE_LIMIT_MAX_REQUESTS` | `20` | Max AI calls per user per window. `0` disables limiting. |
 | `AI_RATE_LIMIT_WINDOW_SECONDS` | `60` | Sliding‑window size in seconds. |
+| `AI_ATTACHMENT_MAX_BYTES` | `25000000` | Maximum size of one AI attachment. |
+| `AI_ATTACHMENT_MAX_COUNT` | `4` | Maximum attachments processed per message. |
+| `AI_MAX_CONCURRENT_TURNS` | `4` | Maximum AI turns processed concurrently. |
+| `AI_TURN_TIMEOUT_SECONDS` | `120` | Overall timeout for one AI turn. |
+| `AI_REQUIRE_MENTION_WHEN_UNSCOPED` | `true` | Require a mention in guilds when `CHATBOT_CHANNEL_ID` is empty. |
 
 Throttled users get a `⏳` reaction instead of a reply.
 
@@ -301,7 +352,7 @@ PeaceMusic keeps Gemini coherent across long conversations with a four‑layer m
 | **L1.5 — Temporal context** | Last *N* messages serialised as structured metadata | Helps the model understand who said what when, without polluting role alternation. |
 | **L2 — Recent turns** | Last *N* full message contents, replayed as proper `user`/`model` content | The immediate chat history. |
 
-Tool calls and their results are persisted too, so the model can "remember" that it already searched for a track or that a previous skip failed. Raw rows older than `raw_retention_days` are pruned once they've been folded into the global summary, keeping the DB small.
+Tool calls and their results are persisted too, so the model can "remember" that it already searched for a track or that a previous skip failed. Raw rows older than `MEMORY_RAW_RETENTION_DAYS` are pruned once they've been folded into the global summary, keeping the DB small.
 
 ---
 
@@ -365,7 +416,7 @@ pip install -r requirements.txt
 | `403`/`age-restricted` from YouTube | Set `YTDL_USE_COOKIES=true`; in Docker also set `YTDL_COOKIE_HOST_FILE=./data/cookies.txt`, then recreate the container. |
 | `GEMINI_SOCKS_PROXY requires httpx[socks]` | Re‑install dependencies: `pip install -r requirements.txt`. |
 | Bot connects but does not respond to messages | Check `CHATBOT_CHANNEL_ID`, the bot's channel permissions, and that **Message Content Intent** is enabled in the developer portal. |
-| Memory DB growing too large | Lower `raw_retention_days` in `config.py` or back up & delete `chat_memory.sqlite3` (the bot will recreate it). |
+| Memory DB growing too large | Lower `MEMORY_RAW_RETENTION_DAYS` in `.env`, then recreate/restart the bot. Back up the database before deleting it manually. |
 | Voice connection drops after a few seconds | Verify `PyNaCl` installed and the bot has the `Connect` + `Speak` permissions in the voice channel. |
 
 ---
