@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 MUSIC_DIRECTORY_PATH = Path(MUSIC_DIRECTORY)
 MUSIC_DIRECTORY_PATH.mkdir(parents=True, exist_ok=True)
 STREAM_SOURCE_MAX_AGE_SECONDS = 180
+VOICE_STATE_SETTLE_SECONDS = 1.0
 
 
 # ----------------------------------------------------------------------------
@@ -497,7 +498,16 @@ class Music(commands.Cog):
         self.monitor_stalled_playback.cancel()
         for player in self._guild_players.values():
             player._cleanup_queue()
-            player._cleanup_track_file(player.current)
+            source_owned_by_player = bool(
+                player.voice_client
+                and (
+                    player.voice_client.is_playing() or player.voice_client.is_paused()
+                )
+            )
+            player._cleanup_track_file(
+                player.current,
+                cleanup_source=not source_owned_by_player,
+            )
 
     def _player_for_message(self, message: discord.Message) -> "Music":
         """Return isolated playback state for the message's guild."""
@@ -533,19 +543,34 @@ class Music(commands.Cog):
 
     async def disconnect_all(self) -> None:
         for player in list(self._guild_players.values()):
+            source_owned_by_player = bool(
+                player.voice_client
+                and (
+                    player.voice_client.is_playing() or player.voice_client.is_paused()
+                )
+            )
             if player.voice_client is not None:
                 with contextlib.suppress(Exception):
                     await player.voice_client.disconnect(force=True)
             player.voice_client = None
             player._cleanup_queue()
-            player._cleanup_track_file(player.current)
+            player._cleanup_track_file(
+                player.current,
+                cleanup_source=not source_owned_by_player,
+            )
             player.current = None
 
-    def _cleanup_track_file(self, track: Optional[QueuedTrack]) -> None:
+    def _cleanup_track_file(
+        self,
+        track: Optional[QueuedTrack],
+        *,
+        cleanup_source: bool = True,
+    ) -> None:
         if not track:
             return
-        with contextlib.suppress(Exception):
-            track.source.cleanup()
+        if cleanup_source:
+            with contextlib.suppress(Exception):
+                track.source.cleanup()
         if not track.local_path:
             return
         try:
@@ -885,17 +910,21 @@ class Music(commands.Cog):
         *,
         seek: Optional[int] = None,
         force_extract: bool = False,
+        cleanup_existing: bool = True,
     ) -> bool:
         seek_seconds = max(0, seek or 0)
 
         if track.local_path and track.local_path.exists():
-            with contextlib.suppress(Exception):
-                track.source.cleanup()
-            track.source = self._create_local_track_source(
+            old_source = track.source
+            new_source = self._create_local_track_source(
                 track.local_path,
                 seek=seek_seconds or None,
                 on_chunk=self._touch_audio_heartbeat,
             )
+            track.source = new_source
+            if cleanup_existing:
+                with contextlib.suppress(Exception):
+                    old_source.cleanup()
             if not track.should_stream:
                 track.stream_url = None
                 track.user_agent = None
@@ -910,12 +939,15 @@ class Music(commands.Cog):
             <= STREAM_SOURCE_MAX_AGE_SECONDS
         )
         if stream_url_is_fresh and not force_extract:
-            with contextlib.suppress(Exception):
-                track.source.cleanup()
-            track.source = self._create_stream_track_source(
+            old_source = track.source
+            new_source = self._create_stream_track_source(
                 track,
                 seek=seek_seconds or None,
             )
+            track.source = new_source
+            if cleanup_existing:
+                with contextlib.suppress(Exception):
+                    old_source.cleanup()
             track.source_prepared = True
             return True
 
@@ -936,10 +968,12 @@ class Music(commands.Cog):
             return False
 
         new_source = sources[0]
+        old_source = track.source
         old_local_path = track.local_path
-        with contextlib.suppress(Exception):
-            track.source.cleanup()
         track.source = new_source
+        if cleanup_existing:
+            with contextlib.suppress(Exception):
+                old_source.cleanup()
         track.title = new_source.title or track.title
         track.stream_url = new_source.url if new_source.is_stream else None
         track.webpage_url = new_source.webpage_url or track.webpage_url
@@ -1073,7 +1107,9 @@ class Music(commands.Cog):
         self._reset_playback_timers()
         self._suppress_after_callback_once()
         self.voice_client.stop()
-        self._cleanup_track_file(skipped_track)
+        # AudioPlayer owns the active source and cleans it in its thread's
+        # finalizer. Cleaning it here can race with one last read().
+        self._cleanup_track_file(skipped_track, cleanup_source=False)
         await self._start_next_track()
         return skipped_title
 
@@ -1207,6 +1243,7 @@ class Music(commands.Cog):
                     current_track,
                     seek=seek_seconds,
                     force_extract=True,
+                    cleanup_existing=False,
                 )
             except DownloadError as exc:
                 logger.warning("Failed to restart stream %s: %s", target_url, exc)
@@ -1615,12 +1652,17 @@ class Music(commands.Cog):
         current_track = self.current
         self.current = None
         self._reset_playback_timers()
-        if self.voice_client and (
-            self.voice_client.is_playing() or self.voice_client.is_paused()
-        ):
+        source_owned_by_player = bool(
+            self.voice_client
+            and (self.voice_client.is_playing() or self.voice_client.is_paused())
+        )
+        if source_owned_by_player:
             self._suppress_after_callback_once()
             self.voice_client.stop()
-        self._cleanup_track_file(current_track)
+        self._cleanup_track_file(
+            current_track,
+            cleanup_source=not source_owned_by_player,
+        )
         notified = await self._safe_reply(
             message, content="Очередь очищена и воспроизведение остановлено."
         )
@@ -1658,13 +1700,20 @@ class Music(commands.Cog):
         self.current = None
         self._reset_playback_timers()
         self._cleanup_queue()
+        source_owned_by_player = bool(
+            self.voice_client
+            and (self.voice_client.is_playing() or self.voice_client.is_paused())
+        )
         if self.voice_client:
-            if self.voice_client.is_playing() or self.voice_client.is_paused():
+            if source_owned_by_player:
                 self._suppress_after_callback_once()
                 self.voice_client.stop()
             await self.voice_client.disconnect(force=True)
             self.voice_client = None
-        self._cleanup_track_file(current_track)
+        self._cleanup_track_file(
+            current_track,
+            cleanup_source=not source_owned_by_player,
+        )
         notified = await self._safe_reply(
             message, content="Отключилась от канала и очистила очередь."
         )
@@ -1707,7 +1756,11 @@ class Music(commands.Cog):
 
         was_paused = self.voice_client.is_paused()
         try:
-            refreshed = await self._refresh_track_source(self.current, seek=seconds)
+            refreshed = await self._refresh_track_source(
+                self.current,
+                seek=seconds,
+                cleanup_existing=False,
+            )
         except DownloadError as exc:
             logger.warning("Failed to seek %s: %s", self.current.title, exc)
             notified = await self._safe_reply(
@@ -2249,11 +2302,61 @@ class Music(commands.Cog):
                     await self.voice_client.disconnect(force=True)
                     self.voice_client = None
         if not self.voice_client or not self.voice_client.is_connected():
+            if self.voice_client and (
+                self.voice_client.is_playing() or self.voice_client.is_paused()
+            ):
+                # discord.py keeps AudioPlayer alive during a transient voice
+                # reconnect. Its source must remain valid until it resumes or
+                # the player thread exits by itself.
+                return
             self._cleanup_queue()
             self._cleanup_track_file(self.current)
             self.current = None
             self._replay_track = None
             self._reset_playback_timers()
+
+    async def _handle_voice_disconnect_event(self, guild: discord.Guild) -> None:
+        """Preserve playback while discord.py performs an automatic reconnect.
+
+        A reconnect briefly emits a voice-state update with ``channel=None``.
+        discord.py deliberately keeps the VoiceClient and AudioPlayer alive in
+        that case, so cleaning the source here would race with AudioPlayer.read.
+        """
+        voice_client = self.voice_client
+        source_owned_by_player = False
+        if voice_client is not None:
+            # The protocol handler and Cog listener are dispatched as separate
+            # tasks for the same gateway event. Give the protocol handler time
+            # to either retain the cached client for reconnect or remove it for
+            # a permanent disconnect.
+            await asyncio.sleep(VOICE_STATE_SETTLE_SECONDS)
+            if self.voice_client is not voice_client:
+                return
+            if voice_client.is_connected() or guild.voice_client is voice_client:
+                logger.info(
+                    "Voice connection interrupted; preserving playback for reconnect"
+                )
+                return
+
+            source_owned_by_player = (
+                voice_client.is_playing() or voice_client.is_paused()
+            )
+            if source_owned_by_player:
+                self._suppress_after_callback_once()
+                voice_client.stop()
+
+        current_track = self.current
+        self.voice_client = None
+        self._cleanup_queue()
+        # If there was an AudioPlayer, its thread owns source cleanup. Avoid
+        # invalidating FFmpeg stdout while that thread may still be reading.
+        self._cleanup_track_file(
+            current_track,
+            cleanup_source=not source_owned_by_player,
+        )
+        self.current = None
+        self._replay_track = None
+        self._reset_playback_timers()
 
     @check_for_inactivity.before_loop
     async def before_check_for_inactivity(self) -> None:
@@ -2272,9 +2375,4 @@ class Music(commands.Cog):
         if player is None:
             return
         if before.channel and after.channel is None:
-            player.voice_client = None
-            player._cleanup_queue()
-            player._cleanup_track_file(player.current)
-            player.current = None
-            player._replay_track = None
-            player._reset_playback_timers()
+            await player._handle_voice_disconnect_event(member.guild)
