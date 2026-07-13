@@ -1,11 +1,17 @@
+FROM denoland/deno:bin-2.9.2 AS deno
+
 FROM python:3.12-slim
 
 # Install system dependencies
 # ffmpeg: required for audio playback
-# nodejs: JavaScript runtime used by yt-dlp for signature extraction
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ffmpeg nodejs && \
+    apt-get install -y --no-install-recommends ffmpeg && \
     rm -rf /var/lib/apt/lists/*
+
+# yt-dlp requires a supported JavaScript runtime for YouTube challenges.
+# Deno is its recommended runtime and is enabled by default.
+COPY --from=deno /deno /usr/local/bin/deno
+RUN deno --version
 
 WORKDIR /app
 

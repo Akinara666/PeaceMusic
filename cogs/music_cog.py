@@ -791,6 +791,34 @@ class Music(commands.Cog):
             transformer.read = _read_with_heartbeat  # type: ignore[assignment]
         return transformer
 
+    def _create_stream_track_source(
+        self,
+        track: QueuedTrack,
+        *,
+        seek: Optional[int] = None,
+    ) -> discord.PCMVolumeTransformer:
+        if not track.stream_url:
+            raise ValueError("Stream URL is required to create an audio source")
+        ffmpeg_args = build_ffmpeg_options(
+            stream=True,
+            seek=seek,
+            user_agent=track.user_agent,
+            youtube_hls=track.is_youtube_hls,
+        )
+        audio_source = discord.FFmpegPCMAudio(track.stream_url, **ffmpeg_args)
+        transformer = discord.PCMVolumeTransformer(audio_source, volume=self._volume)
+        original_read = transformer.read
+
+        def _read_with_heartbeat() -> bytes:
+            data = original_read()
+            if data:
+                with contextlib.suppress(Exception):
+                    self._touch_audio_heartbeat()
+            return data
+
+        transformer.read = _read_with_heartbeat  # type: ignore[assignment]
+        return transformer
+
     def _build_queued_track(
         self,
         src: YTDLSource,
@@ -856,6 +884,7 @@ class Music(commands.Cog):
         track: QueuedTrack,
         *,
         seek: Optional[int] = None,
+        force_extract: bool = False,
     ) -> bool:
         seek_seconds = max(0, seek or 0)
 
@@ -871,6 +900,22 @@ class Music(commands.Cog):
                 track.stream_url = None
                 track.user_agent = None
             track.prepared_at_monotonic = time_module.monotonic()
+            track.source_prepared = True
+            return True
+
+        stream_url_is_fresh = (
+            track.should_stream
+            and track.stream_url is not None
+            and (time_module.monotonic() - track.prepared_at_monotonic)
+            <= STREAM_SOURCE_MAX_AGE_SECONDS
+        )
+        if stream_url_is_fresh and not force_extract:
+            with contextlib.suppress(Exception):
+                track.source.cleanup()
+            track.source = self._create_stream_track_source(
+                track,
+                seek=seek_seconds or None,
+            )
             track.source_prepared = True
             return True
 
@@ -931,7 +976,11 @@ class Music(commands.Cog):
             needs_refresh = True
 
         if needs_refresh:
-            refreshed = await self._refresh_track_source(track, seek=start_at or None)
+            refreshed = await self._refresh_track_source(
+                track,
+                seek=start_at or None,
+                force_extract=force_refresh,
+            )
             if not refreshed:
                 return False
 
@@ -944,7 +993,9 @@ class Music(commands.Cog):
                     "Retrying playback with a refreshed stream for %s", track.title
                 )
                 refreshed = await self._refresh_track_source(
-                    track, seek=start_at or None
+                    track,
+                    seek=start_at or None,
+                    force_extract=True,
                 )
                 if not refreshed:
                     return False
@@ -1153,7 +1204,9 @@ class Music(commands.Cog):
             )
             try:
                 refreshed = await self._refresh_track_source(
-                    current_track, seek=seek_seconds
+                    current_track,
+                    seek=seek_seconds,
+                    force_extract=True,
                 )
             except DownloadError as exc:
                 logger.warning("Failed to restart stream %s: %s", target_url, exc)

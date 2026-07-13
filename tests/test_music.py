@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import unittest
 from types import SimpleNamespace
@@ -68,3 +69,20 @@ class MusicHelperTests(unittest.TestCase):
     def test_deferred_source_does_not_spawn_ffmpeg(self) -> None:
         source = music_module._DeferredAudioSource()
         self.assertEqual(source.read(), b"")
+
+    def test_fresh_deferred_stream_reuses_extracted_url(self) -> None:
+        player = music_module.Music(SimpleNamespace())
+        track = music_module.QueuedTrack(
+            source=music_module._DeferredAudioSource(),
+            title="Track",
+            requester=SimpleNamespace(),
+            stream_url="https://example.test/audio.webm",
+            should_stream=True,
+            source_prepared=False,
+        )
+
+        refreshed = asyncio.run(player._refresh_track_source(track))
+
+        self.assertTrue(refreshed)
+        self.assertTrue(track.source_prepared)
+        self.assertEqual(track.source.original.source, track.stream_url)

@@ -232,6 +232,10 @@ def _build_ytdl_options(
         "logtostderr": False,
         "default_search": "auto",
         "force_ipv4": False,
+        # YouTube increasingly requires an external JS challenge solver.
+        # Prefer yt-dlp's recommended runtime and retain Node.js as a local
+        # installation fallback (Node 22+ is required by current yt-dlp-ejs).
+        "js_runtimes": {"deno": {}, "node": {}},
         "cachedir": str(cache_dir),
         "outtmpl": str(music_dir / "%(extractor)s-%(id)s.%(ext)s"),
         # Limits to prevent long hangs:

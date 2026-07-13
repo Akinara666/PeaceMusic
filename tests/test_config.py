@@ -42,6 +42,10 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(settings.memory.summary_trigger_messages, 30)
         self.assertEqual(settings.misc.status_message, "Test Bot")
         self.assertNotIn("cookiefile", settings.audio.ytdl_options)
+        self.assertEqual(
+            settings.audio.ytdl_options["js_runtimes"],
+            {"deno": {}, "node": {}},
+        )
 
     def test_load_settings_enables_cookiefile_only_when_requested(self) -> None:
         mock_env = {
