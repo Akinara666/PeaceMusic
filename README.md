@@ -106,7 +106,7 @@ The chat cog owns a single Gemini client (shared by responses, embeddings, summa
 |---|---|
 | **Python 3.10+** | 3.12 recommended (matches the Docker base image) |
 | **FFmpeg** | Must be on `PATH` — required by `discord.FFmpegPCMAudio` |
-| **Deno** *or* **Node.js** | Needed by `yt‑dlp` for YouTube signature extraction |
+| **Deno 2.3+** *or* **Node.js 22+** | Needed by `yt‑dlp` for YouTube signature extraction; Docker already includes Deno |
 | **Discord Bot Token** | Create one at https://discord.com/developers/applications |
 | **Gemini API Key** | Get one at https://aistudio.google.com/app/apikey |
 
@@ -359,7 +359,8 @@ pip install -r requirements.txt
 | Symptom | Likely cause / fix |
 |---|---|
 | `ffmpeg was not found` | Install FFmpeg and make sure it's on `PATH`. On Debian/Ubuntu: `sudo apt install ffmpeg`. |
-| YouTube playback fails with signature errors | Install **Deno** (recommended) or **Node.js**, then restart the bot. |
+| `No supported JavaScript runtime` from `yt-dlp` | Rebuild the current Docker image with `docker compose up -d --build`; for local installs, add **Deno 2.3+** (recommended) or **Node.js 22+**. |
+| YouTube playback fails with signature errors | Update `yt-dlp` and `yt-dlp-ejs` together, ensure a supported JS runtime is installed, then restart the bot. |
 | `403`/`age-restricted` from YouTube | Set `YTDL_USE_COOKIES=true` and point `YTDL_COOKIE_FILE` at a Netscape‑format cookies export from a logged‑in browser session. |
 | `GEMINI_SOCKS_PROXY requires httpx[socks]` | Re‑install dependencies: `pip install -r requirements.txt`. |
 | Bot connects but does not respond to messages | Check `CHATBOT_CHANNEL_ID`, the bot's channel permissions, and that **Message Content Intent** is enabled in the developer portal. |
