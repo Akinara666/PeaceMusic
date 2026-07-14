@@ -154,6 +154,13 @@ BOT_PROMPT_HOST_FILE=./prompt.txt
 - `YTDL_COOKIE_HOST_FILE` — путь к cookies-файлу на Docker-хосте, например `./data/cookies.txt`
 - `YTDL_CACHE_DIR` — постоянный кэш yt-dlp (по умолчанию `data/ytdl_cache`)
 - `MUSIC_QUEUE_MAX_SIZE` — максимальный размер очереди (`50`)
+- `MUSIC_STREAM_BUFFER_SECONDS` — запас декодированного PCM (`20` секунд, примерно 192 КБ на секунду для каждой гильдии)
+- `MUSIC_STREAM_START_BUFFER_SECONDS` — сколько звука накопить перед стартом (`5` секунд)
+- `MUSIC_STREAM_START_TIMEOUT_SECONDS` — максимальное ожидание начального буфера (`15` секунд)
+- `MUSIC_STREAM_UNDERRUN_GRACE_SECONDS` — допустимая тишина во время восстановления опустевшего буфера (`15` секунд)
+- `MUSIC_STREAM_STALL_TIMEOUT_SECONDS` — простой источника до обновления ссылки (`10` секунд)
+- `MUSIC_STREAM_RESTART_COOLDOWN_SECONDS` — пауза между попытками восстановления (`10` секунд)
+- `MUSIC_FFMPEG_RW_TIMEOUT_SECONDS` — сетевой тайм-аут FFmpeg (`8` секунд)
 - `MUSIC_ATTACHMENT_MAX_BYTES` — максимальный размер музыкального вложения (`25000000`)
 - `MEDIA_ALLOWED_DOMAINS` — разрешённые домены для удалённых медиа
 - `AI_RATE_LIMIT_MAX_REQUESTS` / `AI_RATE_LIMIT_WINDOW_SECONDS` — лимит AI-запросов (`20` за `60` секунд)

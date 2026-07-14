@@ -288,6 +288,13 @@ putting those secrets directly in the environment.
 | `MUSIC_QUEUE_MAX_SIZE` | `50` | Maximum tracks in a guild queue. |
 | `MUSIC_ATTACHMENT_MAX_BYTES` | `25000000` | Maximum downloaded music-attachment size. |
 | `MEDIA_ALLOWED_DOMAINS` | YouTube and SoundCloud domains | Hosts accepted for remotely downloaded media. |
+| `MUSIC_STREAM_BUFFER_SECONDS` | `20` | Maximum decoded PCM kept ahead of Discord playback (~192 KB per second per guild). |
+| `MUSIC_STREAM_START_BUFFER_SECONDS` | `5` | Audio accumulated before playback starts. |
+| `MUSIC_STREAM_START_TIMEOUT_SECONDS` | `15` | Maximum wait for the initial buffer. |
+| `MUSIC_STREAM_UNDERRUN_GRACE_SECONDS` | `15` | Bounded silence while a depleted stream is being refreshed. |
+| `MUSIC_STREAM_STALL_TIMEOUT_SECONDS` | `10` | Source inactivity before refreshing its signed media URL. |
+| `MUSIC_STREAM_RESTART_COOLDOWN_SECONDS` | `10` | Minimum interval between stream refresh attempts. |
+| `MUSIC_FFMPEG_RW_TIMEOUT_SECONDS` | `8` | FFmpeg network read/write timeout. |
 
 ### Rate limiting
 

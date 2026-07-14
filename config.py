@@ -189,6 +189,12 @@ class AudioSettings:
     ytdl_options: dict
     ffmpeg_options: dict
     allowed_media_domains: tuple[str, ...]
+    stream_buffer_seconds: float
+    stream_start_buffer_seconds: float
+    stream_start_timeout_seconds: float
+    stream_underrun_grace_seconds: float
+    stream_stall_timeout_seconds: float
+    stream_restart_cooldown_seconds: float
 
 
 @dataclass(frozen=True)
@@ -268,23 +274,32 @@ def _build_ytdl_options(
     return options
 
 
-def _build_ffmpeg_options() -> dict:
+def _build_ffmpeg_options(*, rw_timeout_seconds: float) -> dict:
     """
-    Optimized for 1 vCPU / 2GB RAM.
+    Network recovery settings for streamed audio.
+
     - threads 1: Prevent thread contention on single core.
-    - bufsize/probesize: Increased to 4MB/2MB to handle network jitter.
+    - rw_timeout: Fail a stalled CDN read early enough for the PCM buffer to
+      hide source refresh latency.
     - reconnect: Separate policies for generic streams and YouTube HLS.
+
+    ``-bufsize`` is intentionally absent: it controls encoder rate control,
+    not decoded PCM buffering. Playback jitter is handled by the bounded
+    application-level buffer in ``cogs.music_cog``.
     """
+    rw_timeout_microseconds = max(1, int(rw_timeout_seconds * 1_000_000))
     reconnect_args = (
         "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 "
         "-reconnect_at_eof 1 -reconnect_on_network_error 1 -reconnect_on_http_error 4xx,5xx "
-        "-rw_timeout 15000000 "
+        "-reconnect_max_retries 5 -reconnect_delay_total_max 15 "
+        f"-rw_timeout {rw_timeout_microseconds} "
         "-err_detect ignore_err "
     )
     youtube_hls_reconnect_args = (
         "-reconnect 1 -reconnect_delay_max 2 "
         "-reconnect_on_network_error 1 "
-        "-rw_timeout 15000000 "
+        "-reconnect_max_retries 5 -reconnect_delay_total_max 15 "
+        f"-rw_timeout {rw_timeout_microseconds} "
         "-err_detect ignore_err "
     )
 
@@ -294,7 +309,6 @@ def _build_ffmpeg_options() -> dict:
         "before_options_file": "-nostdin",
         "options": (
             "-vn -sn -dn "
-            "-bufsize 4096k "  # 4MB buffer
             "-probesize 2048k "
             "-analyzeduration 0 "  # Speed up startup
             "-threads 1 "
@@ -439,6 +453,64 @@ def load_settings() -> AppSettings:
         if domain.strip()
     )
 
+    stream_buffer_seconds = _get_env_float("MUSIC_STREAM_BUFFER_SECONDS", 20.0)
+    stream_start_buffer_seconds = _get_env_float(
+        "MUSIC_STREAM_START_BUFFER_SECONDS", 5.0
+    )
+    stream_start_timeout_seconds = _get_env_float(
+        "MUSIC_STREAM_START_TIMEOUT_SECONDS", 15.0
+    )
+    stream_underrun_grace_seconds = _get_env_float(
+        "MUSIC_STREAM_UNDERRUN_GRACE_SECONDS", 15.0
+    )
+    stream_stall_timeout_seconds = _get_env_float(
+        "MUSIC_STREAM_STALL_TIMEOUT_SECONDS", 10.0
+    )
+    stream_restart_cooldown_seconds = _get_env_float(
+        "MUSIC_STREAM_RESTART_COOLDOWN_SECONDS", 10.0
+    )
+    ffmpeg_rw_timeout_seconds = _get_env_float("MUSIC_FFMPEG_RW_TIMEOUT_SECONDS", 8.0)
+
+    _require_range(
+        "MUSIC_STREAM_BUFFER_SECONDS", stream_buffer_seconds, minimum=2, maximum=60
+    )
+    _require_range(
+        "MUSIC_STREAM_START_BUFFER_SECONDS",
+        stream_start_buffer_seconds,
+        minimum=0,
+        maximum=stream_buffer_seconds,
+    )
+    _require_range(
+        "MUSIC_STREAM_START_TIMEOUT_SECONDS",
+        stream_start_timeout_seconds,
+        minimum=1,
+        maximum=60,
+    )
+    _require_range(
+        "MUSIC_STREAM_UNDERRUN_GRACE_SECONDS",
+        stream_underrun_grace_seconds,
+        minimum=0,
+        maximum=60,
+    )
+    _require_range(
+        "MUSIC_STREAM_STALL_TIMEOUT_SECONDS",
+        stream_stall_timeout_seconds,
+        minimum=2,
+        maximum=stream_buffer_seconds,
+    )
+    _require_range(
+        "MUSIC_STREAM_RESTART_COOLDOWN_SECONDS",
+        stream_restart_cooldown_seconds,
+        minimum=1,
+        maximum=60,
+    )
+    _require_range(
+        "MUSIC_FFMPEG_RW_TIMEOUT_SECONDS",
+        ffmpeg_rw_timeout_seconds,
+        minimum=1,
+        maximum=60,
+    )
+
     misc_settings = MiscSettings(
         music_directory=music_directory,
         status_message=status_message,
@@ -474,8 +546,16 @@ def load_settings() -> AppSettings:
             cookies_file=cookies_file,
             cache_dir=ytdl_cache_dir,
         ),
-        ffmpeg_options=_build_ffmpeg_options(),
+        ffmpeg_options=_build_ffmpeg_options(
+            rw_timeout_seconds=ffmpeg_rw_timeout_seconds
+        ),
         allowed_media_domains=allowed_media_domains,
+        stream_buffer_seconds=stream_buffer_seconds,
+        stream_start_buffer_seconds=stream_start_buffer_seconds,
+        stream_start_timeout_seconds=stream_start_timeout_seconds,
+        stream_underrun_grace_seconds=stream_underrun_grace_seconds,
+        stream_stall_timeout_seconds=stream_stall_timeout_seconds,
+        stream_restart_cooldown_seconds=stream_restart_cooldown_seconds,
     )
 
     return AppSettings(
@@ -530,6 +610,12 @@ BOT_PROMPT_FILE = (
 BOT_PROMPT_TEXT = _settings.misc.prompt_text
 YTDL_OPTIONS = _settings.audio.ytdl_options
 FFMPEG_OPTIONS = _settings.audio.ffmpeg_options
+MUSIC_STREAM_BUFFER_SECONDS = _settings.audio.stream_buffer_seconds
+MUSIC_STREAM_START_BUFFER_SECONDS = _settings.audio.stream_start_buffer_seconds
+MUSIC_STREAM_START_TIMEOUT_SECONDS = _settings.audio.stream_start_timeout_seconds
+MUSIC_STREAM_UNDERRUN_GRACE_SECONDS = _settings.audio.stream_underrun_grace_seconds
+MUSIC_STREAM_STALL_TIMEOUT_SECONDS = _settings.audio.stream_stall_timeout_seconds
+MUSIC_STREAM_RESTART_COOLDOWN_SECONDS = _settings.audio.stream_restart_cooldown_seconds
 MUSIC_QUEUE_MAX_SIZE = _settings.misc.queue_max_size
 AI_ATTACHMENT_MAX_BYTES = _settings.misc.ai_attachment_max_bytes
 MUSIC_ATTACHMENT_MAX_BYTES = _settings.misc.music_attachment_max_bytes
