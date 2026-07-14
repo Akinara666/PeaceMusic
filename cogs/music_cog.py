@@ -3,8 +3,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import queue as queue_module
 import random
 import shlex
+import threading
 import time as time_module
 from collections import OrderedDict, deque
 from dataclasses import dataclass, field
@@ -24,6 +26,12 @@ from config import (
     MUSIC_ATTACHMENT_MAX_BYTES,
     MUSIC_DIRECTORY,
     MUSIC_QUEUE_MAX_SIZE,
+    MUSIC_STREAM_BUFFER_SECONDS,
+    MUSIC_STREAM_RESTART_COOLDOWN_SECONDS,
+    MUSIC_STREAM_STALL_TIMEOUT_SECONDS,
+    MUSIC_STREAM_START_BUFFER_SECONDS,
+    MUSIC_STREAM_START_TIMEOUT_SECONDS,
+    MUSIC_STREAM_UNDERRUN_GRACE_SECONDS,
     YTDL_OPTIONS,
 )
 
@@ -33,6 +41,10 @@ MUSIC_DIRECTORY_PATH = Path(MUSIC_DIRECTORY)
 MUSIC_DIRECTORY_PATH.mkdir(parents=True, exist_ok=True)
 STREAM_SOURCE_MAX_AGE_SECONDS = 180
 VOICE_STATE_SETTLE_SECONDS = 1.0
+PCM_FRAME_DURATION_SECONDS = 0.02
+PCM_FRAME_BYTES = 3840
+PCM_BYTES_PER_SECOND = PCM_FRAME_BYTES / PCM_FRAME_DURATION_SECONDS
+PCM_SILENCE_FRAME = b"\x00" * PCM_FRAME_BYTES
 
 
 # ----------------------------------------------------------------------------
@@ -306,6 +318,152 @@ class _DeferredAudioSource(discord.AudioSource):
         return b""
 
 
+class _BufferedAudioSource(discord.AudioSource):
+    """Read PCM ahead on a producer thread and absorb short network stalls."""
+
+    def __init__(
+        self,
+        source: discord.AudioSource,
+        *,
+        label: str,
+        max_buffer_seconds: float,
+        start_buffer_seconds: float,
+        start_timeout_seconds: float,
+        underrun_grace_seconds: float,
+        on_source_frame: Optional[Callable[[], None]] = None,
+        on_played_frame: Optional[Callable[[bytes], None]] = None,
+    ) -> None:
+        self.source = source
+        self.label = label
+        self.max_buffer_seconds = max_buffer_seconds
+        self._start_timeout_seconds = start_timeout_seconds
+        self._underrun_grace_seconds = underrun_grace_seconds
+        max_frames = max(1, int(max_buffer_seconds / PCM_FRAME_DURATION_SECONDS))
+        self._start_frames = min(
+            max_frames,
+            max(0, int(start_buffer_seconds / PCM_FRAME_DURATION_SECONDS)),
+        )
+        self._frames: queue_module.Queue[bytes] = queue_module.Queue(maxsize=max_frames)
+        self._on_source_frame = on_source_frame
+        self._on_played_frame = on_played_frame
+        self._ready = threading.Event()
+        self._source_ended = threading.Event()
+        self._closed = threading.Event()
+        self._playback_started = False
+        self._cleanup_lock = threading.Lock()
+        self._cleaned = False
+        self._underrun_since: Optional[float] = None
+        self.last_source_frame_monotonic = time_module.monotonic()
+        self.underrun_count = 0
+        if self._start_frames == 0:
+            self._ready.set()
+        self._producer = threading.Thread(
+            target=self._produce,
+            name="peacemusic-audio-buffer",
+            daemon=True,
+        )
+        self._producer.start()
+
+    @property
+    def source_ended(self) -> bool:
+        return self._source_ended.is_set()
+
+    @property
+    def volume(self) -> float:
+        return float(getattr(self.source, "volume", 1.0))
+
+    @volume.setter
+    def volume(self, value: float) -> None:
+        if hasattr(self.source, "volume"):
+            self.source.volume = value
+
+    @property
+    def buffered_seconds(self) -> float:
+        return self._frames.qsize() * PCM_FRAME_DURATION_SECONDS
+
+    def _produce(self) -> None:
+        try:
+            while not self._closed.is_set():
+                data = self.source.read()
+                if not data:
+                    break
+                self.last_source_frame_monotonic = time_module.monotonic()
+                if self._on_source_frame is not None:
+                    with contextlib.suppress(Exception):
+                        self._on_source_frame()
+                while not self._closed.is_set():
+                    try:
+                        self._frames.put(data, timeout=0.1)
+                        break
+                    except queue_module.Full:
+                        continue
+                if self._frames.qsize() >= self._start_frames:
+                    self._ready.set()
+        except Exception:
+            if not self._closed.is_set():
+                logger.exception("Audio buffer producer failed for %s", self.label)
+        finally:
+            self._source_ended.set()
+            self._ready.set()
+
+    def read(self) -> bytes:
+        if not self._playback_started:
+            self._ready.wait(timeout=self._start_timeout_seconds)
+            self._playback_started = True
+            logger.info(
+                "Audio buffer ready for %s: %.2fs",
+                self.label,
+                self.buffered_seconds,
+            )
+
+        try:
+            data = self._frames.get(timeout=PCM_FRAME_DURATION_SECONDS * 2)
+        except queue_module.Empty:
+            if self._source_ended.is_set() or self._closed.is_set():
+                return b""
+            now = time_module.monotonic()
+            if self._underrun_since is None:
+                self._underrun_since = now
+                self.underrun_count += 1
+                logger.warning("Audio buffer underrun for %s", self.label)
+            if now - self._underrun_since <= self._underrun_grace_seconds:
+                return PCM_SILENCE_FRAME
+            logger.error(
+                "Audio buffer underrun grace expired for %s after %.1fs",
+                self.label,
+                now - self._underrun_since,
+            )
+            return b""
+
+        if self._underrun_since is not None:
+            logger.info(
+                "Audio buffer recovered for %s after %.2fs",
+                self.label,
+                time_module.monotonic() - self._underrun_since,
+            )
+            self._underrun_since = None
+        if self._on_played_frame is not None:
+            with contextlib.suppress(Exception):
+                self._on_played_frame(data)
+        return data
+
+    def is_opus(self) -> bool:
+        is_opus = getattr(self.source, "is_opus", None)
+        return bool(is_opus()) if callable(is_opus) else False
+
+    def cleanup(self) -> None:
+        with self._cleanup_lock:
+            if self._cleaned:
+                return
+            self._cleaned = True
+            self._closed.set()
+            self._ready.set()
+            with contextlib.suppress(Exception):
+                self.source.cleanup()
+        if self._producer is not threading.current_thread():
+            self._producer.join(timeout=1.0)
+
+
 class YTDLSource(discord.PCMVolumeTransformer):
     def __init__(
         self,
@@ -481,8 +639,12 @@ class Music(commands.Cog):
         self.current: Optional[QueuedTrack] = None
         self._play_lock = asyncio.Lock()
         self._last_audio_time: Optional[float] = None
+        self._last_stream_input_time: Optional[float] = None
         self._track_start_monotonic: Optional[float] = None
         self._paused_at_monotonic: Optional[float] = None
+        self._playback_base_seconds = 0.0
+        self._played_audio_seconds = 0.0
+        self._last_restart_attempt_monotonic: Optional[float] = None
         self._restart_lock = asyncio.Lock()
         self._suppressed_after_callbacks = 0
         self.loop_mode = "off"
@@ -768,20 +930,35 @@ class Music(commands.Cog):
     def _touch_audio_heartbeat(self) -> None:
         self._last_audio_time = time_module.monotonic()
 
+    def _touch_stream_input_heartbeat(self) -> None:
+        self._last_stream_input_time = time_module.monotonic()
+
+    def _record_played_audio_frame(self, data: bytes) -> None:
+        self._played_audio_seconds += len(data) / PCM_BYTES_PER_SECOND
+        self._touch_audio_heartbeat()
+
     def _reset_playback_timers(self) -> None:
         self._track_start_monotonic = None
         self._paused_at_monotonic = None
+        self._playback_base_seconds = 0.0
+        self._played_audio_seconds = 0.0
+        self._last_stream_input_time = None
+        self._last_restart_attempt_monotonic = None
 
     def _mark_playback_started(self, *, start_at: int = 0) -> None:
-        self._track_start_monotonic = time_module.monotonic() - max(start_at, 0)
+        now = time_module.monotonic()
+        self._track_start_monotonic = now
         self._paused_at_monotonic = None
+        self._playback_base_seconds = float(max(start_at, 0))
+        self._played_audio_seconds = 0.0
+        self._last_stream_input_time = now
         self._touch_audio_heartbeat()
 
     def _current_progress_seconds(self) -> int:
-        if self._track_start_monotonic is None:
-            return 0
-        now = self._paused_at_monotonic or time_module.monotonic()
-        return max(0, int(now - self._track_start_monotonic))
+        return max(
+            0,
+            int(self._playback_base_seconds + self._played_audio_seconds),
+        )
 
     def _suppress_after_callback_once(self) -> None:
         self._suppressed_after_callbacks += 1
@@ -793,27 +970,37 @@ class Music(commands.Cog):
             self._suppress_after_callback_once()
             self.voice_client.stop()
 
+    def _restart_cooldown_active(self, now: Optional[float] = None) -> bool:
+        if self._last_restart_attempt_monotonic is None:
+            return False
+        current_time = now if now is not None else time_module.monotonic()
+        return (
+            current_time - self._last_restart_attempt_monotonic
+            < MUSIC_STREAM_RESTART_COOLDOWN_SECONDS
+        )
+
     def _create_local_track_source(
         self,
         file_path: Path,
         *,
         seek: Optional[int] = None,
         on_chunk: Optional[Callable[[], None]] = None,
-    ) -> discord.PCMVolumeTransformer:
+    ) -> discord.AudioSource:
         ffmpeg_args = build_ffmpeg_options(stream=False, seek=seek)
         audio_source = discord.FFmpegPCMAudio(str(file_path), **ffmpeg_args)
         transformer = discord.PCMVolumeTransformer(audio_source, volume=self._volume)
-        if on_chunk is not None:
-            original_read = transformer.read
+        original_read = transformer.read
 
-            def _read_with_heartbeat() -> bytes:
-                data = original_read()
-                if data:
+        def _read_with_heartbeat() -> bytes:
+            data = original_read()
+            if data:
+                self._record_played_audio_frame(data)
+                if on_chunk is not None:
                     with contextlib.suppress(Exception):
                         on_chunk()
-                return data
+            return data
 
-            transformer.read = _read_with_heartbeat  # type: ignore[assignment]
+        transformer.read = _read_with_heartbeat  # type: ignore[assignment]
         return transformer
 
     def _create_stream_track_source(
@@ -821,7 +1008,7 @@ class Music(commands.Cog):
         track: QueuedTrack,
         *,
         seek: Optional[int] = None,
-    ) -> discord.PCMVolumeTransformer:
+    ) -> discord.AudioSource:
         if not track.stream_url:
             raise ValueError("Stream URL is required to create an audio source")
         ffmpeg_args = build_ffmpeg_options(
@@ -832,17 +1019,16 @@ class Music(commands.Cog):
         )
         audio_source = discord.FFmpegPCMAudio(track.stream_url, **ffmpeg_args)
         transformer = discord.PCMVolumeTransformer(audio_source, volume=self._volume)
-        original_read = transformer.read
-
-        def _read_with_heartbeat() -> bytes:
-            data = original_read()
-            if data:
-                with contextlib.suppress(Exception):
-                    self._touch_audio_heartbeat()
-            return data
-
-        transformer.read = _read_with_heartbeat  # type: ignore[assignment]
-        return transformer
+        return _BufferedAudioSource(
+            transformer,
+            label=track.title,
+            max_buffer_seconds=MUSIC_STREAM_BUFFER_SECONDS,
+            start_buffer_seconds=MUSIC_STREAM_START_BUFFER_SECONDS,
+            start_timeout_seconds=MUSIC_STREAM_START_TIMEOUT_SECONDS,
+            underrun_grace_seconds=MUSIC_STREAM_UNDERRUN_GRACE_SECONDS,
+            on_source_frame=self._touch_stream_input_heartbeat,
+            on_played_frame=self._record_played_audio_frame,
+        )
 
     def _build_queued_track(
         self,
@@ -911,6 +1097,7 @@ class Music(commands.Cog):
         seek: Optional[int] = None,
         force_extract: bool = False,
         cleanup_existing: bool = True,
+        follow_playback_progress: bool = False,
     ) -> bool:
         seek_seconds = max(0, seek or 0)
 
@@ -959,30 +1146,45 @@ class Music(commands.Cog):
             target_query,
             loop=self.bot.loop,
             stream=track.should_stream,
-            on_chunk=self._touch_audio_heartbeat,
             start_at=seek_seconds or None,
             volume=self._volume,
+            defer_audio=True,
             force_refresh=True,
         )
         if not sources:
             return False
 
-        new_source = sources[0]
+        metadata_source = sources[0]
         old_source = track.source
         old_local_path = track.local_path
-        track.source = new_source
+        track.title = metadata_source.title or track.title
+        track.stream_url = metadata_source.url if metadata_source.is_stream else None
+        track.webpage_url = metadata_source.webpage_url or track.webpage_url
+        track.thumbnail = metadata_source.thumbnail or track.thumbnail
+        track.uploader = metadata_source.uploader or track.uploader
+        track.duration = metadata_source.duration or track.duration
+        track.local_path = metadata_source.local_path
+        track.is_youtube_hls = metadata_source.is_youtube_hls
+        track.user_agent = metadata_source.user_agent
+        if follow_playback_progress:
+            seek_seconds = max(0, self._current_progress_seconds() - 2)
+        if track.should_stream:
+            prepared_source = self._create_stream_track_source(
+                track,
+                seek=seek_seconds or None,
+            )
+        elif track.local_path:
+            prepared_source = self._create_local_track_source(
+                track.local_path,
+                seek=seek_seconds or None,
+                on_chunk=self._touch_audio_heartbeat,
+            )
+        else:
+            return False
+        track.source = prepared_source
         if cleanup_existing:
             with contextlib.suppress(Exception):
                 old_source.cleanup()
-        track.title = new_source.title or track.title
-        track.stream_url = new_source.url if new_source.is_stream else None
-        track.webpage_url = new_source.webpage_url or track.webpage_url
-        track.thumbnail = new_source.thumbnail or track.thumbnail
-        track.uploader = new_source.uploader or track.uploader
-        track.duration = new_source.duration or track.duration
-        track.local_path = new_source.local_path
-        track.is_youtube_hls = new_source.is_youtube_hls
-        track.user_agent = new_source.user_agent
         track.prepared_at_monotonic = time_module.monotonic()
         track.source_prepared = True
 
@@ -1224,6 +1426,10 @@ class Music(commands.Cog):
         if self.current.local_path:
             return
         async with self._restart_lock:
+            now = time_module.monotonic()
+            if self._restart_cooldown_active(now):
+                return
+            self._last_restart_attempt_monotonic = now
             current_track = self.current
             if not current_track or current_track is not self.current:
                 return
@@ -1244,6 +1450,7 @@ class Music(commands.Cog):
                     seek=seek_seconds,
                     force_extract=True,
                     cleanup_existing=False,
+                    follow_playback_progress=True,
                 )
             except DownloadError as exc:
                 logger.warning("Failed to restart stream %s: %s", target_url, exc)
@@ -1254,23 +1461,34 @@ class Music(commands.Cog):
                 )
                 return
 
-            if (
-                not refreshed
-                or current_track is not self.current
-                or not self.voice_client
-                or not self.voice_client.is_connected()
-            ):
+            if not refreshed:
                 return
+            seek_seconds = max(0, self._current_progress_seconds() - 2)
 
-            self._stop_voice_client_for_replace()
-            try:
-                self.voice_client.play(current_track.source, after=self._after_playback)
-            except Exception:
-                logger.exception(
-                    "Failed to restart playback for %s", current_track.title
-                )
-                return
-            self._mark_playback_started(start_at=seek_seconds)
+            async with self._play_lock:
+                if (
+                    current_track is not self.current
+                    or not self.voice_client
+                    or not self.voice_client.is_connected()
+                ):
+                    with contextlib.suppress(Exception):
+                        current_track.source.cleanup()
+                    return
+
+                self._stop_voice_client_for_replace()
+                try:
+                    self.voice_client.play(
+                        current_track.source,
+                        after=self._after_playback,
+                    )
+                except Exception:
+                    with contextlib.suppress(Exception):
+                        current_track.source.cleanup()
+                    logger.exception(
+                        "Failed to restart playback for %s", current_track.title
+                    )
+                    return
+                self._mark_playback_started(start_at=seek_seconds)
 
     def _build_track_embed(
         self,
@@ -2267,7 +2485,7 @@ class Music(commands.Cog):
     # ------------------------------------------------------------------
     # Housekeeping
     # ------------------------------------------------------------------
-    @tasks.loop(seconds=20)
+    @tasks.loop(seconds=2)
     async def monitor_stalled_playback(self) -> None:
         for player in list(self._guild_players.values()):
             await player._monitor_stalled_playback_once()
@@ -2280,8 +2498,35 @@ class Music(commands.Cog):
         if self.current.local_path:
             return
         now = time_module.monotonic()
-        last = self._last_audio_time or now
-        if now - last > 25:
+        if self._restart_cooldown_active(now):
+            return
+        source = self.current.source
+        if isinstance(source, _BufferedAudioSource):
+            if source.source_ended:
+                if self.current.duration:
+                    remaining = max(
+                        0,
+                        self.current.duration - self._current_progress_seconds(),
+                    )
+                    natural_eof_window = source.max_buffer_seconds + 5
+                    if remaining <= natural_eof_window:
+                        return
+                logger.warning(
+                    "Stream source ended early for %s at %ss; restarting",
+                    self.current.title,
+                    self._current_progress_seconds(),
+                )
+                await self._restart_current_stream()
+                return
+            last_input = source.last_source_frame_monotonic
+        else:
+            last_input = self._last_stream_input_time or self._last_audio_time or now
+        if now - last_input > MUSIC_STREAM_STALL_TIMEOUT_SECONDS:
+            logger.warning(
+                "Stream input stalled for %.1fs on %s",
+                now - last_input,
+                self.current.title,
+            )
             await self._restart_current_stream()
 
     @monitor_stalled_playback.before_loop

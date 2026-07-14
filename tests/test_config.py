@@ -48,6 +48,28 @@ class ConfigTests(unittest.TestCase):
             settings.audio.ytdl_options["js_runtimes"],
             {"deno": {}, "node": {}},
         )
+        self.assertEqual(settings.audio.stream_buffer_seconds, 20.0)
+        self.assertEqual(settings.audio.stream_start_buffer_seconds, 5.0)
+        self.assertEqual(settings.audio.stream_stall_timeout_seconds, 10.0)
+        self.assertIn(
+            "-rw_timeout 8000000",
+            settings.audio.ffmpeg_options["before_options_stream"],
+        )
+        self.assertNotIn("-bufsize", settings.audio.ffmpeg_options["options"])
+
+    def test_load_settings_rejects_start_buffer_larger_than_buffer(self) -> None:
+        mock_env = {
+            "DISCORD_BOT_TOKEN": "test_token",
+            "GEMINI_API_KEY": "test_key",
+            "MUSIC_STREAM_BUFFER_SECONDS": "4",
+            "MUSIC_STREAM_START_BUFFER_SECONDS": "5",
+        }
+
+        with patch.dict(os.environ, mock_env, clear=True):
+            with self.assertRaisesRegex(
+                RuntimeError, "MUSIC_STREAM_START_BUFFER_SECONDS must be <= 4"
+            ):
+                load_project_module("test_config_module_invalid_buffer", "config.py")
 
     def test_load_settings_enables_cookiefile_only_when_requested(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
