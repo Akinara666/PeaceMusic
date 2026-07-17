@@ -139,7 +139,9 @@ python main.py
 
 ## Docker Deployment
 
-Recommended for any long‑running server. Both the SQLite memory and the music cache use named volumes so they survive container rebuilds.
+Recommended for any long-running server. SQLite memory, yt-dlp cache, and local
+music use visible host directories by default, so they survive container
+rebuilds and are easy to inspect or back up.
 
 ```bash
 # Edit .env first (DISCORD_BOT_TOKEN, GEMINI_API_KEY, etc.)
@@ -157,22 +159,53 @@ image instead, run `docker compose pull` before `docker compose up -d`.
 | Update from the published image | `git pull && docker compose pull && docker compose up -d --force-recreate` |
 | Rebuild the checked-out source | `git pull && docker compose up -d --build` |
 
-The container uses Docker's isolated bridge network and named volumes by default.
+The container uses Docker's isolated bridge network. Writable data is bind
+mounted from `./data` and `./music_files` by default. Override the locations in
+`.env` when storing data on another disk:
 
-### Existing bind-mounted data
-
-Older releases mounted `./data` and `./music_files` directly. Check the running
-container before upgrading:
-
-```bash
-docker inspect "$(docker compose ps -q peacemusic)" \
-  --format '{{range .Mounts}}{{println .Type .Source "->" .Destination}}{{end}}'
+```env
+APP_DATA_HOST_DIR=/srv/peacemusic/data
+MUSIC_FILES_HOST_DIR=/srv/peacemusic/music
 ```
 
-If `/app/data` is reported as `bind`, stop the old container and copy the data
-into the new named volume before starting the upgraded bot. Do not use
-`docker compose down -v`, because `-v` deletes named volumes. See the Russian
-README for copy commands.
+Before the first start, create the directories and assign them to the
+unprivileged container user:
+
+```bash
+mkdir -p data music_files
+docker compose run --rm --no-deps --user root --entrypoint sh peacemusic \
+  -c 'chown -R peacemusic:peacemusic /app/data /app/music_files'
+```
+
+### Migrating from the previous named volumes
+
+Before recreating an existing container, capture its current volume names:
+
+```bash
+CID=$(docker compose ps -aq peacemusic)
+DATA_VOLUME=$(docker inspect "$CID" --format \
+  '{{range .Mounts}}{{if eq .Destination "/app/data"}}{{.Name}}{{end}}{{end}}')
+MUSIC_VOLUME=$(docker inspect "$CID" --format \
+  '{{range .Mounts}}{{if eq .Destination "/app/music_files"}}{{.Name}}{{end}}{{end}}')
+```
+
+Stop the bot, create the host directories, and use one-off containers to copy
+the data. Keep the old volumes as a backup until the new deployment is verified:
+
+```bash
+docker compose stop peacemusic
+mkdir -p data music_files
+
+docker compose run --rm --no-deps --user root \
+  -v "$DATA_VOLUME:/source:ro" --entrypoint sh peacemusic \
+  -c 'cp -a /source/. /app/data/ && chown -R peacemusic:peacemusic /app/data'
+
+docker compose run --rm --no-deps --user root \
+  -v "$MUSIC_VOLUME:/source:ro" --entrypoint sh peacemusic \
+  -c 'cp -a /source/. /app/music_files/ && chown -R peacemusic:peacemusic /app/music_files'
+
+docker compose up -d --force-recreate peacemusic
+```
 
 ### Host-side SOCKS proxy
 
@@ -212,7 +245,7 @@ YTDL_COOKIE_HOST_FILE=./data/cookies.txt
 ```
 
 Compose mounts it read-only at `/app/config/cookies.txt`; it is not copied into
-a named volume or the image. The export must use Netscape format and start with
+the image. The export must use Netscape format and start with
 `# Netscape HTTP Cookie File` (the shorter `# HTTP Cookie File` header is also
 accepted). Make it readable by the container user, for example with
 `chmod 644 data/cookies.txt`. After changing the path or contents, recreate the
@@ -259,6 +292,8 @@ putting those secrets directly in the environment.
 
 | Variable | Default | Description |
 |---|---|---|
+| `APP_DATA_HOST_DIR` | `./data` | Host directory bind-mounted at `/app/data` for SQLite memory and yt-dlp cache. |
+| `MUSIC_FILES_HOST_DIR` | `./music_files` | Host directory bind-mounted at `/app/music_files`. |
 | `BOT_PROMPT_FILE` | `utils/default_prompt.txt` | Prompt path for local Python runs. Compose sets the internal path automatically. |
 | `BOT_PROMPT_HOST_FILE` | `./utils/default_prompt.txt` | Host prompt mounted read-only by Compose. |
 
