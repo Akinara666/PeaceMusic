@@ -25,8 +25,10 @@ services:
       # The host path is selected separately below; the app always sees this path.
       YTDL_COOKIE_FILE: /app/config/cookies.txt
     volumes:
-      - music_files:/app/music_files
-      - app_data:/app/data
+      # Keep writable runtime data at obvious host paths. Relative paths are
+      # resolved from the directory containing this Compose file.
+      - ${MUSIC_FILES_HOST_DIR:-./music_files}:/app/music_files
+      - ${APP_DATA_HOST_DIR:-./data}:/app/data
       # Override BOT_PROMPT_HOST_FILE in .env to use a custom host-side prompt.
       - ${BOT_PROMPT_HOST_FILE:-./utils/default_prompt.txt}:/app/config/prompt.txt:ro
       # Keep authentication cookies on the host. The placeholder makes cookies
@@ -38,7 +40,3 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
-
-volumes:
-  music_files:
-  app_data:

@@ -62,37 +62,74 @@ python main.py
 - **Обновление готового образа**: `git pull && docker compose pull && docker compose up -d --force-recreate`
 - **Пересборка из исходников**: `git pull && docker compose up -d --build`
 
-### Переход со старых bind mounts на named volumes
+### Где Docker хранит данные
 
-Сначала проверьте, откуда работающий контейнер читает данные:
+По умолчанию все изменяемые данные находятся в очевидных каталогах проекта:
+
+```text
+./data/chat_memory.sqlite3  # память и summary
+./data/ytdl_cache/          # кэш yt-dlp
+./music_files/              # локальные музыкальные файлы
+```
+
+Пути можно вынести, например, на отдельный диск через `.env`:
+
+```env
+APP_DATA_HOST_DIR=/srv/peacemusic/data
+MUSIC_FILES_HOST_DIR=/srv/peacemusic/music
+```
+
+Перед первым запуском создайте каталоги и дайте пользователю контейнера право
+записи. Команда выполняется от root только для настройки владельца; сам бот
+продолжает работать от непривилегированного пользователя `peacemusic`:
+
+```bash
+mkdir -p data music_files
+docker compose run --rm --no-deps --user root --entrypoint sh peacemusic \
+  -c 'chown -R peacemusic:peacemusic /app/data /app/music_files'
+```
+
+### Переход с прежних named volumes на каталоги хоста
+
+До пересоздания контейнера запомните имена его текущих volumes:
+
+```bash
+CID=$(docker compose ps -aq peacemusic)
+DATA_VOLUME=$(docker inspect "$CID" --format \
+  '{{range .Mounts}}{{if eq .Destination "/app/data"}}{{.Name}}{{end}}{{end}}')
+MUSIC_VOLUME=$(docker inspect "$CID" --format \
+  '{{range .Mounts}}{{if eq .Destination "/app/music_files"}}{{.Name}}{{end}}{{end}}')
+
+printf 'data=%s\nmusic=%s\n' "$DATA_VOLUME" "$MUSIC_VOLUME"
+```
+
+Если команды вывели имена volumes, остановите бота и скопируйте данные в новые
+host-каталоги. Не удаляйте старые volumes: они останутся резервной копией.
+
+```bash
+docker compose stop peacemusic
+mkdir -p data music_files
+
+docker compose run --rm --no-deps --user root \
+  -v "$DATA_VOLUME:/source:ro" \
+  --entrypoint sh peacemusic \
+  -c 'cp -a /source/. /app/data/ && chown -R peacemusic:peacemusic /app/data'
+
+docker compose run --rm --no-deps --user root \
+  -v "$MUSIC_VOLUME:/source:ro" \
+  --entrypoint sh peacemusic \
+  -c 'cp -a /source/. /app/music_files/ && chown -R peacemusic:peacemusic /app/music_files'
+
+docker compose up -d --force-recreate peacemusic
+```
+
+Проверьте результат: для `/app/data` и `/app/music_files` должен отображаться
+тип `bind` и понятный абсолютный host-путь:
 
 ```bash
 docker inspect "$(docker compose ps -q peacemusic)" \
   --format '{{range .Mounts}}{{println .Type .Source "->" .Destination}}{{end}}'
 ```
-
-Если `/app/data` имеет тип `bind`, актуальная база находится в `./data`. Перед
-первым запуском нового Compose выполните:
-
-```bash
-docker compose down
-cp -a data "data.backup-$(date +%F-%H%M%S)"
-cp -a music_files "music_files.backup-$(date +%F-%H%M%S)"
-
-docker compose run --rm --user root \
-  -v "$PWD/data:/source:ro" \
-  --entrypoint sh peacemusic \
-  -c 'cp -a /source/. /app/data/ && chown -R peacemusic:peacemusic /app/data'
-
-docker compose run --rm --user root \
-  -v "$PWD/music_files:/source:ro" \
-  --entrypoint sh peacemusic \
-  -c 'cp -a /source/. /app/music_files/ && chown -R peacemusic:peacemusic /app/music_files'
-
-docker compose up -d --build
-```
-
-Не используйте `docker compose down -v`: `-v` удаляет named volumes.
 
 ### SOCKS-прокси на Docker-хосте
 
@@ -147,6 +184,8 @@ BOT_PROMPT_HOST_FILE=./prompt.txt
 - `GEMINI_TEMPERATURE` / `GEMINI_TOP_P` — параметры генерации (`1.0` / `0.95`)
 - `GEMINI_REQUEST_TIMEOUT_MS` — тайм-аут одного запроса Gemini в миллисекундах (`24000`)
 - `MUSIC_DIRECTORY` — путь для кэша/локальных файлов (по умолчанию `music_files`)
+- `APP_DATA_HOST_DIR` — host-каталог базы и кэша yt-dlp для Docker (по умолчанию `./data`)
+- `MUSIC_FILES_HOST_DIR` — host-каталог музыкальных файлов для Docker (по умолчанию `./music_files`)
 - `BOT_PROMPT_FILE` — путь к prompt при локальном запуске
 - `BOT_PROMPT_HOST_FILE` — host-путь к prompt для Docker Compose
 - `YTDL_USE_COOKIES` — включает cookies для `yt-dlp` (по умолчанию `false`)
@@ -182,7 +221,7 @@ BOT_PROMPT_HOST_FILE=./prompt.txt
 
 ## Cookies для yt-dlp
 - По умолчанию cookies выключены.
-- Для Docker выставь `YTDL_USE_COOKIES=true` и `YTDL_COOKIE_HOST_FILE=./data/cookies.txt`. Compose монтирует файл с хоста read-only как `/app/config/cookies.txt`; в named volume он не копируется.
+- Для Docker выставь `YTDL_USE_COOKIES=true` и `YTDL_COOKIE_HOST_FILE=./data/cookies.txt`. Compose монтирует файл с хоста read-only как `/app/config/cookies.txt`; в образ он не копируется.
 - После изменения пути или содержимого файла выполни `docker compose up -d --force-recreate`: редактор может заменить inode файла, а обычный `restart` не пересоздаёт bind mount.
 - Файл должен начинаться с `# Netscape HTTP Cookie File` и быть доступен пользователю контейнера для чтения (например, `chmod 644 data/cookies.txt`).
 
