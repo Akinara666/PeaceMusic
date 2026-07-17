@@ -154,6 +154,47 @@ class MemoryStoreTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual([match.content_text for match in excluded_matches], ["dogs"])
 
+    async def test_semantic_matches_include_durable_memory_but_exclude_tools(
+        self,
+    ) -> None:
+        embedding = np.asarray([1.0, 0.0], dtype=np.float32)
+        await self.store.store_message(
+            channel_id=8,
+            discord_message_id=None,
+            role="memory",
+            author_id=None,
+            author_name="memory:bob",
+            content_text="Bob likes synthwave",
+            created_at="2026-03-15 18:00:00",
+            embedding=embedding,
+            embedding_model="embed-model",
+        )
+        await self.store.store_message(
+            channel_id=8,
+            discord_message_id=None,
+            role="tool",
+            author_id=None,
+            author_name="agent:remember",
+            content_text="Internal tool event",
+            created_at="2026-03-15 18:01:00",
+            embedding=embedding,
+            embedding_model="embed-model",
+        )
+
+        matches = await self.store.get_semantic_matches(
+            channel_id=8,
+            query_embedding=embedding,
+            embedding_model="embed-model",
+            limit=5,
+            min_score=0.0,
+            half_life_days=0,
+        )
+
+        self.assertEqual(
+            [(match.role, match.content_text) for match in matches],
+            [("memory", "Bob likes synthwave")],
+        )
+
     async def test_format_memory_block_with_scores(self) -> None:
         match = SemanticMatch(
             id=1,
