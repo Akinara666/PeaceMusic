@@ -558,7 +558,7 @@ class MemoryStore:
                     WHERE channel_id = ?
                       AND embedding_model = ?
                       AND embedding IS NOT NULL
-                      AND role NOT IN ('tool', 'memory')
+                      AND role != 'tool'
                     ORDER BY id DESC
                     LIMIT ?
                     """,
