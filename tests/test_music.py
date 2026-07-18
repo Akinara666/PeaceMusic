@@ -337,3 +337,165 @@ class MusicHelperTests(unittest.TestCase):
         voice_client.stop.assert_called_once_with()
         source.cleanup.assert_not_called()
         queued_source.cleanup.assert_called_once_with()
+
+
+class PlaybackTransitionRaceTests(unittest.TestCase):
+    class VoiceClient:
+        def __init__(self, source) -> None:
+            self.source = source
+            self.connected = True
+            self.playing = True
+            self.paused = False
+            self.play_calls: list[object] = []
+            self.stop = Mock(side_effect=self._stop)
+            self.disconnect = AsyncMock(side_effect=self._disconnect)
+
+        def _stop(self) -> None:
+            self.playing = False
+            self.paused = False
+
+        async def _disconnect(self, *, force: bool) -> None:
+            self.connected = False
+
+        def is_connected(self) -> bool:
+            return self.connected
+
+        def is_playing(self) -> bool:
+            return self.playing
+
+        def is_paused(self) -> bool:
+            return self.paused
+
+        def play(self, source, *, after) -> None:
+            self.source = source
+            self.play_calls.append(source)
+            self.playing = True
+            self.paused = False
+
+        def pause(self) -> None:
+            self.playing = False
+            self.paused = True
+
+        def resume(self) -> None:
+            self.playing = True
+            self.paused = False
+
+    def _make_player(self):
+        player = music_module.Music(SimpleNamespace(loop=object()), _guild_id=1)
+        old_source = Mock()
+        track = music_module.QueuedTrack(
+            source=old_source,
+            title="Current",
+            requester=SimpleNamespace(),
+            stream_url="https://example.test/current.webm",
+            reload_query="https://example.test/watch",
+            should_stream=True,
+        )
+        voice_client = self.VoiceClient(old_source)
+        player.current = track
+        player.voice_client = voice_client
+        channel = SimpleNamespace(send=AsyncMock())
+        message = SimpleNamespace(
+            id=1,
+            guild=SimpleNamespace(id=1),
+            author=SimpleNamespace(
+                guild_permissions=SimpleNamespace(manage_guild=True),
+            ),
+            channel=channel,
+            reply=AsyncMock(),
+        )
+        return player, track, voice_client, message
+
+    async def _start_blocked_seek(self, player, message):
+        refresh_started = asyncio.Event()
+        release_refresh = asyncio.Event()
+        prepared_source = Mock()
+
+        async def refresh(prepared_track, **kwargs):
+            refresh_started.set()
+            await release_refresh.wait()
+            prepared_track.source = prepared_source
+            prepared_track.source_prepared = True
+            return True
+
+        refresh_mock = AsyncMock(side_effect=refresh)
+        patcher = patch.object(player, "_refresh_track_source", new=refresh_mock)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        seek_task = asyncio.create_task(player.seek_func(message, "30"))
+        await refresh_started.wait()
+        return seek_task, release_refresh, prepared_source
+
+    def test_seek_preparation_is_discarded_after_skip(self) -> None:
+        async def scenario() -> None:
+            player, _track, voice_client, message = self._make_player()
+            seek_task, release_refresh, prepared_source = (
+                await self._start_blocked_seek(player, message)
+            )
+
+            await player.skip_func(message)
+            release_refresh.set()
+            result = await seek_task
+
+            self.assertEqual(result.text, "Трек изменился")
+            self.assertIsNone(player.current)
+            self.assertEqual(voice_client.play_calls, [])
+            prepared_source.cleanup.assert_called_once_with()
+
+        asyncio.run(scenario())
+
+    def test_seek_commits_prepared_clone_when_state_is_current(self) -> None:
+        async def scenario() -> None:
+            player, track, voice_client, message = self._make_player()
+            seek_task, release_refresh, prepared_source = (
+                await self._start_blocked_seek(player, message)
+            )
+
+            release_refresh.set()
+            result = await seek_task
+
+            self.assertEqual(result.text, "Перемотала на 00:30")
+            self.assertIsNot(player.current, track)
+            self.assertIs(player.current.source, prepared_source)
+            self.assertEqual(voice_client.play_calls, [prepared_source])
+            track.source.cleanup.assert_not_called()
+
+        asyncio.run(scenario())
+
+    def test_seek_preparation_is_discarded_after_natural_eof(self) -> None:
+        async def scenario() -> None:
+            player, _track, voice_client, message = self._make_player()
+            seek_task, release_refresh, prepared_source = (
+                await self._start_blocked_seek(player, message)
+            )
+
+            voice_client.playing = False
+            await player._handle_after_playback(None)
+            release_refresh.set()
+            result = await seek_task
+
+            self.assertEqual(result.text, "Трек изменился")
+            self.assertIsNone(player.current)
+            self.assertEqual(voice_client.play_calls, [])
+            prepared_source.cleanup.assert_called_once_with()
+
+        asyncio.run(scenario())
+
+    def test_seek_preparation_is_discarded_after_disconnect(self) -> None:
+        async def scenario() -> None:
+            player, _track, voice_client, message = self._make_player()
+            seek_task, release_refresh, prepared_source = (
+                await self._start_blocked_seek(player, message)
+            )
+
+            await player.disconnect_func(message)
+            release_refresh.set()
+            result = await seek_task
+
+            self.assertEqual(result.text, "Трек изменился")
+            self.assertIsNone(player.current)
+            self.assertIsNone(player.voice_client)
+            self.assertEqual(voice_client.play_calls, [])
+            prepared_source.cleanup.assert_called_once_with()
+
+        asyncio.run(scenario())

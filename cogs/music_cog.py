@@ -9,7 +9,7 @@ import shlex
 import threading
 import time as time_module
 from collections import OrderedDict, deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable, Deque, Optional
 from urllib.parse import urlparse
@@ -705,22 +705,24 @@ class Music(commands.Cog):
 
     async def disconnect_all(self) -> None:
         for player in list(self._guild_players.values()):
-            source_owned_by_player = bool(
-                player.voice_client
-                and (
-                    player.voice_client.is_playing() or player.voice_client.is_paused()
+            async with player._play_lock:
+                source_owned_by_player = bool(
+                    player.voice_client
+                    and (
+                        player.voice_client.is_playing()
+                        or player.voice_client.is_paused()
+                    )
                 )
-            )
-            if player.voice_client is not None:
-                with contextlib.suppress(Exception):
-                    await player.voice_client.disconnect(force=True)
-            player.voice_client = None
-            player._cleanup_queue()
-            player._cleanup_track_file(
-                player.current,
-                cleanup_source=not source_owned_by_player,
-            )
-            player.current = None
+                if player.voice_client is not None:
+                    with contextlib.suppress(Exception):
+                        await player.voice_client.disconnect(force=True)
+                player.voice_client = None
+                player._cleanup_queue()
+                player._cleanup_track_file(
+                    player.current,
+                    cleanup_source=not source_owned_by_player,
+                )
+                player.current = None
 
     def _cleanup_track_file(
         self,
@@ -749,6 +751,22 @@ class Music(commands.Cog):
         for track in list(self.queue):
             self._cleanup_track_file(track)
         self.queue.clear()
+
+    def _discard_prepared_track(
+        self,
+        prepared_track: QueuedTrack,
+        original_track: QueuedTrack,
+    ) -> None:
+        """Clean resources created while preparing a stale state transition."""
+        if prepared_track.source is not original_track.source:
+            with contextlib.suppress(Exception):
+                prepared_track.source.cleanup()
+        if (
+            prepared_track.local_path
+            and prepared_track.local_path != original_track.local_path
+        ):
+            with contextlib.suppress(FileNotFoundError, OSError):
+                prepared_track.local_path.unlink()
 
     def _result(
         self, text: str, *, user_notified: bool = False
@@ -1421,69 +1439,79 @@ class Music(commands.Cog):
                 self._cleanup_track_file(track)
 
     async def _restart_current_stream(self) -> None:
-        if not self.voice_client or not self.current or not self.current.should_stream:
-            return
-        if self.current.local_path:
-            return
         async with self._restart_lock:
-            now = time_module.monotonic()
-            if self._restart_cooldown_active(now):
-                return
-            self._last_restart_attempt_monotonic = now
-            current_track = self.current
-            if not current_track or current_track is not self.current:
-                return
-            target_url = (
-                current_track.reload_query
-                or current_track.webpage_url
-                or current_track.stream_url
-            )
-            if not target_url:
-                return
-            seek_seconds = max(0, self._current_progress_seconds() - 2)
+            async with self._play_lock:
+                voice_client = self.voice_client
+                current_track = self.current
+                if (
+                    not voice_client
+                    or not current_track
+                    or not current_track.should_stream
+                    or current_track.local_path
+                ):
+                    return
+                now = time_module.monotonic()
+                if self._restart_cooldown_active(now):
+                    return
+                self._last_restart_attempt_monotonic = now
+                target_url = (
+                    current_track.reload_query
+                    or current_track.webpage_url
+                    or current_track.stream_url
+                )
+                if not target_url:
+                    return
+                seek_seconds = max(0, self._current_progress_seconds() - 2)
+                prepared_track = replace(current_track)
+
             logger.warning(
                 "Playback stalled, attempting to restart stream for %s", target_url
             )
             try:
                 refreshed = await self._refresh_track_source(
-                    current_track,
+                    prepared_track,
                     seek=seek_seconds,
                     force_extract=True,
                     cleanup_existing=False,
                     follow_playback_progress=True,
                 )
             except DownloadError as exc:
+                self._discard_prepared_track(prepared_track, current_track)
                 logger.warning("Failed to restart stream %s: %s", target_url, exc)
                 return
             except Exception:
+                self._discard_prepared_track(prepared_track, current_track)
                 logger.exception(
                     "Unexpected error during stream restart for %s", target_url
                 )
                 return
 
             if not refreshed:
+                self._discard_prepared_track(prepared_track, current_track)
                 return
             seek_seconds = max(0, self._current_progress_seconds() - 2)
 
             async with self._play_lock:
                 if (
                     current_track is not self.current
-                    or not self.voice_client
-                    or not self.voice_client.is_connected()
+                    or voice_client is not self.voice_client
+                    or not voice_client.is_connected()
+                    or (not voice_client.is_playing() and not voice_client.is_paused())
                 ):
-                    with contextlib.suppress(Exception):
-                        current_track.source.cleanup()
+                    self._discard_prepared_track(prepared_track, current_track)
                     return
 
                 self._stop_voice_client_for_replace()
+                self.current = prepared_track
                 try:
-                    self.voice_client.play(
-                        current_track.source,
+                    voice_client.play(
+                        prepared_track.source,
                         after=self._after_playback,
                     )
                 except Exception:
-                    with contextlib.suppress(Exception):
-                        current_track.source.cleanup()
+                    self.current = None
+                    self._reset_playback_timers()
+                    self._discard_prepared_track(prepared_track, current_track)
                     logger.exception(
                         "Failed to restart playback for %s", current_track.title
                     )
@@ -1829,10 +1857,20 @@ class Music(commands.Cog):
         if denied:
             return denied
         lowercase_query = song_name.lower()
-        if self.current and lowercase_query in self.current.title.lower():
-            skipped_title = self.current.title
-            async with self._play_lock:
-                await self._skip_current_track()
+        skipped_title: Optional[str] = None
+        removed_track: Optional[QueuedTrack] = None
+        async with self._play_lock:
+            if self.current and lowercase_query in self.current.title.lower():
+                skipped_title = await self._skip_current_track()
+            else:
+                for track in list(self.queue):
+                    if lowercase_query in track.title.lower():
+                        self.queue.remove(track)
+                        self._cleanup_track_file(track)
+                        removed_track = track
+                        break
+
+        if skipped_title is not None:
             notified = await self._safe_reply(
                 message, content=f"Пропущен текущий трек: {skipped_title}"
             )
@@ -1840,18 +1878,14 @@ class Music(commands.Cog):
                 f"Пропущен текущий трек: {skipped_title}",
                 user_notified=notified,
             )
-
-        for track in list(self.queue):
-            if lowercase_query in track.title.lower():
-                self.queue.remove(track)
-                self._cleanup_track_file(track)
-                notified = await self._safe_reply(
-                    message, content=f"Удалено из очереди: {track.title}"
-                )
-                return self._result(
-                    f"Удалено из очереди: {track.title}",
-                    user_notified=notified,
-                )
+        if removed_track is not None:
+            notified = await self._safe_reply(
+                message, content=f"Удалено из очереди: {removed_track.title}"
+            )
+            return self._result(
+                f"Удалено из очереди: {removed_track.title}",
+                user_notified=notified,
+            )
         notified = await self._safe_reply(
             message, content="Такой трек не найден в очереди."
         )
@@ -1864,23 +1898,24 @@ class Music(commands.Cog):
         denied = await self._control_denied(message)
         if denied:
             return denied
-        self.loop_mode = "off"
-        self._replay_track = None
-        self._cleanup_queue()
-        current_track = self.current
-        self.current = None
-        self._reset_playback_timers()
-        source_owned_by_player = bool(
-            self.voice_client
-            and (self.voice_client.is_playing() or self.voice_client.is_paused())
-        )
-        if source_owned_by_player:
-            self._suppress_after_callback_once()
-            self.voice_client.stop()
-        self._cleanup_track_file(
-            current_track,
-            cleanup_source=not source_owned_by_player,
-        )
+        async with self._play_lock:
+            self.loop_mode = "off"
+            self._replay_track = None
+            self._cleanup_queue()
+            current_track = self.current
+            self.current = None
+            self._reset_playback_timers()
+            source_owned_by_player = bool(
+                self.voice_client
+                and (self.voice_client.is_playing() or self.voice_client.is_paused())
+            )
+            if source_owned_by_player:
+                self._suppress_after_callback_once()
+                self.voice_client.stop()
+            self._cleanup_track_file(
+                current_track,
+                cleanup_source=not source_owned_by_player,
+            )
         notified = await self._safe_reply(
             message, content="Очередь очищена и воспроизведение остановлено."
         )
@@ -1893,7 +1928,8 @@ class Music(commands.Cog):
         denied = await self._control_denied(message)
         if denied:
             return denied
-        voice_client = await self._ensure_voice_client(message)
+        async with self._play_lock:
+            voice_client = await self._ensure_voice_client(message)
         if not voice_client:
             notified = await self._safe_reply(
                 message, content="Ты не подключен к голосовому каналу."
@@ -1912,26 +1948,27 @@ class Music(commands.Cog):
         denied = await self._control_denied(message)
         if denied:
             return denied
-        self.loop_mode = "off"
-        self._replay_track = None
-        current_track = self.current
-        self.current = None
-        self._reset_playback_timers()
-        self._cleanup_queue()
-        source_owned_by_player = bool(
-            self.voice_client
-            and (self.voice_client.is_playing() or self.voice_client.is_paused())
-        )
-        if self.voice_client:
-            if source_owned_by_player:
-                self._suppress_after_callback_once()
-                self.voice_client.stop()
-            await self.voice_client.disconnect(force=True)
-            self.voice_client = None
-        self._cleanup_track_file(
-            current_track,
-            cleanup_source=not source_owned_by_player,
-        )
+        async with self._play_lock:
+            self.loop_mode = "off"
+            self._replay_track = None
+            current_track = self.current
+            self.current = None
+            self._reset_playback_timers()
+            self._cleanup_queue()
+            source_owned_by_player = bool(
+                self.voice_client
+                and (self.voice_client.is_playing() or self.voice_client.is_paused())
+            )
+            if self.voice_client:
+                if source_owned_by_player:
+                    self._suppress_after_callback_once()
+                    self.voice_client.stop()
+                await self.voice_client.disconnect(force=True)
+                self.voice_client = None
+            self._cleanup_track_file(
+                current_track,
+                cleanup_source=not source_owned_by_player,
+            )
         notified = await self._safe_reply(
             message, content="Отключилась от канала и очистила очередь."
         )
@@ -1946,18 +1983,6 @@ class Music(commands.Cog):
         denied = await self._control_denied(message)
         if denied:
             return denied
-        if (
-            not self.voice_client
-            or (
-                not self.voice_client.is_playing() and not self.voice_client.is_paused()
-            )
-            or not self.current
-        ):
-            notified = await self._safe_reply(
-                message, content="Сейчас ничего не играет."
-            )
-            return self._result("Нет трека для перемотки", user_notified=notified)
-
         try:
             seconds = parse_time(time)
         except ValueError:
@@ -1966,53 +1991,105 @@ class Music(commands.Cog):
             )
             return self._result("Некорректное время", user_notified=notified)
 
-        if not self.current.stream_url and not self.current.local_path:
+        unavailable = False
+        async with self._play_lock:
+            voice_client = self.voice_client
+            current_track = self.current
+            if (
+                not voice_client
+                or not current_track
+                or (not voice_client.is_playing() and not voice_client.is_paused())
+            ):
+                current_track = None
+            elif not current_track.stream_url and not current_track.local_path:
+                unavailable = True
+            else:
+                prepared_track = replace(current_track)
+
+        if current_track is None:
+            notified = await self._safe_reply(
+                message, content="Сейчас ничего не играет."
+            )
+            return self._result("Нет трека для перемотки", user_notified=notified)
+        if unavailable:
             notified = await self._safe_reply(
                 message, content="Для этого трека перемотка недоступна."
             )
             return self._result("Перемотка недоступна", user_notified=notified)
 
-        was_paused = self.voice_client.is_paused()
         try:
             refreshed = await self._refresh_track_source(
-                self.current,
+                prepared_track,
                 seek=seconds,
                 cleanup_existing=False,
             )
         except DownloadError as exc:
-            logger.warning("Failed to seek %s: %s", self.current.title, exc)
+            self._discard_prepared_track(prepared_track, current_track)
+            logger.warning("Failed to seek %s: %s", current_track.title, exc)
             notified = await self._safe_reply(
                 message, content="Не удалось перемотать трек."
             )
             return self._result("Ошибка перемотки", user_notified=notified)
         except Exception:
-            logger.exception("Unexpected seek error for %s", self.current.title)
+            self._discard_prepared_track(prepared_track, current_track)
+            logger.exception("Unexpected seek error for %s", current_track.title)
             notified = await self._safe_reply(
                 message, content="Не удалось перемотать трек."
             )
             return self._result("Ошибка перемотки", user_notified=notified)
 
         if not refreshed:
+            self._discard_prepared_track(prepared_track, current_track)
             notified = await self._safe_reply(
                 message, content="Для этого трека перемотка недоступна."
             )
             return self._result("Перемотка недоступна", user_notified=notified)
 
-        self._stop_voice_client_for_replace()
-        try:
-            self.voice_client.play(self.current.source, after=self._after_playback)
-        except Exception:
-            logger.exception(
-                "Failed to resume playback after seek for %s", self.current.title
+        stale_transition = False
+        playback_failed = False
+        async with self._play_lock:
+            if (
+                current_track is not self.current
+                or voice_client is not self.voice_client
+                or not voice_client.is_connected()
+                or (not voice_client.is_playing() and not voice_client.is_paused())
+            ):
+                stale_transition = True
+                self._discard_prepared_track(prepared_track, current_track)
+            else:
+                was_paused = voice_client.is_paused()
+                self._stop_voice_client_for_replace()
+                self.current = prepared_track
+                try:
+                    voice_client.play(
+                        prepared_track.source,
+                        after=self._after_playback,
+                    )
+                except Exception:
+                    playback_failed = True
+                    self.current = None
+                    self._reset_playback_timers()
+                    self._discard_prepared_track(prepared_track, current_track)
+                    logger.exception(
+                        "Failed to resume playback after seek for %s",
+                        current_track.title,
+                    )
+                else:
+                    self._mark_playback_started(start_at=seconds)
+                    if was_paused:
+                        voice_client.pause()
+                        self._paused_at_monotonic = time_module.monotonic()
+
+        if stale_transition:
+            notified = await self._safe_reply(
+                message, content="Трек изменился до завершения перемотки."
             )
+            return self._result("Трек изменился", user_notified=notified)
+        if playback_failed:
             notified = await self._safe_reply(
                 message, content="Не удалось перемотать трек."
             )
             return self._result("Ошибка перемотки", user_notified=notified)
-        self._mark_playback_started(start_at=seconds)
-        if was_paused:
-            self.voice_client.pause()
-            self._paused_at_monotonic = time_module.monotonic()
         notified = await self._safe_reply(
             message, content=f"Перемотала на {format_duration(seconds)}"
         )
@@ -2028,9 +2105,12 @@ class Music(commands.Cog):
         denied = await self._control_denied(message)
         if denied:
             return denied
-        if self.voice_client and self.voice_client.is_playing():
-            self.voice_client.pause()
-            self._paused_at_monotonic = time_module.monotonic()
+        async with self._play_lock:
+            paused = bool(self.voice_client and self.voice_client.is_playing())
+            if paused:
+                self.voice_client.pause()
+                self._paused_at_monotonic = time_module.monotonic()
+        if paused:
             notified = await self._safe_reply(
                 message, content="Воспроизведение приостановлено."
             )
@@ -2044,17 +2124,20 @@ class Music(commands.Cog):
         denied = await self._control_denied(message)
         if denied:
             return denied
-        if self.voice_client and self.voice_client.is_paused():
-            self.voice_client.resume()
-            if (
-                self._paused_at_monotonic is not None
-                and self._track_start_monotonic is not None
-            ):
-                self._track_start_monotonic += (
-                    time_module.monotonic() - self._paused_at_monotonic
-                )
-            self._paused_at_monotonic = None
-            self._touch_audio_heartbeat()
+        async with self._play_lock:
+            resumed = bool(self.voice_client and self.voice_client.is_paused())
+            if resumed:
+                self.voice_client.resume()
+                if (
+                    self._paused_at_monotonic is not None
+                    and self._track_start_monotonic is not None
+                ):
+                    self._track_start_monotonic += (
+                        time_module.monotonic() - self._paused_at_monotonic
+                    )
+                self._paused_at_monotonic = None
+                self._touch_audio_heartbeat()
+        if resumed:
             notified = await self._safe_reply(
                 message, content="Воспроизведение продолжено."
             )
@@ -2187,12 +2270,15 @@ class Music(commands.Cog):
         denied = await self._control_denied(message)
         if denied:
             return denied
-        if not self.queue:
+        async with self._play_lock:
+            queue_empty = not self.queue
+            if not queue_empty:
+                queue_list = list(self.queue)
+                random.shuffle(queue_list)
+                self.queue.clear()
+                self.queue.extend(queue_list)
+        if queue_empty:
             return self._result("Очередь пуста, нечего перемешивать.")
-        queue_list = list(self.queue)
-        random.shuffle(queue_list)
-        self.queue.clear()
-        self.queue.extend(queue_list)
         notified = await self._safe_reply(message, content="Очередь перемешана.")
         return self._result("Очередь перемешана", user_notified=notified)
 
@@ -2205,11 +2291,14 @@ class Music(commands.Cog):
         denied = await self._control_denied(message)
         if denied:
             return denied
-        if not self.queue:
+        async with self._play_lock:
+            queue_empty = not self.queue
+            if not queue_empty:
+                self._cleanup_queue()
+                if self.loop_mode == "queue":
+                    self.loop_mode = "off"
+        if queue_empty:
             return self._result("Очередь и так пуста.")
-        self._cleanup_queue()
-        if self.loop_mode == "queue":
-            self.loop_mode = "off"
         notified = await self._safe_reply(
             message, content="Очередь очищена (текущий трек продолжает играть)."
         )
@@ -2224,18 +2313,23 @@ class Music(commands.Cog):
         denied = await self._control_denied(message)
         if denied:
             return denied
-        if not self.queue:
+        removed_track: Optional[QueuedTrack] = None
+        async with self._play_lock:
+            queue_size = len(self.queue)
+            if 1 <= index <= queue_size:
+                removed_track = self.queue[index - 1]
+                del self.queue[index - 1]
+                self._cleanup_track_file(removed_track)
+        if queue_size == 0:
             return self._result("Очередь пуста.")
-        if index < 1 or index > len(self.queue):
-            return self._result(f"Неверный индекс. В очереди {len(self.queue)} треков.")
-
-        track = self.queue[index - 1]
-        del self.queue[index - 1]
-        self._cleanup_track_file(track)
+        if removed_track is None:
+            return self._result(f"Неверный индекс. В очереди {queue_size} треков.")
         notified = await self._safe_reply(
-            message, content=f"Удалено из очереди: {track.title}"
+            message, content=f"Удалено из очереди: {removed_track.title}"
         )
-        return self._result(f"Удален трек: {track.title}", user_notified=notified)
+        return self._result(
+            f"Удален трек: {removed_track.title}", user_notified=notified
+        )
 
     async def set_loop_mode_func(
         self, message: discord.Message, mode: str
@@ -2252,7 +2346,8 @@ class Music(commands.Cog):
                 "Неизвестный режим. Используйте 'off', 'track' или 'queue'."
             )
 
-        self.loop_mode = mode
+        async with self._play_lock:
+            self.loop_mode = mode
         modes_tr = {"off": "Выключен", "track": "Текущий трек", "queue": "Вся очередь"}
         notified = await self._safe_reply(
             message, content=f"Режим повтора установлен на: {modes_tr[mode]}."
@@ -2276,8 +2371,16 @@ class Music(commands.Cog):
                 "Недопустимое значение громкости", user_notified=notified
             )
 
-        self._volume = level
-        if not self.voice_client:
+        async with self._play_lock:
+            self._volume = level
+            voice_client = self.voice_client
+            source = getattr(voice_client, "source", None)
+            if source is not None and hasattr(source, "volume"):
+                source.volume = level
+                active_source_updated = True
+            else:
+                active_source_updated = False
+        if not voice_client:
             notified = await self._safe_reply(
                 message,
                 content=f"Громкость по умолчанию установлена на {int(level * 100)}%.",
@@ -2287,9 +2390,7 @@ class Music(commands.Cog):
                 user_notified=notified,
             )
 
-        source = self.voice_client.source
-        if hasattr(source, "volume"):
-            source.volume = level
+        if active_source_updated:
             notified = await self._safe_reply(
                 message, content=f"Громкость установлена на {int(level * 100)}%."
             )
@@ -2539,26 +2640,30 @@ class Music(commands.Cog):
             await player._check_for_inactivity_once()
 
     async def _check_for_inactivity_once(self) -> None:
-        now = time_module.monotonic()
-        if self.voice_client and self.voice_client.is_connected():
-            if not self.voice_client.is_playing() and not self.voice_client.is_paused():
-                last_time = self._last_audio_time or now
-                if now - last_time > 1800:
-                    await self.voice_client.disconnect(force=True)
-                    self.voice_client = None
-        if not self.voice_client or not self.voice_client.is_connected():
-            if self.voice_client and (
-                self.voice_client.is_playing() or self.voice_client.is_paused()
-            ):
-                # discord.py keeps AudioPlayer alive during a transient voice
-                # reconnect. Its source must remain valid until it resumes or
-                # the player thread exits by itself.
-                return
-            self._cleanup_queue()
-            self._cleanup_track_file(self.current)
-            self.current = None
-            self._replay_track = None
-            self._reset_playback_timers()
+        async with self._play_lock:
+            now = time_module.monotonic()
+            if self.voice_client and self.voice_client.is_connected():
+                if (
+                    not self.voice_client.is_playing()
+                    and not self.voice_client.is_paused()
+                ):
+                    last_time = self._last_audio_time or now
+                    if now - last_time > 1800:
+                        await self.voice_client.disconnect(force=True)
+                        self.voice_client = None
+            if not self.voice_client or not self.voice_client.is_connected():
+                if self.voice_client and (
+                    self.voice_client.is_playing() or self.voice_client.is_paused()
+                ):
+                    # discord.py keeps AudioPlayer alive during a transient voice
+                    # reconnect. Its source must remain valid until it resumes or
+                    # the player thread exits by itself.
+                    return
+                self._cleanup_queue()
+                self._cleanup_track_file(self.current)
+                self.current = None
+                self._replay_track = None
+                self._reset_playback_timers()
 
     async def _handle_voice_disconnect_event(self, guild: discord.Guild) -> None:
         """Preserve playback while discord.py performs an automatic reconnect.
@@ -2567,7 +2672,8 @@ class Music(commands.Cog):
         discord.py deliberately keeps the VoiceClient and AudioPlayer alive in
         that case, so cleaning the source here would race with AudioPlayer.read.
         """
-        voice_client = self.voice_client
+        async with self._play_lock:
+            voice_client = self.voice_client
         source_owned_by_player = False
         if voice_client is not None:
             # The protocol handler and Cog listener are dispatched as separate
@@ -2575,33 +2681,37 @@ class Music(commands.Cog):
             # to either retain the cached client for reconnect or remove it for
             # a permanent disconnect.
             await asyncio.sleep(VOICE_STATE_SETTLE_SECONDS)
+        async with self._play_lock:
             if self.voice_client is not voice_client:
                 return
-            if voice_client.is_connected() or guild.voice_client is voice_client:
+            if voice_client is not None and (
+                voice_client.is_connected() or guild.voice_client is voice_client
+            ):
                 logger.info(
                     "Voice connection interrupted; preserving playback for reconnect"
                 )
                 return
 
-            source_owned_by_player = (
-                voice_client.is_playing() or voice_client.is_paused()
-            )
-            if source_owned_by_player:
-                self._suppress_after_callback_once()
-                voice_client.stop()
+            if voice_client is not None:
+                source_owned_by_player = (
+                    voice_client.is_playing() or voice_client.is_paused()
+                )
+                if source_owned_by_player:
+                    self._suppress_after_callback_once()
+                    voice_client.stop()
 
-        current_track = self.current
-        self.voice_client = None
-        self._cleanup_queue()
-        # If there was an AudioPlayer, its thread owns source cleanup. Avoid
-        # invalidating FFmpeg stdout while that thread may still be reading.
-        self._cleanup_track_file(
-            current_track,
-            cleanup_source=not source_owned_by_player,
-        )
-        self.current = None
-        self._replay_track = None
-        self._reset_playback_timers()
+            current_track = self.current
+            self.voice_client = None
+            self._cleanup_queue()
+            # If there was an AudioPlayer, its thread owns source cleanup. Avoid
+            # invalidating FFmpeg stdout while that thread may still be reading.
+            self._cleanup_track_file(
+                current_track,
+                cleanup_source=not source_owned_by_player,
+            )
+            self.current = None
+            self._replay_track = None
+            self._reset_playback_timers()
 
     @check_for_inactivity.before_loop
     async def before_check_for_inactivity(self) -> None:
