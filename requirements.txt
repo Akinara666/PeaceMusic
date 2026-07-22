@@ -2,7 +2,7 @@ discord.py==2.7.1
 google-genai==1.65.0
 httpx[socks]==0.28.1
 numpy==2.3.3
-yt-dlp==2026.6.9
+yt-dlp==2026.7.4
 uvloop==0.22.1; platform_system != "Windows"
 PyNaCl==1.6.2
 yt-dlp-ejs==0.8.0
