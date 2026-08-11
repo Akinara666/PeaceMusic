@@ -92,6 +92,29 @@ class ConfigTests(unittest.TestCase):
         self.assertIn("cookiefile", settings.audio.ytdl_options)
         self.assertEqual(settings.audio.ytdl_options["cookiefile"], str(cookie_path))
 
+    def test_load_settings_configures_youtube_pot_provider(self) -> None:
+        mock_env = {
+            "DISCORD_BOT_TOKEN": "test_token",
+            "GEMINI_API_KEY": "test_key",
+            "YTDL_POT_PROVIDER_URL": "http://bgutil-provider:4416/",
+        }
+
+        with patch.dict(os.environ, mock_env, clear=True):
+            config_module = load_project_module(
+                "test_config_module_pot_provider", "config.py"
+            )
+            settings = config_module.load_settings()
+
+        self.assertEqual(
+            settings.audio.ytdl_options["extractor_args"],
+            {
+                "youtube": {"player_client": ["default", "mweb"]},
+                "youtubepot-bgutilhttp": {
+                    "base_url": ["http://bgutil-provider:4416"]
+                },
+            },
+        )
+
     def test_load_settings_rejects_invalid_cookie_file(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             cookie_path = Path(temporary_directory) / "cookies.txt"

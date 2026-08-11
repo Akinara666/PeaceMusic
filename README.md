@@ -244,12 +244,15 @@ YTDL_USE_COOKIES=true
 YTDL_COOKIE_HOST_FILE=./data/cookies.txt
 ```
 
-Compose mounts it read-only at `/app/config/cookies.txt`; it is not copied into
-the image. The export must use Netscape format and start with
+Compose mounts it read-write at `/app/config/cookies.txt` because yt-dlp updates
+the cookie jar; it is not copied into the image. The export must use Netscape format and start with
 `# Netscape HTTP Cookie File` (the shorter `# HTTP Cookie File` header is also
-accepted). Make it readable by the container user, for example with
-`chmod 644 data/cookies.txt`. After changing the path or contents, recreate the
+accepted). Make it writable by the container user. After changing the path or contents, recreate the
 container with `docker compose up -d --force-recreate`.
+
+Compose also starts a private `bgutil-provider` service and installs its yt-dlp
+plugin. This supplies the PO Tokens required by cookie-compatible YouTube web
+clients; port 4416 is exposed only to the Compose network.
 
 ---
 
@@ -320,6 +323,7 @@ putting those secrets directly in the environment.
 | `YTDL_USE_COOKIES` | `false` | Enable cookies for `yt‑dlp`. |
 | `YTDL_COOKIE_FILE` | `data/cookies.txt` | Netscape‑format cookies file for local Python runs. Compose sets the internal path automatically. |
 | `YTDL_COOKIE_HOST_FILE` | *(off)* | Docker host file mounted at `/app/config/cookies.txt`; for example `./data/cookies.txt`. |
+| `YTDL_POT_PROVIDER_URL` | *(off)* | BgUtils PO Token provider URL. Compose sets this to its bundled internal provider. |
 | `MUSIC_QUEUE_MAX_SIZE` | `50` | Maximum tracks in a guild queue. |
 | `MUSIC_ATTACHMENT_MAX_BYTES` | `25000000` | Maximum downloaded music-attachment size. |
 | `MEDIA_ALLOWED_DOMAINS` | YouTube and SoundCloud domains | Hosts accepted for remotely downloaded media. |
@@ -455,6 +459,7 @@ pip install -r requirements.txt
 | `ffmpeg was not found` | Install FFmpeg and make sure it's on `PATH`. On Debian/Ubuntu: `sudo apt install ffmpeg`. |
 | `No supported JavaScript runtime` from `yt-dlp` | Rebuild the current Docker image with `docker compose up -d --build`; for local installs, add **Deno 2.3+** (recommended) or **Node.js 22+**. |
 | YouTube playback fails with signature errors | Update `yt-dlp` and `yt-dlp-ejs` together, ensure a supported JS runtime is installed, then restart the bot. |
+| YouTube with account cookies reports `UNPLAYABLE`/`The page needs to be reloaded` | Rebuild and recreate both Compose services so the bundled PO Token provider and plugin are active. |
 | `403`/`age-restricted` from YouTube | Set `YTDL_USE_COOKIES=true`; in Docker also set `YTDL_COOKIE_HOST_FILE=./data/cookies.txt`, then recreate the container. |
 | `GEMINI_SOCKS_PROXY requires httpx[socks]` | Re‑install dependencies: `pip install -r requirements.txt`. |
 | Bot connects but does not respond to messages | Check `CHATBOT_CHANNEL_ID`, the bot's channel permissions, and that **Message Content Intent** is enabled in the developer portal. |

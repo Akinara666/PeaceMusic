@@ -236,6 +236,7 @@ def _build_ytdl_options(
     use_cookies: bool,
     cookies_file: Optional[Path],
     cache_dir: Path,
+    pot_provider_url: Optional[str],
 ) -> dict:
     """
     Optimized for 1 vCPU / 2GB RAM.
@@ -244,10 +245,9 @@ def _build_ytdl_options(
     - cachedir: Persist yt-dlp's player/signature cache so the expensive
       YouTube JS player (n-sig deciphering) is not re-fetched on every track.
 
-    NOTE: do not pin youtube `player_client` here. Letting yt-dlp pick its
-    default clients keeps playback working as YouTube rolls out SABR/DRM
-    experiments; hard-pinning clients (e.g. tv/web_safari) breaks extraction
-    on datacenter IPs without a PO token.
+    When a PO Token provider is configured, add mweb alongside yt-dlp's
+    defaults. mweb supports account cookies and can use provider-generated GVS
+    tokens when tv_downgraded/web_safari are unavailable for an account.
     """
     options = {
         "format": "bestaudio[acodec=opus]/bestaudio[ext=webm]/bestaudio/best",
@@ -269,6 +269,11 @@ def _build_ytdl_options(
         "retries": 3,
         "fragment_retries": 20,
     }
+    if pot_provider_url:
+        options["extractor_args"] = {
+            "youtube": {"player_client": ["default", "mweb"]},
+            "youtubepot-bgutilhttp": {"base_url": [pot_provider_url]},
+        }
     if use_cookies and cookies_file is not None:
         options["cookiefile"] = str(cookies_file)
     return options
@@ -397,6 +402,9 @@ def load_settings() -> AppSettings:
 
     prompt_file_raw = _get_env("BOT_PROMPT_FILE")
     ytdl_use_cookies = _get_env_bool("YTDL_USE_COOKIES", default=False)
+    ytdl_pot_provider_url = (
+        _get_env("YTDL_POT_PROVIDER_URL") or ""
+    ).strip().rstrip("/") or None
     cookies_file_raw = _get_env("YTDL_COOKIE_FILE") or "data/cookies.txt"
     cookies_file: Optional[Path] = None
     if ytdl_use_cookies:
@@ -545,6 +553,7 @@ def load_settings() -> AppSettings:
             use_cookies=ytdl_use_cookies,
             cookies_file=cookies_file,
             cache_dir=ytdl_cache_dir,
+            pot_provider_url=ytdl_pot_provider_url,
         ),
         ffmpeg_options=_build_ffmpeg_options(
             rw_timeout_seconds=ffmpeg_rw_timeout_seconds

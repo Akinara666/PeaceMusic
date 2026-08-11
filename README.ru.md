@@ -191,6 +191,7 @@ BOT_PROMPT_HOST_FILE=./prompt.txt
 - `YTDL_USE_COOKIES` — включает cookies для `yt-dlp` (по умолчанию `false`)
 - `YTDL_COOKIE_FILE` — путь к cookies-файлу в формате Netscape для локального запуска; внутри Docker Compose задаёт путь автоматически
 - `YTDL_COOKIE_HOST_FILE` — путь к cookies-файлу на Docker-хосте, например `./data/cookies.txt`
+- `YTDL_POT_PROVIDER_URL` — URL BgUtils PO Token provider; Docker Compose задаёт адрес встроенного сервиса автоматически
 - `YTDL_CACHE_DIR` — постоянный кэш yt-dlp (по умолчанию `data/ytdl_cache`)
 - `MUSIC_QUEUE_MAX_SIZE` — максимальный размер очереди (`50`)
 - `MUSIC_STREAM_BUFFER_SECONDS` — запас декодированного PCM (`20` секунд, примерно 192 КБ на секунду для каждой гильдии)
@@ -221,9 +222,10 @@ BOT_PROMPT_HOST_FILE=./prompt.txt
 
 ## Cookies для yt-dlp
 - По умолчанию cookies выключены.
-- Для Docker выставь `YTDL_USE_COOKIES=true` и `YTDL_COOKIE_HOST_FILE=./data/cookies.txt`. Compose монтирует файл с хоста read-only как `/app/config/cookies.txt`; в образ он не копируется.
+- Для Docker выставь `YTDL_USE_COOKIES=true` и `YTDL_COOKIE_HOST_FILE=./data/cookies.txt`. Compose монтирует файл с хоста read-write как `/app/config/cookies.txt`, потому что yt-dlp обновляет cookie jar; в образ он не копируется.
 - После изменения пути или содержимого файла выполни `docker compose up -d --force-recreate`: редактор может заменить inode файла, а обычный `restart` не пересоздаёт bind mount.
-- Файл должен начинаться с `# Netscape HTTP Cookie File` и быть доступен пользователю контейнера для чтения (например, `chmod 644 data/cookies.txt`).
+- Файл должен начинаться с `# Netscape HTTP Cookie File` и быть доступен пользователю контейнера для записи.
+- Compose автоматически запускает внутренний `bgutil-provider` и подключает его yt-dlp-плагин для получения PO Token; порт 4416 наружу не публикуется.
 
 ## Команды/возможности (в чате)
 Ассистент сам вызывает музыкальные функции через Tool Calling — просто пиши: «включи <трек>», «перемотай на 1:23», «сделай громкость 50%», «пропусти трек», «останови музыку», «зайди ко мне в голосовой» и т.п.
