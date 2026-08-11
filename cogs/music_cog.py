@@ -45,6 +45,8 @@ PCM_FRAME_DURATION_SECONDS = 0.02
 PCM_FRAME_BYTES = 3840
 PCM_BYTES_PER_SECOND = PCM_FRAME_BYTES / PCM_FRAME_DURATION_SECONDS
 PCM_SILENCE_FRAME = b"\x00" * PCM_FRAME_BYTES
+_STREAM_HTTP_HEADERS_KEY = "_peacemusic_http_headers"
+_STREAM_COOKIES_KEY = "_peacemusic_cookies"
 
 
 # ----------------------------------------------------------------------------
@@ -198,6 +200,8 @@ def build_ffmpeg_options(
     *,
     seek: Optional[int] = None,
     user_agent: Optional[str] = None,
+    http_headers: Optional[dict[str, str]] = None,
+    cookies: Optional[str] = None,
     youtube_hls: bool = False,
 ) -> dict[str, str]:
     if stream:
@@ -207,9 +211,38 @@ def build_ffmpeg_options(
             else "before_options_stream"
         )
         before = FFMPEG_OPTIONS[before_key]
-        # Inject dynamic user agent if provided
+        stream_headers: list[tuple[str, str]] = []
+        for raw_name, raw_value in (http_headers or {}).items():
+            name = str(raw_name).strip()
+            value = str(raw_value).strip()
+            if (
+                not name
+                or not value
+                or ":" in name
+                or "\r" in name
+                or "\n" in name
+                or "\r" in value
+                or "\n" in value
+            ):
+                continue
+            if name.lower() == "user-agent":
+                user_agent = value
+                continue
+            # yt-dlp deliberately keeps cookies out of generic headers so they
+            # cannot leak if the media server redirects to another host.
+            if name.lower() == "cookie":
+                continue
+            stream_headers.append((name, value))
+
         if user_agent:
             before += f" -user_agent {shlex.quote(user_agent)}"
+        if stream_headers:
+            header_block = "".join(
+                f"{name}: {value}\r\n" for name, value in stream_headers
+            )
+            before += f" -headers {shlex.quote(header_block)}"
+        if cookies and "\x00" not in cookies:
+            before += f" -cookies {shlex.quote(cookies)}"
     else:
         before = FFMPEG_OPTIONS["before_options_file"]
 
@@ -264,7 +297,54 @@ def _extract_info_sync(
     options = dict(YTDL_OPTIONS)
     if max_entries is not None:
         options["playlistend"] = max(1, max_entries)
-    return youtube_dl.YoutubeDL(options).extract_info(url, download=download)
+    ytdl = youtube_dl.YoutubeDL(options)
+    data = ytdl.extract_info(url, download=download)
+    _attach_stream_request_headers(ytdl, data)
+    return data
+
+
+def _attach_stream_request_headers(ytdl: youtube_dl.YoutubeDL, data: dict) -> None:
+    """Keep yt-dlp's URL-scoped request context for the FFmpeg hand-off."""
+
+    entries = data.get("entries")
+    if entries:
+        for entry in entries:
+            if isinstance(entry, dict):
+                _attach_stream_request_headers(ytdl, entry)
+        return
+
+    playback_url = data.get("url")
+    if not isinstance(playback_url, str) or not playback_url.startswith(
+        ("http://", "https://")
+    ):
+        return
+
+    raw_headers = data.get("http_headers") or {}
+    headers = {
+        str(name): str(value)
+        for name, value in raw_headers.items()
+        if value is not None
+    }
+    data[_STREAM_HTTP_HEADERS_KEY] = headers
+    cookies = ytdl.cookiejar.get_cookies_for_url(playback_url)
+    if cookies:
+        cookie_lines: list[str] = []
+        for cookie in cookies:
+            fields = tuple(
+                str(value)
+                for value in (
+                    cookie.name,
+                    cookie.value,
+                    cookie.path,
+                    cookie.domain,
+                )
+            )
+            if any(any(char in value for char in "\r\n\x00") for value in fields):
+                continue
+            name, value, path, domain = fields
+            cookie_lines.append(f"{name}={value}; path={path}; domain={domain};\r\n")
+        if cookie_lines:
+            data[_STREAM_COOKIES_KEY] = "".join(cookie_lines)
 
 
 def _prepare_filename(entry: dict) -> str:
@@ -347,6 +427,7 @@ class _BufferedAudioSource(discord.AudioSource):
         self._on_source_frame = on_source_frame
         self._on_played_frame = on_played_frame
         self._ready = threading.Event()
+        self._first_frame_or_eof = threading.Event()
         self._source_ended = threading.Event()
         self._closed = threading.Event()
         self._playback_started = False
@@ -394,6 +475,7 @@ class _BufferedAudioSource(discord.AudioSource):
                 while not self._closed.is_set():
                     try:
                         self._frames.put(data, timeout=0.1)
+                        self._first_frame_or_eof.set()
                         break
                     except queue_module.Full:
                         continue
@@ -404,17 +486,30 @@ class _BufferedAudioSource(discord.AudioSource):
                 logger.exception("Audio buffer producer failed for %s", self.label)
         finally:
             self._source_ended.set()
+            self._first_frame_or_eof.set()
             self._ready.set()
+
+    def wait_until_buffered(self) -> bool:
+        """Wait for startup buffering and report whether any PCM arrived."""
+        event = self._ready if self._start_frames else self._first_frame_or_eof
+        event.wait(timeout=self._start_timeout_seconds)
+        return not self._frames.empty()
 
     def read(self) -> bytes:
         if not self._playback_started:
             self._ready.wait(timeout=self._start_timeout_seconds)
             self._playback_started = True
-            logger.info(
-                "Audio buffer ready for %s: %.2fs",
-                self.label,
-                self.buffered_seconds,
-            )
+            buffered_seconds = self.buffered_seconds
+            if not buffered_seconds and self._source_ended.is_set():
+                logger.error(
+                    "Audio source ended before producing PCM for %s", self.label
+                )
+            else:
+                logger.info(
+                    "Audio buffer ready for %s: %.2fs",
+                    self.label,
+                    buffered_seconds,
+                )
 
         try:
             data = self._frames.get(timeout=PCM_FRAME_DURATION_SECONDS * 2)
@@ -486,7 +581,11 @@ class YTDLSource(discord.PCMVolumeTransformer):
         self.local_path = local_path
         self.is_stream = stream
         self.is_youtube_hls = _is_youtube_hls_entry(data)
-        self.user_agent = data.get("http_headers", {}).get("User-Agent")
+        self.http_headers = dict(
+            data.get(_STREAM_HTTP_HEADERS_KEY) or data.get("http_headers") or {}
+        )
+        self.user_agent = self.http_headers.get("User-Agent")
+        self.cookies = data.get(_STREAM_COOKIES_KEY)
         self._on_chunk = on_chunk
 
     def read(self) -> bytes:
@@ -544,13 +643,18 @@ class YTDLSource(discord.PCMVolumeTransformer):
                 playback_target = entry.get("url")
                 if not playback_target:
                     continue
-                http_headers = entry.get("http_headers", {})
+                http_headers = entry.get(_STREAM_HTTP_HEADERS_KEY) or entry.get(
+                    "http_headers", {}
+                )
                 dynamic_user_agent = http_headers.get("User-Agent")
+                cookies = entry.get(_STREAM_COOKIES_KEY)
             else:
                 filename = _prepare_filename(entry)
                 local_path = Path(filename)
                 playback_target = str(local_path)
                 dynamic_user_agent = None
+                http_headers = None
+                cookies = None
 
             if defer_audio:
                 audio_source = _DeferredAudioSource()
@@ -559,6 +663,8 @@ class YTDLSource(discord.PCMVolumeTransformer):
                     stream,
                     seek=start_at,
                     user_agent=dynamic_user_agent,
+                    http_headers=http_headers,
+                    cookies=cookies,
                     youtube_hls=_is_youtube_hls_entry(entry),
                 )
                 audio_source = discord.FFmpegPCMAudio(playback_target, **ffmpeg_args)
@@ -587,6 +693,8 @@ class QueuedTrack:
     duration: Optional[int] = None
     local_path: Optional[Path] = None
     user_agent: Optional[str] = None
+    http_headers: dict[str, str] = field(default_factory=dict)
+    cookies: Optional[str] = None
     channel: Optional[discord.abc.Messageable] = None
     reload_query: Optional[str] = None
     should_stream: bool = True
@@ -1033,6 +1141,8 @@ class Music(commands.Cog):
             stream=True,
             seek=seek,
             user_agent=track.user_agent,
+            http_headers=track.http_headers,
+            cookies=track.cookies,
             youtube_hls=track.is_youtube_hls,
         )
         audio_source = discord.FFmpegPCMAudio(track.stream_url, **ffmpeg_args)
@@ -1068,6 +1178,8 @@ class Music(commands.Cog):
             duration=src.duration,
             local_path=src.local_path,
             user_agent=src.user_agent,
+            http_headers=dict(src.http_headers),
+            cookies=src.cookies,
             channel=channel,
             reload_query=src.webpage_url or fallback_query,
             should_stream=should_stream,
@@ -1133,6 +1245,8 @@ class Music(commands.Cog):
             if not track.should_stream:
                 track.stream_url = None
                 track.user_agent = None
+                track.http_headers.clear()
+                track.cookies = None
             track.prepared_at_monotonic = time_module.monotonic()
             track.source_prepared = True
             return True
@@ -1184,6 +1298,8 @@ class Music(commands.Cog):
         track.local_path = metadata_source.local_path
         track.is_youtube_hls = metadata_source.is_youtube_hls
         track.user_agent = metadata_source.user_agent
+        track.http_headers = dict(metadata_source.http_headers)
+        track.cookies = metadata_source.cookies
         if follow_playback_progress:
             seek_seconds = max(0, self._current_progress_seconds() - 2)
         if track.should_stream:
@@ -1211,6 +1327,18 @@ class Music(commands.Cog):
                 old_local_path.unlink()
         return True
 
+    async def _stream_startup_succeeded(self, track: QueuedTrack) -> bool:
+        source = track.source
+        if not isinstance(source, _BufferedAudioSource):
+            return True
+        if await asyncio.to_thread(source.wait_until_buffered):
+            return True
+        logger.error(
+            "Stream produced no audio during startup for %s",
+            track.title,
+        )
+        return False
+
     async def _play_track(
         self,
         track: QueuedTrack,
@@ -1236,6 +1364,20 @@ class Music(commands.Cog):
                 force_extract=force_refresh,
             )
             if not refreshed:
+                return False
+
+        if not await self._stream_startup_succeeded(track):
+            if not track.should_stream or not track.reload_query:
+                return False
+            logger.warning(
+                "Retrying zero-byte stream with a fresh URL for %s", track.title
+            )
+            refreshed = await self._refresh_track_source(
+                track,
+                seek=start_at or None,
+                force_extract=True,
+            )
+            if not refreshed or not await self._stream_startup_succeeded(track):
                 return False
 
         self.current = track

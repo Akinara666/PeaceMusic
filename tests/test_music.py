@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shlex
 import threading
 import unittest
 from types import SimpleNamespace
@@ -52,6 +53,73 @@ class MusicHelperTests(unittest.TestCase):
         options = music_module.build_ffmpeg_options(stream=False, seek=12)
         self.assertIn("-ss 12", options["before_options"])
 
+    def test_ffmpeg_options_forward_stream_headers_safely(self) -> None:
+        options = music_module.build_ffmpeg_options(
+            stream=True,
+            http_headers={
+                "User-Agent": "yt-dlp-agent",
+                "Referer": "https://www.youtube.com/",
+                "Cookie": "session=domain-scoped",
+                "Bad\r\nHeader": "ignored",
+                "X-Bad": "ignored\r\nInjected: true",
+            },
+        )
+        arguments = shlex.split(options["before_options"])
+
+        self.assertEqual(arguments[arguments.index("-user_agent") + 1], "yt-dlp-agent")
+        header_block = arguments[arguments.index("-headers") + 1]
+        self.assertIn("Referer: https://www.youtube.com/\r\n", header_block)
+        self.assertNotIn("Cookie", header_block)
+        self.assertNotIn("Injected", header_block)
+        self.assertNotIn("Bad", header_block)
+
+        cookie_options = music_module.build_ffmpeg_options(
+            stream=True,
+            cookies="session=domain-scoped; path=/; domain=.example.test;\r\n",
+        )
+        cookie_arguments = shlex.split(cookie_options["before_options"])
+        self.assertEqual(
+            cookie_arguments[cookie_arguments.index("-cookies") + 1],
+            "session=domain-scoped; path=/; domain=.example.test;\r\n",
+        )
+
+    def test_extract_info_attaches_url_scoped_cookies(self) -> None:
+        data = {
+            "url": "https://media.example.test/audio.webm",
+            "http_headers": {
+                "User-Agent": "yt-dlp-agent",
+                "Referer": "https://www.youtube.com/",
+            },
+        }
+        ytdl = SimpleNamespace(
+            extract_info=Mock(return_value=data),
+            cookiejar=SimpleNamespace(
+                get_cookies_for_url=Mock(
+                    return_value=[
+                        SimpleNamespace(
+                            name="session",
+                            value="domain-scoped",
+                            path="/",
+                            domain=".example.test",
+                        )
+                    ]
+                )
+            ),
+        )
+
+        with patch.object(music_module.youtube_dl, "YoutubeDL", return_value=ytdl):
+            result = music_module._extract_info_sync(
+                "https://www.youtube.com/watch?v=test", download=False
+            )
+
+        headers = result[music_module._STREAM_HTTP_HEADERS_KEY]
+        self.assertEqual(headers["User-Agent"], "yt-dlp-agent")
+        self.assertEqual(
+            result[music_module._STREAM_COOKIES_KEY],
+            "session=domain-scoped; path=/; domain=.example.test;\r\n",
+        )
+        ytdl.cookiejar.get_cookies_for_url.assert_called_once_with(data["url"])
+
     def test_player_state_is_isolated_per_guild(self) -> None:
         root = music_module.Music(SimpleNamespace())
         first_message = SimpleNamespace(guild=SimpleNamespace(id=1))
@@ -71,6 +139,45 @@ class MusicHelperTests(unittest.TestCase):
         source = music_module._DeferredAudioSource()
         self.assertEqual(source.read(), b"")
 
+    def test_play_track_refreshes_a_zero_byte_stream_before_voice_play(self) -> None:
+        player = music_module.Music(SimpleNamespace(loop=object()))
+        player.voice_client = SimpleNamespace(play=Mock())
+        track = music_module.QueuedTrack(
+            source=Mock(),
+            title="Track",
+            requester=SimpleNamespace(),
+            stream_url="https://media.example.test/audio.webm",
+            reload_query="https://www.youtube.com/watch?v=test",
+            should_stream=True,
+        )
+
+        with (
+            patch.object(
+                player,
+                "_stream_startup_succeeded",
+                new=AsyncMock(side_effect=[False, True]),
+            ),
+            patch.object(
+                player,
+                "_refresh_track_source",
+                new=AsyncMock(return_value=True),
+            ) as refresh,
+        ):
+            played = asyncio.run(
+                player._play_track(
+                    track,
+                    description="Now playing",
+                    color=music_module.discord.Color.green(),
+                )
+            )
+
+        self.assertTrue(played)
+        refresh.assert_awaited_once_with(track, seek=None, force_extract=True)
+        player.voice_client.play.assert_called_once_with(
+            track.source,
+            after=player._after_playback,
+        )
+
     def test_fresh_deferred_stream_reuses_extracted_url(self) -> None:
         player = music_module.Music(SimpleNamespace())
         track = music_module.QueuedTrack(
@@ -78,6 +185,10 @@ class MusicHelperTests(unittest.TestCase):
             title="Track",
             requester=SimpleNamespace(),
             stream_url="https://example.test/audio.webm",
+            http_headers={
+                "User-Agent": "yt-dlp-agent",
+            },
+            cookies="session=domain-scoped; path=/; domain=.example.test;\r\n",
             should_stream=True,
             source_prepared=False,
         )
@@ -88,6 +199,13 @@ class MusicHelperTests(unittest.TestCase):
         self.assertTrue(track.source_prepared)
         self.assertIsInstance(track.source, music_module._BufferedAudioSource)
         self.assertEqual(track.source.source.original.source, track.stream_url)
+        before_options = track.source.source.original.options["before_options"]
+        arguments = shlex.split(before_options)
+        self.assertEqual(arguments[arguments.index("-user_agent") + 1], "yt-dlp-agent")
+        self.assertIn(
+            "session=domain-scoped; path=/; domain=.example.test;\r\n",
+            arguments[arguments.index("-cookies") + 1],
+        )
         track.source.volume = 0.5
         self.assertEqual(track.source.source.volume, 0.5)
         track.source.cleanup()
@@ -244,6 +362,8 @@ class MusicHelperTests(unittest.TestCase):
             local_path=None,
             is_youtube_hls=False,
             user_agent="test-agent",
+            http_headers={"User-Agent": "test-agent"},
+            cookies=None,
         )
 
         with (
