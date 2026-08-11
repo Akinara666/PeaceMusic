@@ -48,6 +48,7 @@ class ConfigTests(unittest.TestCase):
             settings.audio.ytdl_options["js_runtimes"],
             {"deno": {}, "node": {}},
         )
+        self.assertNotIn("extractor_args", settings.audio.ytdl_options)
         self.assertEqual(settings.audio.stream_buffer_seconds, 20.0)
         self.assertEqual(settings.audio.stream_start_buffer_seconds, 5.0)
         self.assertEqual(settings.audio.stream_stall_timeout_seconds, 10.0)
