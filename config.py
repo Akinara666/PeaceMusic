@@ -256,11 +256,6 @@ def _build_ytdl_options(
         "logtostderr": False,
         "default_search": "auto",
         "force_ipv4": False,
-        "extractor_args": {
-        "youtube": {
-            "player_client": ["default", "web_embedded"],
-            }
-        },
         # YouTube increasingly requires an external JS challenge solver.
         # Prefer yt-dlp's recommended runtime and retain Node.js as a local
         # installation fallback (Node 22+ is required by current yt-dlp-ejs).
