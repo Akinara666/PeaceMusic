@@ -7,6 +7,14 @@ import types
 from peacemusic.infrastructure.llm.langchain_agent import LangChainAgentFactory
 from peacemusic.modules.agent.context import AgentRequestContext
 from peacemusic.modules.agent.langchain_tools import build_langchain_tools
+from peacemusic.modules.agent.memory_tools import (
+    RecallArguments,
+    build_memory_tool_specs,
+)
+from peacemusic.modules.agent.music_tools import (
+    PlayMusicArguments,
+    build_music_tool_specs,
+)
 from peacemusic.modules.agent.results import ToolResult
 from peacemusic.modules.agent.tools import ToolCategory, ToolSpec
 
@@ -16,9 +24,12 @@ def test_langchain_tools_bind_context_and_return_serializable_result(
 ) -> None:
     class FakeStructuredTool:
         @classmethod
-        def from_function(cls, *, coroutine, name, description):
+        def from_function(cls, *, coroutine, name, description, args_schema):
             return types.SimpleNamespace(
-                coroutine=coroutine, name=name, description=description
+                coroutine=coroutine,
+                name=name,
+                description=description,
+                args_schema=args_schema,
             )
 
     core_tools = types.ModuleType("langchain_core.tools")
@@ -44,6 +55,24 @@ def test_langchain_tools_bind_context_and_return_serializable_result(
         "user_notified": False,
     }
     assert limited["code"] == "TOOL_CALL_LIMIT"
+
+
+def test_langchain_tools_expose_public_argument_schemas() -> None:
+    context = AgentRequestContext("req", 1, 2, 3, "user")
+
+    music_tool = build_langchain_tools(
+        [build_music_tool_specs(object())[0]],  # type: ignore[arg-type]
+        context=context,
+    )[0]
+    memory_tool = build_langchain_tools(
+        [build_memory_tool_specs(object())[1]],  # type: ignore[arg-type]
+        context=context,
+    )[0]
+
+    assert music_tool.args_schema is PlayMusicArguments
+    assert set(music_tool.args) == {"query"}
+    assert memory_tool.args_schema is RecallArguments
+    assert set(memory_tool.args) == {"query", "scope", "limit"}
 
 
 def test_langchain_factory_uses_create_agent(monkeypatch) -> None:
