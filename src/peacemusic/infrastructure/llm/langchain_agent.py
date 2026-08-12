@@ -21,6 +21,14 @@ class LangChainAgentFactory:
         self.model_name = model_name
         self.temperature = temperature
         self.system_prompt = system_prompt
+        self._checkpointer: Any | None = None
+        self._store: Any | None = None
+
+    def attach_persistence(self, *, checkpointer: Any, store: Any) -> None:
+        """Attach started LangGraph persistence resources before agent creation."""
+
+        self._checkpointer = checkpointer
+        self._store = store
 
     def create(self, tools: Sequence[Any]) -> Any:
         try:
@@ -37,8 +45,13 @@ class LangChainAgentFactory:
             google_api_key=self.api_key,
             temperature=self.temperature,
         )
-        return create_agent(
-            model=model,
-            tools=list(tools),
-            system_prompt=self.system_prompt or None,
-        )
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "tools": list(tools),
+            "system_prompt": self.system_prompt or None,
+        }
+        if self._checkpointer is not None:
+            kwargs["checkpointer"] = self._checkpointer
+        if self._store is not None:
+            kwargs["store"] = self._store
+        return create_agent(**kwargs)
