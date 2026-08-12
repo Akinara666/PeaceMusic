@@ -11,11 +11,15 @@ from peacemusic.core.errors import PeaceMusicError
 from peacemusic.modules.music.models import LoopMode
 from peacemusic.modules.music.permissions import MusicRequestContext
 from peacemusic.modules.music.service import MusicService
+from peacemusic.modules.history.service import PlaybackHistoryService
 
 
 class MusicCog(commands.Cog):
-    def __init__(self, service: MusicService) -> None:
+    def __init__(
+        self, service: MusicService, history: PlaybackHistoryService | None = None
+    ) -> None:
         self._service = service
+        self._history = history
 
     @staticmethod
     def _context(interaction: discord.Interaction) -> MusicRequestContext:
@@ -140,6 +144,27 @@ class MusicCog(commands.Cog):
         try:
             player = await self._service.player_state(interaction.guild.id)  # type: ignore[union-attr]
             await interaction.response.send_message(embed=player_embed(player))
+        except PeaceMusicError as exc:
+            await self._send_error(interaction, exc)
+
+    @app_commands.command(name="history", description="Show recently played tracks")
+    @app_commands.guild_only()
+    async def history(self, interaction: discord.Interaction, limit: int = 10) -> None:
+        if self._history is None:
+            await interaction.response.send_message(
+                "Playback history is unavailable.", ephemeral=True
+            )
+            return
+        try:
+            entries = await self._history.recent(interaction.guild.id, limit)  # type: ignore[union-attr]
+            description = (
+                "\n".join(
+                    f"{index}. **{entry.title}**"
+                    for index, entry in enumerate(entries, start=1)
+                )
+                or "No playback history yet."
+            )
+            await interaction.response.send_message(description, ephemeral=True)
         except PeaceMusicError as exc:
             await self._send_error(interaction, exc)
 
