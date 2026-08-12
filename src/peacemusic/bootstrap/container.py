@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from peacemusic.core.config import AppSettings
+from peacemusic.core.metrics import MetricsRegistry
 from peacemusic.core.tasks import TaskSupervisor
 from peacemusic.infrastructure.health.server import HealthServer
 from peacemusic.infrastructure.media.ytdlp import YtDlpMediaResolver
@@ -62,6 +63,7 @@ class ApplicationContainer:
     playlists: PlaylistService | None = None
     history: PlaybackHistoryService | None = None
     memory: MemoryService | None = None
+    metrics: MetricsRegistry | None = None
 
     async def start(self) -> None:
         await self.database.connect()
@@ -85,6 +87,7 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
 
     resolved_settings = settings or AppSettings()
     tasks = TaskSupervisor()
+    metrics = MetricsRegistry()
     database = PostgresDatabase(
         resolved_settings.database.url,
         min_size=resolved_settings.database.min_pool_size,
@@ -121,6 +124,7 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
         recovery=PlaybackRecoveryService(),
         settings=guild_settings,
         audit=audit,
+        metrics=metrics,
     )
     playlists = PlaylistService(
         PostgresPlaylistRepository(database),
@@ -137,11 +141,13 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
         coordinator=TurnCoordinator(
             max_concurrent=resolved_settings.limits.max_concurrent_ai_turns,
         ),
+        metrics=metrics,
     )
     health = HealthServer(
         host="0.0.0.0",
         port=resolved_settings.limits.health_server_port,
         readiness_check=lambda: False,
+        metrics_provider=metrics.render,
     )
     container = ApplicationContainer(
         settings=resolved_settings,
@@ -155,6 +161,7 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
         playlists=playlists,
         history=history,
         memory=memory,
+        metrics=metrics,
     )
     health.set_readiness_check(container.is_ready)
     return container

@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from typing import Any, Protocol
 
 from peacemusic.core.errors import ExternalServiceError
+from peacemusic.core.metrics import MetricsRegistry
 from peacemusic.modules.agent.context import AgentRequestContext
 from peacemusic.modules.agent.coordinator import TurnCoordinator
 from peacemusic.modules.agent.graph import OuterAgentWorkflow
@@ -30,11 +31,13 @@ class AgentService:
         tool_registry: ToolRegistry,
         agent_factory: AgentFactory,
         coordinator: TurnCoordinator,
+        metrics: MetricsRegistry | None = None,
     ) -> None:
         self._settings = settings_service
         self._tools = tool_registry
         self._factory = agent_factory
         self._coordinator = coordinator
+        self._metrics = metrics
         self._workflow = OuterAgentWorkflow()
 
     async def get_settings(self, guild_id: int):
@@ -69,8 +72,16 @@ class AgentService:
             except Exception as exc:  # noqa: BLE001 - provider boundary
                 raise ExternalServiceError("Agent execution failed") from exc
 
-        result = await self._coordinator.run(context.channel_id, run_agent)
-        return self._workflow.finalize(state, _extract_response(result))
+        try:
+            result = await self._coordinator.run(context.channel_id, run_agent)
+            response = self._workflow.finalize(state, _extract_response(result))
+        except Exception:
+            if self._metrics is not None:
+                self._metrics.increment("peacemusic_agent_turn_failures_total")
+            raise
+        if self._metrics is not None:
+            self._metrics.increment("peacemusic_agent_turns_total")
+        return response
 
 
 def _extract_response(result: Any) -> str:
