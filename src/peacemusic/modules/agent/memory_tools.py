@@ -85,9 +85,27 @@ def build_memory_tool_specs(service: MemoryService) -> tuple[ToolSpec, ...]:
             return _failure(exc)
 
     return (
-        ToolSpec("remember", ToolCategory.MEMORY, remember, RememberArguments),
-        ToolSpec("recall", ToolCategory.MEMORY, recall, RecallArguments),
-        ToolSpec("forget", ToolCategory.MEMORY, forget, ForgetArguments),
+        ToolSpec(
+            "remember",
+            ToolCategory.MEMORY,
+            remember,
+            RememberArguments,
+            "Save a user-provided fact, preference, or event for future conversations.",
+        ),
+        ToolSpec(
+            "recall",
+            ToolCategory.MEMORY,
+            recall,
+            RecallArguments,
+            "Search the stored memories relevant to the user's query.",
+        ),
+        ToolSpec(
+            "forget",
+            ToolCategory.MEMORY,
+            forget,
+            ForgetArguments,
+            "Delete a stored memory or clear memories for the selected scope.",
+        ),
     )
 
 

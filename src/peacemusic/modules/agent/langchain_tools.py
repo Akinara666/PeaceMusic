@@ -53,7 +53,8 @@ def build_langchain_tools(
             StructuredTool.from_function(
                 coroutine=invoke,
                 name=spec.name,
-                description=f"PeaceMusic {spec.category.value} operation: {spec.name}",
+                description=spec.description
+                or f"PeaceMusic {spec.category.value} operation: {spec.name}",
                 args_schema=_args_schema(spec),
             )
         )
