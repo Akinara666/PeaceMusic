@@ -1,6 +1,6 @@
 FROM denoland/deno:bin-2.9.2 AS deno
 
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 # Install system dependencies
 # ffmpeg: required for audio playback
