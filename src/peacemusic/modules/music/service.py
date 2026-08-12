@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from urllib.parse import urlparse
 
 from peacemusic.core.errors import PermissionDeniedError, PlaybackError, ValidationError
@@ -308,6 +309,11 @@ class MusicService:
         track = player.current_track
         if track is None:
             return
+        if track.stream_url is None:
+            media = await self._resolver.resolve(track.source_url)
+            resolved = self._track_from_media(media, requested_by=track.requested_by)
+            track = replace(resolved, title=track.title)
+            player.current_track = track
         token = self._playback_tokens.get(player.guild_id, 0) + 1
         self._playback_tokens[player.guild_id] = token
         loop = asyncio.get_running_loop()

@@ -37,7 +37,11 @@ class Provider:
 
 class Resolver:
     async def resolve(self, query: str) -> ResolvedMedia:
-        return ResolvedMedia(title=query, source_url=f"https://example.test/{query}")
+        return ResolvedMedia(
+            title=query,
+            source_url=f"https://example.test/{query}",
+            stream_url=f"https://cdn.example.test/{query}",
+        )
 
 
 class Voice:

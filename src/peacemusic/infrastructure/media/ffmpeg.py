@@ -27,9 +27,9 @@ class FFmpegAudioSourceFactory:
     async def create(
         self, track: Track, *, start_seconds: int = 0
     ) -> discord.AudioSource:
-        source = track.stream_url or track.source_url
+        source = track.stream_url
         if not source:
-            raise PlaybackError("Track has no FFmpeg source")
+            raise PlaybackError("Track has no resolved audio stream")
         if start_seconds < 0:
             raise PlaybackError("FFmpeg start position cannot be negative")
         try:
