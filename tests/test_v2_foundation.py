@@ -11,7 +11,7 @@ from peacemusic.core.config import AppSettings
 from peacemusic.core.tasks import TaskSupervisor
 from peacemusic.infrastructure.health.server import HealthServer
 from peacemusic.infrastructure.persistence.database import PostgresDatabase
-from peacemusic.bootstrap.container import ApplicationContainer
+from peacemusic.bootstrap.container import ApplicationContainer, build_container
 
 
 def test_app_settings_reads_operator_environment() -> None:
@@ -158,3 +158,16 @@ def test_container_readiness_requires_discord_and_database() -> None:
         assert await container.is_ready() is True
 
     asyncio.run(scenario())
+
+
+def test_build_container_wires_player_message_repository() -> None:
+    env = {
+        "DISCORD_BOT_TOKEN": "discord-secret",
+        "GOOGLE_API_KEY": "gemini-secret",
+        "DATABASE_URL": "postgresql://localhost/test",
+    }
+
+    with patch.dict(os.environ, env, clear=True):
+        container = build_container()
+
+    assert container.player_messages is not None

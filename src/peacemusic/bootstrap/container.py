@@ -190,7 +190,6 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
         settings_service=guild_settings,
         tool_registry=tool_registry,
         agent_factory=agent_factory,
-        player_messages=player_messages,
         coordinator=TurnCoordinator(
             max_concurrent=resolved_settings.limits.max_concurrent_ai_turns,
         ),
@@ -226,6 +225,7 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
         conversation=conversation,
         langgraph=langgraph,
         agent_factory=agent_factory,
+        player_messages=player_messages,
         access=access,
     )
     health.set_readiness_check(container.is_ready)
