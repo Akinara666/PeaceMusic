@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from peacemusic.infrastructure.persistence.repositories.in_memory_settings import (
     InMemoryGuildSettingsRepository,
 )
+from peacemusic.core.metrics import MetricsRegistry
 from peacemusic.modules.agent.context import AgentRequestContext
 from peacemusic.modules.agent.coordinator import TurnCoordinator
 from peacemusic.modules.agent.graph import InputRoute, normalize_input, route_input
@@ -51,11 +52,13 @@ def test_agent_service_coordinates_provider_and_returns_serializable_state() -> 
     async def scenario() -> None:
         settings = GuildSettingsService(InMemoryGuildSettingsRepository())
         factory = FakeFactory()
+        metrics = MetricsRegistry()
         service = AgentService(
             settings_service=settings,
             tool_registry=ToolRegistry(),
             agent_factory=factory,
             coordinator=TurnCoordinator(timeout_seconds=1),
+            metrics=metrics,
         )
         state = await service.handle(
             AgentRequestContext("req", 1, 2, 3, "User"),
@@ -66,6 +69,7 @@ def test_agent_service_coordinates_provider_and_returns_serializable_state() -> 
         assert state.normalized_input == "hello"
         assert state.checkpoint()["final_response"] == "agent response"
         assert factory.tools == []
+        assert "peacemusic_agent_turns_total 1" in metrics.render()
 
     asyncio.run(scenario())
 

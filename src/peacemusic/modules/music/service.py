@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 
 from peacemusic.core.errors import PermissionDeniedError, PlaybackError, ValidationError
+from peacemusic.core.metrics import MetricsRegistry
 from peacemusic.modules.audit.service import AuditService
 from peacemusic.modules.autoplay.service import AutoplayService
 from peacemusic.modules.history.service import PlaybackHistoryService
@@ -46,6 +47,7 @@ class MusicService:
         recovery: PlaybackRecoveryService | None = None,
         settings: GuildSettingsService | None = None,
         audit: AuditService | None = None,
+        metrics: MetricsRegistry | None = None,
     ) -> None:
         self._players = player_manager
         self._resolver = resolver
@@ -57,6 +59,7 @@ class MusicService:
         self._recovery = recovery
         self._settings = settings
         self._audit = audit
+        self._metrics = metrics
         self._playback_tokens: dict[int, int] = {}
         self._idle_disconnect_tasks: dict[int, asyncio.Task[None]] = {}
 
@@ -100,6 +103,7 @@ class MusicService:
             "PLAY",
             {"title": track.title, "source_url": track.source_url},
         )
+        self._increment_metric("peacemusic_music_play_total")
         if self._voice_gateway is not None and was_idle:
             await self._start_current(player)
 
@@ -118,6 +122,7 @@ class MusicService:
         player.pause()
         if self._voice_gateway is not None:
             await self._voice_gateway.pause(context.guild_id)
+        self._increment_metric("peacemusic_music_pause_total")
 
     async def resume(self, context: MusicRequestContext) -> None:
         await self._require(context, MusicCapability.RESUME)
@@ -125,6 +130,7 @@ class MusicService:
         player.resume()
         if self._voice_gateway is not None:
             await self._voice_gateway.resume(context.guild_id)
+        self._increment_metric("peacemusic_music_resume_total")
 
     async def skip(self, context: MusicRequestContext) -> Track | None:
         await self._require(context, MusicCapability.SKIP)
@@ -140,6 +146,7 @@ class MusicService:
             "SKIP",
             {"next_track": next_track.title if next_track else None},
         )
+        self._increment_metric("peacemusic_music_skip_total")
         return next_track
 
     async def stop(self, context: MusicRequestContext) -> None:
@@ -150,6 +157,7 @@ class MusicService:
         if self._voice_gateway is not None:
             await self._voice_gateway.stop(context.guild_id)
         await self._record_audit(context, "STOP")
+        self._increment_metric("peacemusic_music_stop_total")
 
     async def set_volume(self, context: MusicRequestContext, volume: int) -> int:
         await self._require(context, MusicCapability.SET_VOLUME)
@@ -158,6 +166,7 @@ class MusicService:
         if self._voice_gateway is not None:
             await self._voice_gateway.set_volume(context.guild_id, volume)
         await self._record_audit(context, "SET_VOLUME", {"volume": player.volume})
+        self._increment_metric("peacemusic_music_volume_changes_total")
         return player.volume
 
     async def disconnect(self, context: MusicRequestContext) -> None:
@@ -169,6 +178,11 @@ class MusicService:
             await self._voice_gateway.disconnect(context.guild_id)
         player.disconnect()
         await self._record_audit(context, "DISCONNECT")
+        self._increment_metric("peacemusic_music_disconnect_total")
+
+    def _increment_metric(self, name: str) -> None:
+        if self._metrics is not None:
+            self._metrics.increment(name)
 
     async def set_loop_mode(
         self, context: MusicRequestContext, mode: LoopMode | str
