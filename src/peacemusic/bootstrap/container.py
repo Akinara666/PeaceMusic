@@ -26,6 +26,7 @@ class ApplicationContainer:
     guild_settings: GuildSettingsService
     tasks: TaskSupervisor
     health: HealthServer
+    _discord_ready: bool = False
 
     async def start(self) -> None:
         await self.database.connect()
@@ -37,7 +38,10 @@ class ApplicationContainer:
         await self.database.close()
 
     async def is_ready(self) -> bool:
-        return await self.database.healthcheck()
+        return self._discord_ready and await self.database.healthcheck()
+
+    def mark_discord_ready(self, ready: bool) -> None:
+        self._discord_ready = ready
 
 
 def build_container(settings: AppSettings | None = None) -> ApplicationContainer:
@@ -61,12 +65,14 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
     health = HealthServer(
         host="0.0.0.0",
         port=resolved_settings.limits.health_server_port,
-        readiness_check=lambda: database.healthcheck(),
+        readiness_check=lambda: False,
     )
-    return ApplicationContainer(
+    container = ApplicationContainer(
         settings=resolved_settings,
         database=database,
         guild_settings=guild_settings,
         tasks=tasks,
         health=health,
     )
+    health.set_readiness_check(container.is_ready)
+    return container
