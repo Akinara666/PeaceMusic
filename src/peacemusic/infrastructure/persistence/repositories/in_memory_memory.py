@@ -47,3 +47,6 @@ class InMemoryMemoryRepository:
         for record_id in ids:
             del self.records[record_id]
         return len(ids)
+
+    async def count(self, namespace: tuple[str, ...]) -> int:
+        return sum(record.namespace == namespace for record in self.records.values())

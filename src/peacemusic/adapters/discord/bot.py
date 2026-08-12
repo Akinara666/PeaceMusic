@@ -6,6 +6,7 @@ import discord
 from discord.ext import commands
 
 from peacemusic.adapters.discord.cogs.music import MusicCog
+from peacemusic.adapters.discord.cogs.memory import MemoryCog
 from peacemusic.adapters.discord.cogs.playlists import PlaylistCog
 from peacemusic.adapters.discord.cogs.chat import ChatCog
 from peacemusic.adapters.discord.cogs.settings import SettingsCog
@@ -52,6 +53,9 @@ class PeaceMusicV2Bot(commands.Bot):
         playlist_service = getattr(self.container, "playlists", None)
         if playlist_service is not None:
             await self.add_cog(PlaylistCog(playlist_service))
+        memory_service = getattr(self.container, "memory", None)
+        if memory_service is not None:
+            await self.add_cog(MemoryCog(memory_service, self.container.guild_settings))
         await self.add_cog(ChatCog(self.container.agent))
         await self.tree.sync()
 

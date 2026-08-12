@@ -86,6 +86,45 @@ class MemoryService:
             self._namespace(guild_id, user_id, scope, channel_id), memory_id=memory_id
         )
 
+    async def clear_user(
+        self,
+        *,
+        guild_id: int,
+        actor_user_id: int,
+        target_user_id: int,
+        can_manage_guild: bool,
+    ) -> int:
+        if not can_manage_guild:
+            raise PermissionDeniedError("Manage Server permission is required")
+        return await self.forget(
+            guild_id=guild_id,
+            user_id=target_user_id,
+            scope="user",
+        )
+
+    async def clear_channel(
+        self,
+        *,
+        guild_id: int,
+        actor_user_id: int,
+        channel_id: int,
+        can_manage_guild: bool,
+    ) -> int:
+        if not can_manage_guild:
+            raise PermissionDeniedError("Manage Server permission is required")
+        return await self.forget(
+            guild_id=guild_id,
+            user_id=actor_user_id,
+            scope="channel",
+            channel_id=channel_id,
+        )
+
+    async def count_user(self, *, guild_id: int, user_id: int) -> int:
+        settings = await self._settings.get(guild_id)
+        if not settings.memory.enabled:
+            return 0
+        return await self._repository.count(user_namespace(guild_id, user_id))
+
     @staticmethod
     def _namespace(
         guild_id: int, user_id: int, scope: str, channel_id: int | None

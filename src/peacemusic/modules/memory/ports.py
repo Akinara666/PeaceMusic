@@ -24,6 +24,9 @@ class MemoryRepository(Protocol):
     async def delete(self, namespace: tuple[str, ...], *, memory_id: str | None) -> int:
         """Delete one memory or all records in a namespace."""
 
+    async def count(self, namespace: tuple[str, ...]) -> int:
+        """Count records in one namespace."""
+
 
 class EmbeddingService(Protocol):
     async def embed(self, text: str) -> Sequence[float]:

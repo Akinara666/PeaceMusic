@@ -28,11 +28,15 @@ from peacemusic.infrastructure.persistence.repositories.postgres_playlists impor
 from peacemusic.infrastructure.persistence.repositories.postgres_history import (
     PostgresPlaybackHistoryRepository,
 )
+from peacemusic.infrastructure.persistence.repositories.postgres_memory import (
+    PostgresMemoryRepository,
+)
 from peacemusic.adapters.discord.permissions import DiscordMusicPermissionService
 from peacemusic.modules.music.player_manager import GuildPlayerManager
 from peacemusic.modules.music.service import MusicService
 from peacemusic.modules.playlists.service import PlaylistService
 from peacemusic.modules.history.service import PlaybackHistoryService
+from peacemusic.modules.memory.service import MemoryService
 from peacemusic.modules.settings.service import GuildSettingsService
 
 
@@ -50,6 +54,7 @@ class ApplicationContainer:
     _discord_ready: bool = False
     playlists: PlaylistService | None = None
     history: PlaybackHistoryService | None = None
+    memory: MemoryService | None = None
 
     async def start(self) -> None:
         await self.database.connect()
@@ -86,6 +91,10 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
         audit_writer=settings_audit,
     )
     history = PlaybackHistoryService(PostgresPlaybackHistoryRepository(database))
+    memory = MemoryService(
+        PostgresMemoryRepository(database),
+        settings_service=guild_settings,
+    )
     media_resolver = YtDlpMediaResolver()
     autoplay = AutoplayService(
         ResolverAutoplayProvider(media_resolver),
@@ -98,6 +107,7 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
         media_resolver,
         DiscordMusicPermissionService(),
         history=history,
+        memory=memory,
         autoplay=autoplay,
     )
     playlists = PlaylistService(
