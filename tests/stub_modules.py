@@ -137,6 +137,10 @@ def _install_discord_stub() -> None:
         def all(cls):
             return cls()
 
+        @classmethod
+        def none(cls):
+            return cls()
+
     class Cog:
         @classmethod
         def listener(cls):
@@ -146,7 +150,17 @@ def _install_discord_stub() -> None:
             return decorator
 
     class Bot:
-        pass
+        def __init__(self, **kwargs):
+            self._kwargs = kwargs
+            self.tree = SimpleNamespace(sync=self._sync)
+
+        async def _sync(self):
+            return []
+
+        async def add_cog(self, cog):
+            return cog
+
+    commands_module.when_mentioned = object()
 
     class AudioSource:
         def read(self):
@@ -154,6 +168,14 @@ def _install_discord_stub() -> None:
 
         def cleanup(self):
             return None
+
+    class AllowedMentions:
+        @classmethod
+        def none(cls):
+            return cls()
+
+    class ChannelType:
+        text = "text"
 
     class PCMVolumeTransformer(AudioSource):
         def __init__(self, original, volume=1.0):
@@ -183,6 +205,68 @@ def _install_discord_stub() -> None:
         @classmethod
         def blue(cls):
             return cls()
+
+        @classmethod
+        def blurple(cls):
+            return cls()
+
+    class Embed:
+        def __init__(self, *, title=None, description=None, color=None, **kwargs):
+            self.title = title
+            self.description = description
+            self.color = color
+
+    class SelectOption:
+        def __init__(self, *, label, value, **kwargs):
+            self.label = label
+            self.value = value
+
+    class _View:
+        def __init__(self, *, timeout=None):
+            self.timeout = timeout
+            self.children = []
+
+        def add_item(self, item):
+            item.view = self
+            self.children.append(item)
+            return item
+
+        def clear_items(self):
+            self.children.clear()
+
+    class _Select:
+        def __init__(self, **kwargs):
+            self.options = kwargs.get("options", [])
+            self.values = []
+            self.view = None
+
+        @classmethod
+        def __class_getitem__(cls, item):
+            return cls
+
+    class _ChannelSelect(_Select):
+        pass
+
+    class _Button:
+        pass
+
+    class _ButtonStyle:
+        success = "success"
+        secondary = "secondary"
+
+    def _button_decorator(**kwargs):
+        def decorator(func):
+            return func
+
+        return decorator
+
+    ui_module = py_types.ModuleType("discord.ui")
+    ui_module.View = _View
+    ui_module.Select = _Select
+    ui_module.ChannelSelect = _ChannelSelect
+    ui_module.Button = _Button
+    ui_module.ButtonStyle = _ButtonStyle
+    ui_module.button = _button_decorator
 
     class _Loop:
         def __init__(self, coro):
@@ -235,12 +319,17 @@ def _install_discord_stub() -> None:
     app_commands_module.checks = _ChecksNamespace()
 
     discord_module.Intents = Intents
+    discord_module.AllowedMentions = AllowedMentions
+    discord_module.ChannelType = ChannelType
     discord_module.AudioSource = AudioSource
     discord_module.PCMVolumeTransformer = PCMVolumeTransformer
     discord_module.FFmpegPCMAudio = FFmpegPCMAudio
     discord_module.VoiceClient = type("VoiceClient", (), {})
     discord_module.Color = Color
-    discord_module.Embed = type("Embed", (), {})
+    discord_module.Embed = Embed
+    discord_module.SelectOption = SelectOption
+    discord_module.ui = ui_module
+    discord_module.ButtonStyle = _ButtonStyle
     discord_module.VoiceState = type("VoiceState", (), {})
     discord_module.Message = type("Message", (), {})
     discord_module.Attachment = type("Attachment", (), {})
@@ -259,6 +348,7 @@ def _install_discord_stub() -> None:
     sys.modules["discord.ext"] = discord_ext_module
     sys.modules["discord.ext.commands"] = commands_module
     sys.modules["discord.ext.tasks"] = tasks_module
+    sys.modules["discord.ui"] = ui_module
 
 
 def _install_google_stub() -> None:
