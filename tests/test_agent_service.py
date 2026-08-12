@@ -23,8 +23,8 @@ class FakeAgent:
     def __init__(self) -> None:
         self.payloads = []
 
-    async def ainvoke(self, payload):
-        self.payloads.append(payload)
+    async def ainvoke(self, payload, *, config=None):
+        self.payloads.append((payload, config))
         return {"messages": [SimpleNamespace(content="agent response")]}
 
 
@@ -105,11 +105,14 @@ def test_agent_service_reuses_bounded_thread_history() -> None:
             AgentRequestContext("req-2", 1, 2, 3, "User"), "second message"
         )
 
-        assert factory.agents[1].payloads[0]["messages"] == [
+        payload, config = factory.agents[1].payloads[0]
+        assert payload["messages"] == [
             {"role": "user", "content": "first message"},
             {"role": "assistant", "content": "agent response"},
             {"role": "user", "content": "second message"},
         ]
+        assert config["configurable"]["thread_id"] == "guild:1:channel:2"
+        assert config["metadata"]["request_id"] == "req-2"
         assert len(conversation.messages["guild:1:channel:2"]) == 4
 
     asyncio.run(scenario())
@@ -157,7 +160,8 @@ def test_agent_service_passes_provider_media_and_cleans_it_up() -> None:
             ],
         )
 
-        current_message = factory.agents[0].payloads[0]["messages"][-1]
+        payload, _config = factory.agents[0].payloads[0]
+        current_message = payload["messages"][-1]
         assert current_message["content"][1]["file_uri"] == "https://files.test/1"
         assert state.final_response == "agent response"
         assert preparer.cleaned is True

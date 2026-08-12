@@ -159,7 +159,19 @@ class AgentService:
                 try:
                     if self._metrics is not None:
                         self._metrics.increment("peacemusic_llm_requests_total")
-                    return await agent.ainvoke({"messages": messages})
+                    return await agent.ainvoke(
+                        {"messages": messages},
+                        config={
+                            "configurable": {
+                                "thread_id": self._thread_id(context),
+                            },
+                            "metadata": {
+                                "request_id": context.request_id,
+                                "guild_id": context.guild_id,
+                                "channel_id": context.channel_id,
+                            },
+                        },
+                    )
                 except Exception as exc:  # noqa: BLE001 - provider boundary
                     if self._metrics is not None:
                         self._metrics.increment("peacemusic_llm_request_errors_total")
