@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 
 from peacemusic.core.errors import PermissionDeniedError, ValidationError
-from peacemusic.modules.autoplay.service import AutoplayService
 from peacemusic.modules.history.service import PlaybackHistoryService
 from peacemusic.modules.music.models import (
     LoopMode,
@@ -39,7 +38,6 @@ class MusicService:
         voice_gateway: VoiceGateway | None = None,
         audio_source_factory: AudioSourceFactory | None = None,
         history: PlaybackHistoryService | None = None,
-        autoplay: AutoplayService | None = None,
     ) -> None:
         self._players = player_manager
         self._resolver = resolver
@@ -47,7 +45,6 @@ class MusicService:
         self._voice_gateway = voice_gateway
         self._audio_source_factory = audio_source_factory
         self._history = history
-        self._autoplay = autoplay
         self._playback_tokens: dict[int, int] = {}
 
     def attach_runtime(
@@ -218,15 +215,7 @@ class MusicService:
         if error is not None:
             player.status = PlaybackStatus.FAILED
             return
-        previous_track = player.current_track
         next_track = player.start_next()
-        if next_track is None and self._autoplay is not None and previous_track:
-            candidate = await self._autoplay.next(guild_id, previous_track)
-            if candidate is not None:
-                player.enqueue(candidate)
-                next_track = player.current_track
-                if self._history is not None:
-                    await self._history.record(guild_id, candidate)
         if next_track is not None:
             await self._start_current(player)
 
