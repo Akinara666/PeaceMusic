@@ -60,7 +60,7 @@ def test_agent_service_routes_audio_attachment_without_provider_call() -> None:
             return type("Track", (), {"title": attachment.filename})()
 
         class Factory:
-            def create(self, tools):
+            def create(self, tools, *, system_prompt=None):
                 raise AssertionError("AI provider must not be called")
 
         service = AgentService(

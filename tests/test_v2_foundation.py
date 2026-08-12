@@ -21,6 +21,7 @@ def test_app_settings_reads_operator_environment() -> None:
         "DATABASE_URL": "postgresql://localhost/test",
         "ALLOWED_AI_MODELS": '["gemini-test"]',
         "GEMINI_RESPONSE_MODEL": "gemini-test",
+        "GEMINI_SYSTEM_PROMPT": "You are a test assistant.",
         "GLOBAL_MAX_QUEUE_SIZE": "25",
     }
 
@@ -31,6 +32,7 @@ def test_app_settings_reads_operator_environment() -> None:
     assert settings.gemini.api_key.get_secret_value() == "gemini-secret"
     assert settings.database.url == "postgresql://localhost/test"
     assert settings.gemini.allowed_models == ("gemini-test",)
+    assert settings.gemini.system_prompt == "You are a test assistant."
     assert settings.limits.max_queue_size == 25
     assert settings.discord_intents.message_content is True
 

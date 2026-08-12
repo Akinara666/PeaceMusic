@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Any
 
-from peacemusic.core.config import GlobalLimits
+from peacemusic.core.config import DEFAULT_AGENT_SYSTEM_PROMPT, GlobalLimits
 from peacemusic.core.errors import PermissionDeniedError, ValidationError
 from peacemusic.modules.settings.defaults import default_guild_settings
 from peacemusic.modules.settings.models import GuildSettings
@@ -28,6 +28,7 @@ class GuildSettingsService:
         *,
         limits: GlobalLimits | None = None,
         allowed_models: tuple[str, ...] = ("gemini-3.1-flash-lite",),
+        default_system_prompt: str = DEFAULT_AGENT_SYSTEM_PROMPT,
         authorizer: SettingsAuthorizer | None = None,
         audit_writer: SettingsAuditWriter | None = None,
         cache_ttl_seconds: float = 60.0,
@@ -39,6 +40,7 @@ class GuildSettingsService:
         self._repository = repository
         self._limits = limits or GlobalLimits()
         self._allowed_models = allowed_models
+        self._default_system_prompt = default_system_prompt
         self._authorizer = authorizer
         self._audit_writer = audit_writer
         self._cache_ttl_seconds = cache_ttl_seconds
@@ -58,6 +60,7 @@ class GuildSettingsService:
                 guild_id,
                 limits=self._limits,
                 allowed_models=self._allowed_models,
+                default_system_prompt=self._default_system_prompt,
             )
             await self._repository.save(settings)
         settings = self._validate_effective(settings)

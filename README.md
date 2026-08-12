@@ -236,6 +236,7 @@ DATABASE_URL=postgresql://peacemusic:change-me@localhost:5432/peacemusic
 | `DB_MAX_POOL_SIZE` | `10` | Maximum PostgreSQL pool size. |
 | `GEMINI_API_KEY` | required | Gemini API credential. |
 | `GEMINI_RESPONSE_MODEL` | `gemini-3.1-flash-lite` | Default response model. |
+| `GEMINI_SYSTEM_PROMPT` | built-in PeaceMusic prompt | Default personality for newly created guild settings. |
 | `ALLOWED_AI_MODELS` | ["gemini-3.1-flash-lite"] | Operator allowlist for guild-selectable models. |
 | `GEMINI_REQUEST_TIMEOUT_SECONDS` | `30` | Provider request timeout. |
 | `LOG_LEVEL` | `INFO` | Application log level. |
@@ -376,6 +377,13 @@ Manage Server unless noted otherwise.
 | `/dj add <role_id>` | Add a DJ role. |
 | `/dj remove <role_id>` | Remove a DJ role. |
 | `/dj list` | List configured DJ roles. |
+
+The `/settings` panel includes **Edit AI personality**. It opens a Discord
+modal where a Manage Server administrator can replace the system prompt for
+that guild. The prompt is persisted in PostgreSQL and is used for the next AI
+request. `GEMINI_SYSTEM_PROMPT` controls the operator default for guilds that
+do not yet have saved settings; it does not overwrite an existing guild's
+custom personality.
 
 The setup wizard configures the music channel, AI channel, AI enablement,
 mention mode, DJ role, default volume, and autoplay. The settings panel groups

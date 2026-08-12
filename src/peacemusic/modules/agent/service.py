@@ -29,7 +29,9 @@ logger = logging.getLogger(__name__)
 
 
 class AgentFactory(Protocol):
-    def create(self, tools: Sequence[Any]) -> Any:
+    def create(
+        self, tools: Sequence[Any], *, system_prompt: str | None = None
+    ) -> Any:
         """Build an agent that exposes the supplied tools."""
 
 
@@ -151,7 +153,10 @@ class AgentService:
                     history, max_tokens=self._conversation_token_limit
                 )
         async with self._prepare_attachments(attachments) as uploaded:
-            agent = self._factory.create(langchain_tools)
+            agent = self._factory.create(
+                langchain_tools,
+                system_prompt=settings.ai.system_prompt,
+            )
             messages = [message.as_message() for message in history]
             current_content: object = state.normalized_input
             if uploaded:

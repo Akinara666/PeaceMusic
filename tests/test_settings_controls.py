@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import asyncio
 
-from peacemusic.adapters.discord.views.settings import SettingsView, SetupAutoplayView
+from peacemusic.adapters.discord.views.settings import (
+    AIPersonalityModal,
+    SettingsView,
+    SetupAutoplayView,
+)
 from peacemusic.modules.settings.models import GuildSettings
 
 
@@ -73,3 +77,15 @@ def test_setup_autoplay_step_writes_through_service() -> None:
         assert "configured" in str(interaction.response.kwargs["content"])
 
     asyncio.run(scenario())
+
+
+def test_ai_personality_modal_prefills_current_guild_prompt() -> None:
+    service = FakeSettingsService()
+    modal = AIPersonalityModal(
+        service,  # type: ignore[arg-type]
+        guild_id=123,
+        actor_user_id=456,
+        current_prompt="Be calm and concise.",
+    )
+
+    assert modal.prompt.default == "Be calm and concise."
