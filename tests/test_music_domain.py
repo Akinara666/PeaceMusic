@@ -108,3 +108,21 @@ def test_music_service_enforces_permission_before_resolving() -> None:
             await service.play(context, "blocked")
 
     asyncio.run(scenario())
+
+
+def test_music_service_exposes_shared_queue_mutations() -> None:
+    async def scenario() -> None:
+        manager = GuildPlayerManager()
+        service = MusicService(manager, Resolver(), Permissions())
+        context = MusicRequestContext(guild_id=123, user_id=456)
+        player = await manager.get_or_create(123)
+        player.queue.extend([track(1), track(2), track(3)])
+
+        removed = await service.remove_from_queue(context, 1)
+        assert removed.title == "Track 2"
+        await service.move_in_queue(context, 1, 0)
+        await service.shuffle_queue(context)
+        removed_count = await service.clear_queue(context)
+        assert removed_count == 2
+
+    asyncio.run(scenario())

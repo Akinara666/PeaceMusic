@@ -44,4 +44,8 @@ def test_music_tools_use_music_service_and_expose_no_reasoning_tool() -> None:
         assert result.ok is False
         assert result.code == "INVALID_TOOL_ARGUMENTS"
 
+        await service.play(context, "queued")
+        result = await registry.invoke("clear_queue", context, {}, settings)
+        assert result.ok is True
+
     asyncio.run(scenario())
