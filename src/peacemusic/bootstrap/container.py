@@ -62,6 +62,7 @@ class ApplicationContainer:
         await self.health.start()
 
     async def stop(self) -> None:
+        await self.music.shutdown()
         await self.tasks.shutdown()
         await self.health.stop()
         await self.database.close()
@@ -110,6 +111,7 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
         history=history,
         autoplay=autoplay,
         recovery=PlaybackRecoveryService(),
+        settings=guild_settings,
     )
     playlists = PlaylistService(
         PostgresPlaylistRepository(database),
