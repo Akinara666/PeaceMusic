@@ -299,6 +299,14 @@ def _install_discord_stub() -> None:
         def __class_getitem__(cls, item):
             return cls
 
+    class Group:
+        def __init__(self, **kwargs):
+            self.name = kwargs.get("name")
+            self.description = kwargs.get("description")
+
+        def command(self, *args, **kwargs):
+            return _identity_decorator
+
     def _identity_decorator(*args, **kwargs):
         def decorator(func):
             return func
@@ -311,6 +319,7 @@ def _install_discord_stub() -> None:
             return _identity_decorator
 
     app_commands_module.Choice = Choice
+    app_commands_module.Group = Group
     app_commands_module.command = _identity_decorator
     app_commands_module.describe = _identity_decorator
     app_commands_module.choices = _identity_decorator

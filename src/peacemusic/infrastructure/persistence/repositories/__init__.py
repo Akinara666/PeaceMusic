@@ -6,5 +6,12 @@ from peacemusic.infrastructure.persistence.repositories.postgres_audit import (
 from peacemusic.infrastructure.persistence.repositories.postgres_settings import (
     PostgresGuildSettingsRepository,
 )
+from peacemusic.infrastructure.persistence.repositories.postgres_playlists import (
+    PostgresPlaylistRepository,
+)
 
-__all__ = ["PostgresGuildSettingsRepository", "PostgresSettingsAuditWriter"]
+__all__ = [
+    "PostgresGuildSettingsRepository",
+    "PostgresPlaylistRepository",
+    "PostgresSettingsAuditWriter",
+]
