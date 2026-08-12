@@ -5,6 +5,8 @@ from __future__ import annotations
 from enum import StrEnum
 from collections.abc import Sequence
 
+from langgraph.graph import END, START, StateGraph
+
 from peacemusic.modules.agent.context import AgentRequestContext
 from peacemusic.modules.agent.state import AttachmentRef
 from peacemusic.modules.agent.state import PeaceMusicState
@@ -40,6 +42,46 @@ class OuterAgentWorkflow:
     repositories never enter ``PeaceMusicState``.
     """
 
+    def __init__(self) -> None:
+        graph = StateGraph(PeaceMusicState)
+        graph.add_node("normalize_input", self._normalize_node)
+        graph.add_node("load_context", self._identity_node)
+        graph.add_node("policy_check", self._identity_node)
+        graph.add_node("route", self._identity_node)
+        graph.add_node("direct_audio", self._identity_node)
+        graph.add_node("ai_agent", self._identity_node)
+        graph.add_node("finalize", self._identity_node)
+        graph.add_edge(START, "normalize_input")
+        graph.add_edge("normalize_input", "load_context")
+        graph.add_edge("load_context", "policy_check")
+        graph.add_edge("policy_check", "route")
+        graph.add_conditional_edges(
+            "route",
+            lambda state: state.input_route,
+            {
+                InputRoute.DIRECT_AUDIO.value: "direct_audio",
+                InputRoute.AI_AGENT.value: "ai_agent",
+            },
+        )
+        graph.add_edge("direct_audio", "finalize")
+        graph.add_edge("ai_agent", "finalize")
+        graph.add_edge("finalize", END)
+        self._graph = graph.compile()
+
+    @staticmethod
+    def _normalize_node(state: PeaceMusicState) -> dict[str, str]:
+        return {"normalized_input": normalize_input(state.input_text)}
+
+    @staticmethod
+    def _identity_node(_state: PeaceMusicState) -> dict[str, object]:
+        return {}
+
+    def run(self, state: PeaceMusicState) -> PeaceMusicState:
+        """Run deterministic lifecycle nodes through the compiled outer graph."""
+
+        result = self._graph.invoke(state.model_dump(mode="json"))
+        return PeaceMusicState.model_validate(result)
+
     def initialize(
         self,
         context: AgentRequestContext,
@@ -47,18 +89,18 @@ class OuterAgentWorkflow:
         *,
         attachments: Sequence[AttachmentRef] = (),
     ) -> PeaceMusicState:
-        normalized = normalize_input(text)
         route = route_input(list(attachments))
-        return PeaceMusicState(
+        state = PeaceMusicState(
             request_id=context.request_id,
             guild_id=context.guild_id,
             channel_id=context.channel_id,
             user_id=context.user_id,
             input_text=text,
-            normalized_input=normalized,
+            normalized_input="",
             input_route=route.value,
             attachments=list(attachments),
         )
+        return self.run(state)
 
     def apply_policy(
         self, state: PeaceMusicState, *, ai_enabled: bool
