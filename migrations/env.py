@@ -11,13 +11,19 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+from peacemusic.infrastructure.persistence.migrations import (
+    normalize_alembic_database_url,
+)
+
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 database_url = os.getenv("DATABASE_URL")
 if database_url:
-    config.set_main_option("sqlalchemy.url", database_url)
+    config.set_main_option(
+        "sqlalchemy.url", normalize_alembic_database_url(database_url)
+    )
 
 target_metadata = None
 
