@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from peacemusic.core.config import AppSettings
 from peacemusic.core.tasks import TaskSupervisor
 from peacemusic.infrastructure.health.server import HealthServer
+from peacemusic.infrastructure.media.ytdlp import YtDlpMediaResolver
 from peacemusic.infrastructure.persistence.database import PostgresDatabase
 from peacemusic.infrastructure.persistence.repositories.postgres_audit import (
     PostgresSettingsAuditWriter,
@@ -14,6 +15,9 @@ from peacemusic.infrastructure.persistence.repositories.postgres_audit import (
 from peacemusic.infrastructure.persistence.repositories.postgres_settings import (
     PostgresGuildSettingsRepository,
 )
+from peacemusic.adapters.discord.permissions import DiscordMusicPermissionService
+from peacemusic.modules.music.player_manager import GuildPlayerManager
+from peacemusic.modules.music.service import MusicService
 from peacemusic.modules.settings.service import GuildSettingsService
 
 
@@ -24,6 +28,7 @@ class ApplicationContainer:
     settings: AppSettings
     database: PostgresDatabase
     guild_settings: GuildSettingsService
+    music: MusicService
     tasks: TaskSupervisor
     health: HealthServer
     _discord_ready: bool = False
@@ -62,6 +67,13 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
         allowed_models=resolved_settings.gemini.allowed_models,
         audit_writer=settings_audit,
     )
+    music = MusicService(
+        GuildPlayerManager(
+            default_max_queue_size=resolved_settings.limits.max_queue_size
+        ),
+        YtDlpMediaResolver(),
+        DiscordMusicPermissionService(),
+    )
     health = HealthServer(
         host="0.0.0.0",
         port=resolved_settings.limits.health_server_port,
@@ -71,6 +83,7 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
         settings=resolved_settings,
         database=database,
         guild_settings=guild_settings,
+        music=music,
         tasks=tasks,
         health=health,
     )
