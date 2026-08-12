@@ -15,6 +15,9 @@ exclude = '''
 testpaths = ["tests"]
 addopts = "-ra"
 pythonpath = ["src"]
+markers = [
+    "integration: requires external services such as PostgreSQL",
+]
 
 [build-system]
 requires = ["setuptools>=75"]

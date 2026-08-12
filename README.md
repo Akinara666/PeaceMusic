@@ -21,9 +21,7 @@ Lavalink is not used.
 ## Local development
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements-dev.txt
+uv sync --group dev
 cp .env.example .env
 ```
 
@@ -40,9 +38,22 @@ Run quality checks:
 
 ```bash
 black --check src tests
-flake8 src
-pytest -q
+flake8 src scripts tests
+pytest --cov=src/peacemusic --cov-fail-under=80
 ```
+
+For a reproducible environment, keep `uv.lock` in sync with `pyproject.toml`.
+
+To import supported data from a PeaceMusic v1 SQLite database after applying
+the v2 migrations:
+
+```bash
+uv run python scripts/migrate_v1_sqlite.py ./old.sqlite3 \
+  --database-url "$DATABASE_URL" --dry-run
+```
+
+The importer does not copy raw conversation history or legacy embedding blobs;
+explicit text memories are re-indexed by the v2 semantic memory store.
 
 ## Docker deployment
 
