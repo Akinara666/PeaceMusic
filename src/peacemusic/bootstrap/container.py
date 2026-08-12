@@ -8,11 +8,13 @@ from peacemusic.core.config import AppSettings
 from peacemusic.core.tasks import TaskSupervisor
 from peacemusic.infrastructure.health.server import HealthServer
 from peacemusic.infrastructure.media.ytdlp import YtDlpMediaResolver
+from peacemusic.infrastructure.media.autoplay import ResolverAutoplayProvider
 from peacemusic.infrastructure.llm.langchain_agent import LangChainAgentFactory
 from peacemusic.modules.agent.coordinator import TurnCoordinator
 from peacemusic.modules.agent.music_tools import build_music_tool_specs
 from peacemusic.modules.agent.service import AgentService
 from peacemusic.modules.agent.tools import ToolRegistry
+from peacemusic.modules.autoplay.service import AutoplayService
 from peacemusic.infrastructure.persistence.database import PostgresDatabase
 from peacemusic.infrastructure.persistence.repositories.postgres_audit import (
     PostgresSettingsAuditWriter,
@@ -84,13 +86,19 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
         audit_writer=settings_audit,
     )
     history = PlaybackHistoryService(PostgresPlaybackHistoryRepository(database))
+    media_resolver = YtDlpMediaResolver()
+    autoplay = AutoplayService(
+        ResolverAutoplayProvider(media_resolver),
+        guild_settings,
+    )
     music = MusicService(
         GuildPlayerManager(
             default_max_queue_size=resolved_settings.limits.max_queue_size
         ),
-        YtDlpMediaResolver(),
+        media_resolver,
         DiscordMusicPermissionService(),
         history=history,
+        autoplay=autoplay,
     )
     playlists = PlaylistService(
         PostgresPlaylistRepository(database),
