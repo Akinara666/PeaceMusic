@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from contextlib import asynccontextmanager
 from collections.abc import Awaitable, Callable
+import logging
+import time
 from typing import Any, Protocol
 
 from peacemusic.core.errors import ExternalServiceError
@@ -21,6 +23,8 @@ from peacemusic.modules.agent.limits import UserRateLimiter
 from peacemusic.modules.agent.state import AttachmentRef, PeaceMusicState
 from peacemusic.modules.agent.tools import ToolRegistry
 from peacemusic.modules.settings.service import GuildSettingsService
+
+logger = logging.getLogger(__name__)
 
 
 class AgentFactory(Protocol):
@@ -153,17 +157,47 @@ class AgentService:
 
             async def run_agent() -> Any:
                 try:
+                    if self._metrics is not None:
+                        self._metrics.increment("peacemusic_llm_requests_total")
                     return await agent.ainvoke({"messages": messages})
                 except Exception as exc:  # noqa: BLE001 - provider boundary
+                    if self._metrics is not None:
+                        self._metrics.increment("peacemusic_llm_request_errors_total")
                     raise ExternalServiceError("Agent execution failed") from exc
 
+            started = time.monotonic()
+            logger.info(
+                "Agent turn started",
+                extra={
+                    "request_id": context.request_id,
+                    "guild_id": context.guild_id,
+                    "channel_id": context.channel_id,
+                    "user_id": context.user_id,
+                },
+            )
             try:
                 result = await self._coordinator.run(context.channel_id, run_agent)
                 response = self._workflow.finalize(state, _extract_response(result))
             except Exception:
                 if self._metrics is not None:
                     self._metrics.increment("peacemusic_agent_turn_failures_total")
+                    self._metrics.increment("peacemusic_agent_turn_errors_total")
                 raise
+            finally:
+                if self._metrics is not None:
+                    self._metrics.observe(
+                        "peacemusic_agent_turn_duration_seconds",
+                        time.monotonic() - started,
+                    )
+            logger.info(
+                "Agent turn completed",
+                extra={
+                    "request_id": context.request_id,
+                    "guild_id": context.guild_id,
+                    "channel_id": context.channel_id,
+                    "user_id": context.user_id,
+                },
+            )
         if self._metrics is not None:
             self._metrics.increment("peacemusic_agent_turns_total")
         if self._conversation is not None and settings.memory.short_term_memory_enabled:

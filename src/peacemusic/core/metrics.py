@@ -18,6 +18,9 @@ class MetricsRegistry:
             defaultdict(int)
         )
         self._gauges: dict[tuple[str, tuple[tuple[str, str], ...]], float] = {}
+        self._observations: defaultdict[
+            tuple[str, tuple[tuple[str, str], ...]], list[float]
+        ] = defaultdict(list)
 
     def increment(
         self,
@@ -42,6 +45,19 @@ class MetricsRegistry:
 
         self._gauges[self._key(name, labels)] = value
 
+    def observe(
+        self,
+        name: str,
+        value: float,
+        *,
+        labels: Mapping[str, object] | None = None,
+    ) -> None:
+        """Record a duration/sample for a low-cardinality summary metric."""
+
+        if value < 0:
+            raise ValueError("Metric observations cannot be negative")
+        self._observations[self._key(name, labels)].append(value)
+
     def render(self) -> str:
         """Render all values using the Prometheus text exposition format."""
 
@@ -52,6 +68,17 @@ class MetricsRegistry:
         for name, values in self._group(self._gauges).items():
             lines.append(f"# TYPE {name} gauge")
             lines.extend(self._render_values(name, values))
+        grouped_observations: defaultdict[
+            str, list[tuple[tuple[tuple[str, str], ...], list[float]]]
+        ] = defaultdict(list)
+        for (name, labels), observations in self._observations.items():
+            grouped_observations[name].append((labels, observations))
+        for name, values in grouped_observations.items():
+            lines.append(f"# TYPE {name} summary")
+            for labels, observations in values:
+                suffix = self._render_labels(labels)
+                lines.append(f"{name}_count{suffix} {len(observations)}")
+                lines.append(f"{name}_sum{suffix} {sum(observations)}")
         return "\n".join(lines) + ("\n" if lines else "")
 
     @staticmethod
@@ -86,14 +113,17 @@ class MetricsRegistry:
     ) -> list[str]:
         rendered: list[str] = []
         for labels, value in values:
-            suffix = ""
-            if labels:
-                encoded = ",".join(
-                    f'{key}="{MetricsRegistry._escape(value)}"' for key, value in labels
-                )
-                suffix = "{" + encoded + "}"
-            rendered.append(f"{name}{suffix} {value}")
+            rendered.append(f"{name}{MetricsRegistry._render_labels(labels)} {value}")
         return rendered
+
+    @staticmethod
+    def _render_labels(labels: tuple[tuple[str, str], ...]) -> str:
+        if not labels:
+            return ""
+        encoded = ",".join(
+            f'{key}="{MetricsRegistry._escape(value)}"' for key, value in labels
+        )
+        return "{" + encoded + "}"
 
     @staticmethod
     def _escape(value: str) -> str:

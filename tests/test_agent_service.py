@@ -80,6 +80,7 @@ def test_agent_service_coordinates_provider_and_returns_serializable_state() -> 
         assert state.checkpoint()["final_response"] == "agent response"
         assert factory.tools == []
         assert "peacemusic_agent_turns_total 1" in metrics.render()
+        assert "peacemusic_agent_turn_duration_seconds_count 1" in metrics.render()
 
     asyncio.run(scenario())
 
