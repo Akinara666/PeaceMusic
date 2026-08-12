@@ -1,4 +1,4 @@
-"""Discord composition adapter for the incrementally built v2 application."""
+"""Discord composition adapter for the v2 application."""
 
 from __future__ import annotations
 
