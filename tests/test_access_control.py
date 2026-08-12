@@ -4,11 +4,16 @@ import asyncio
 
 import pytest
 
-from peacemusic.core.errors import PermissionDeniedError
+from peacemusic.adapters.discord.cogs.chat import ChatCog
+from peacemusic.core.errors import PermissionDeniedError, ValidationError
+from peacemusic.infrastructure.persistence.repositories.in_memory_audit import (
+    InMemoryAuditWriter,
+)
 from peacemusic.infrastructure.persistence.repositories.in_memory_access import (
     InMemoryAccessControlRepository,
 )
 from peacemusic.modules.access.service import AccessControlService
+from peacemusic.modules.audit.service import AuditService
 
 
 def test_access_controls_suppress_users_and_channels() -> None:
@@ -57,3 +62,47 @@ def test_access_changes_require_manage_guild() -> None:
             )
 
     asyncio.run(scenario())
+
+
+def test_access_changes_are_audited_and_ids_are_validated() -> None:
+    async def scenario() -> None:
+        writer = InMemoryAuditWriter()
+        service = AccessControlService(
+            InMemoryAccessControlRepository(), audit=AuditService(writer)
+        )
+        await service.set_user_blocked(
+            guild_id=1,
+            target_user_id=2,
+            actor_user_id=9,
+            blocked=True,
+            can_manage_guild=True,
+        )
+        assert writer.events[0].event_type == "BOT_ACCESS_CHANGE"
+        with pytest.raises(ValidationError):
+            await service.set_channel_silent(
+                guild_id=0,
+                channel_id=3,
+                actor_user_id=9,
+                silent=True,
+                can_manage_guild=True,
+            )
+
+    asyncio.run(scenario())
+
+
+def test_chat_cog_suppresses_access_blocked_messages() -> None:
+    class Access:
+        async def is_suppressed(self, **_kwargs: int) -> bool:
+            return True
+
+    message = type(
+        "Message",
+        (),
+        {
+            "author": type("Author", (), {"bot": False, "id": 2})(),
+            "guild": type("Guild", (), {"id": 1})(),
+            "channel": type("Channel", (), {"id": 3})(),
+        },
+    )()
+
+    asyncio.run(ChatCog(object(), Access()).on_message(message))
