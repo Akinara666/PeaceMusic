@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 
@@ -42,6 +44,15 @@ class PostgresDatabase:
         except Exception:  # noqa: BLE001 - readiness must be a safe boolean
             return False
         return True
+
+    @asynccontextmanager
+    async def acquire(self) -> AsyncIterator[Any]:
+        """Borrow a connection for a repository operation."""
+
+        if self._pool is None:
+            raise RuntimeError("PostgreSQL database is not connected")
+        async with self._pool.acquire() as connection:
+            yield connection
 
     async def close(self) -> None:
         if self._pool is not None:
