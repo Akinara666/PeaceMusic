@@ -10,6 +10,7 @@ from peacemusic.adapters.discord.cogs.memory import MemoryCog
 from peacemusic.adapters.discord.cogs.dj import DJCog
 from peacemusic.adapters.discord.cogs.playlists import PlaylistCog
 from peacemusic.adapters.discord.cogs.chat import ChatCog
+from peacemusic.adapters.discord.cogs.access import AccessCog
 from peacemusic.adapters.discord.cogs.settings import SettingsCog
 from peacemusic.adapters.discord.context import DiscordSettingsAuthorizer
 from peacemusic.adapters.discord.voice import DiscordVoiceGateway
@@ -66,7 +67,10 @@ class PeaceMusicV2Bot(commands.Bot):
         dj_roles = getattr(self.container, "dj_roles", None)
         if dj_roles is not None:
             await self.add_cog(DJCog(dj_roles))
-        await self.add_cog(ChatCog(self.container.agent))
+        access = getattr(self.container, "access", None)
+        if access is not None:
+            await self.add_cog(AccessCog(access))
+        await self.add_cog(ChatCog(self.container.agent, access))
         await self.tree.sync()
 
     async def on_ready(self) -> None:
