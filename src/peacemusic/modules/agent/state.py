@@ -14,6 +14,7 @@ class AttachmentRef(BaseModel):
     filename: str
     content_type: str | None = None
     size_bytes: int = Field(ge=0)
+    url: str | None = None
 
 
 class ToolEvent(BaseModel):

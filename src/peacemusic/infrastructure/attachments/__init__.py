@@ -1,0 +1,1 @@
+"""Attachment infrastructure adapters."""
