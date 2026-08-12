@@ -9,6 +9,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from peacemusic.core.errors import describe_exception
 from peacemusic.modules.agent.context import AgentRequestContext
 from peacemusic.modules.agent.results import ToolResult
 from peacemusic.modules.settings.models import GuildSettings
@@ -66,4 +67,6 @@ class ToolRegistry:
         try:
             return await spec.handler(context, **arguments)
         except TypeError as exc:
-            return ToolResult.failure("INVALID_TOOL_ARGUMENTS", str(exc))
+            return ToolResult.failure("INVALID_TOOL_ARGUMENTS", describe_exception(exc))
+        except Exception as exc:  # noqa: BLE001 - tool boundary for model recovery
+            return ToolResult.failure("TOOL_EXECUTION_ERROR", describe_exception(exc))

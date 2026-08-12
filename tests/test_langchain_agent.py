@@ -57,6 +57,33 @@ def test_langchain_tools_bind_context_and_return_serializable_result(
     assert limited["code"] == "TOOL_CALL_LIMIT"
 
 
+def test_langchain_tools_return_unexpected_failure_details_to_the_model(
+    monkeypatch,
+) -> None:
+    class FakeStructuredTool:
+        @classmethod
+        def from_function(cls, *, coroutine, name, description, args_schema):
+            return types.SimpleNamespace(coroutine=coroutine, name=name)
+
+    core_tools = types.ModuleType("langchain_core.tools")
+    core_tools.StructuredTool = FakeStructuredTool
+    monkeypatch.setitem(sys.modules, "langchain_core.tools", core_tools)
+
+    async def handler(_context: AgentRequestContext) -> ToolResult:
+        raise RuntimeError("HTTP 403: media provider rejected the request")
+
+    tool = build_langchain_tools(
+        [ToolSpec("broken", ToolCategory.MUSIC, handler)],
+        context=AgentRequestContext("req", 1, 2, 3, "user"),
+    )[0]
+
+    result = asyncio.run(tool.coroutine())
+
+    assert result["ok"] is False
+    assert result["code"] == "TOOL_EXECUTION_ERROR"
+    assert "HTTP 403" in result["message"]
+
+
 def test_langchain_tools_expose_public_argument_schemas() -> None:
     context = AgentRequestContext("req", 1, 2, 3, "user")
 

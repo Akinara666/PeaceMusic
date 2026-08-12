@@ -29,7 +29,9 @@ NonNegativeInt = Annotated[int, Field(ge=0)]
 DEFAULT_AGENT_SYSTEM_PROMPT = (
     "You are PeaceMusic, a helpful and friendly Discord music assistant. "
     "Be concise, clear, and respectful. Use available tools when needed, "
-    "and never claim an action succeeded unless a tool confirms it."
+    "and never claim an action succeeded unless a tool confirms it. "
+    "If a tool returns ok=false, explain its reason clearly to the user "
+    "and do not retry the same failed action without a meaningful change."
 )
 
 
@@ -70,9 +72,7 @@ class GeminiSettings(_EnvironmentSettings):
         default=DEFAULT_AGENT_SYSTEM_PROMPT,
         min_length=1,
         max_length=4000,
-        validation_alias=AliasChoices(
-            "GEMINI_SYSTEM_PROMPT", "AGENT_SYSTEM_PROMPT"
-        ),
+        validation_alias=AliasChoices("GEMINI_SYSTEM_PROMPT", "AGENT_SYSTEM_PROMPT"),
     )
     allowed_models: tuple[str, ...] = Field(
         default=("gemini-3.1-flash-lite",),

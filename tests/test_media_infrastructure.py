@@ -7,7 +7,12 @@ import types
 import discord
 import pytest
 
-from peacemusic.core.errors import MediaExtractionError, PlaybackError, ValidationError
+from peacemusic.core.errors import (
+    MediaExtractionError,
+    PlaybackError,
+    ValidationError,
+    describe_exception,
+)
 from peacemusic.core.metrics import MetricsRegistry
 from peacemusic.infrastructure.media.buffered_source import BufferedAudioSource
 from peacemusic.infrastructure.media.ffmpeg import (
@@ -217,6 +222,21 @@ def test_ytdlp_resolver_translates_provider_failures_and_counts_errors(
         assert "peacemusic_ytdlp_errors_total 1" in metrics.render()
 
     asyncio.run(scenario())
+
+
+def test_exception_description_preserves_wrapped_provider_reason() -> None:
+    provider_error = RuntimeError("HTTP 403: signature challenge failed")
+    wrapped = MediaExtractionError("yt-dlp could not resolve the query")
+    wrapped.__cause__ = provider_error
+
+    description = describe_exception(wrapped)
+
+    assert "yt-dlp could not resolve the query" in description
+    assert "HTTP 403: signature challenge failed" in description
+
+    secret = describe_exception(RuntimeError("request failed api_key=hidden-value"))
+    assert "api_key=[redacted]" in secret
+    assert "hidden-value" not in secret
 
 
 def test_ffmpeg_factory_builds_bounded_source_and_cleans_it(monkeypatch) -> None:

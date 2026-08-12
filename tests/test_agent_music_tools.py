@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
+from peacemusic.core.errors import MediaExtractionError
 from peacemusic.modules.agent.context import AgentRequestContext
 from peacemusic.modules.agent.music_tools import build_music_tool_specs
 from peacemusic.modules.agent.tools import ToolRegistry
@@ -50,5 +51,36 @@ def test_music_tools_use_music_service_and_expose_no_reasoning_tool() -> None:
         assert result.data["position_seconds"] == 15
         result = await registry.invoke("clear_queue", context, {}, settings)
         assert result.ok is True
+
+    asyncio.run(scenario())
+
+
+def test_music_tool_preserves_the_underlying_media_provider_reason() -> None:
+    class FailingResolver:
+        async def resolve(self, query: str) -> ResolvedMedia:
+            provider_error = RuntimeError("HTTP 403: signature challenge failed")
+            raise MediaExtractionError(
+                "yt-dlp could not resolve the query"
+            ) from provider_error
+
+    async def scenario() -> None:
+        service = MusicService(
+            GuildPlayerManager(),
+            FailingResolver(),  # type: ignore[arg-type]
+            AllowAllPermissionService(),
+        )
+        registry = ToolRegistry(build_music_tool_specs(service))
+        context = AgentRequestContext("req-1", 123, 456, 789, "User")
+
+        result = await registry.invoke(
+            "play_music",
+            context,
+            {"query": "blocked video"},
+            GuildSettings(guild_id=123),
+        )
+
+        assert result.ok is False
+        assert "yt-dlp could not resolve the query" in result.message
+        assert "HTTP 403: signature challenge failed" in result.message
 
     asyncio.run(scenario())
