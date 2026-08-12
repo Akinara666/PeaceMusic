@@ -13,3 +13,6 @@ pydantic-settings==2.13.1
 asyncpg==0.30.0
 alembic==1.16.5
 SQLAlchemy==2.0.43
+langchain>=1.0,<2
+langchain-google-genai>=4.0,<5
+langgraph>=1.0,<2

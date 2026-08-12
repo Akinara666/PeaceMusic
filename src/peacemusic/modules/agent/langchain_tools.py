@@ -1,0 +1,43 @@
+"""Convert application tool specs into LangChain tool adapters."""
+
+from __future__ import annotations
+
+from collections.abc import Iterable
+
+from peacemusic.modules.agent.context import AgentRequestContext
+from peacemusic.modules.agent.tools import ToolSpec
+
+
+def build_langchain_tools(
+    specs: Iterable[ToolSpec],
+    *,
+    context: AgentRequestContext,
+) -> list[object]:
+    """Bind runtime context before exposing tools to ``create_agent``.
+
+    The model sees only validated business arguments.  Discord objects,
+    database handles, locks, and authorization context remain application-owned.
+    """
+
+    try:
+        from langchain_core.tools import StructuredTool
+    except ImportError as exc:  # pragma: no cover - optional provider boundary
+        raise RuntimeError(
+            "LangChain tools require the 'langchain-core' package."
+        ) from exc
+
+    tools: list[object] = []
+    for spec in specs:
+
+        async def invoke(_spec: ToolSpec = spec, **arguments: object):
+            result = await _spec.handler(context, **arguments)
+            return result.model_dump(mode="json")
+
+        tools.append(
+            StructuredTool.from_function(
+                coroutine=invoke,
+                name=spec.name,
+                description=f"PeaceMusic {spec.category.value} operation: {spec.name}",
+            )
+        )
+    return tools
