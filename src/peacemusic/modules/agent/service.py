@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from contextlib import asynccontextmanager
 from typing import Any, Protocol
 
 from peacemusic.core.errors import ExternalServiceError
@@ -41,6 +42,7 @@ class AgentService:
         conversation_limit: int = 20,
         rate_limiter: UserRateLimiter | None = None,
         max_tool_calls: int = 8,
+        attachment_preparer=None,
     ) -> None:
         self._settings = settings_service
         self._tools = tool_registry
@@ -55,6 +57,7 @@ class AgentService:
             raise ValueError("max_tool_calls must be positive")
         self._rate_limiter = rate_limiter
         self._max_tool_calls = max_tool_calls
+        self._attachment_preparer = attachment_preparer
         self._workflow = OuterAgentWorkflow()
 
     async def get_settings(self, guild_id: int):
@@ -74,6 +77,28 @@ class AgentService:
         state = self._workflow.apply_policy(state, ai_enabled=settings.ai.enabled)
         if state.final_response is not None:
             return state
+        if attachments and not settings.ai.attachments_enabled:
+            return state.model_copy(
+                update={"final_response": "Attachments are disabled for this server."}
+            )
+        if any(
+            attachment.content_type
+            and attachment.content_type.startswith("image/")
+            and not settings.ai.image_input_enabled
+            for attachment in attachments
+        ):
+            return state.model_copy(
+                update={"final_response": "Image input is disabled for this server."}
+            )
+        if any(
+            attachment.content_type
+            and attachment.content_type.startswith("video/")
+            and not settings.ai.video_input_enabled
+            for attachment in attachments
+        ):
+            return state.model_copy(
+                update={"final_response": "Video input is disabled for this server."}
+            )
         if self._rate_limiter is not None and not await self._rate_limiter.allow(
             (context.guild_id, context.user_id), settings.ai.per_user_rate_limit
         ):
@@ -91,28 +116,42 @@ class AgentService:
             if available
             else []
         )
-        agent = self._factory.create(langchain_tools)
         history = ()
         if self._conversation is not None and settings.memory.short_term_memory_enabled:
             history = await self._conversation.recent(
                 self._thread_id(context), limit=self._conversation_limit
             )
-        messages = [message.as_message() for message in history]
-        messages.append({"role": "user", "content": state.normalized_input})
+        async with self._prepare_attachments(attachments) as uploaded:
+            agent = self._factory.create(langchain_tools)
+            messages = [message.as_message() for message in history]
+            current_content: object = state.normalized_input
+            if uploaded:
+                current_content = [
+                    {"type": "text", "text": state.normalized_input},
+                    *[
+                        {
+                            "type": "media",
+                            "file_uri": item.provider_reference.uri,
+                            "mime_type": item.provider_reference.mime_type,
+                        }
+                        for item in uploaded
+                    ],
+                ]
+            messages.append({"role": "user", "content": current_content})
 
-        async def run_agent() -> Any:
+            async def run_agent() -> Any:
+                try:
+                    return await agent.ainvoke({"messages": messages})
+                except Exception as exc:  # noqa: BLE001 - provider boundary
+                    raise ExternalServiceError("Agent execution failed") from exc
+
             try:
-                return await agent.ainvoke({"messages": messages})
-            except Exception as exc:  # noqa: BLE001 - provider boundary
-                raise ExternalServiceError("Agent execution failed") from exc
-
-        try:
-            result = await self._coordinator.run(context.channel_id, run_agent)
-            response = self._workflow.finalize(state, _extract_response(result))
-        except Exception:
-            if self._metrics is not None:
-                self._metrics.increment("peacemusic_agent_turn_failures_total")
-            raise
+                result = await self._coordinator.run(context.channel_id, run_agent)
+                response = self._workflow.finalize(state, _extract_response(result))
+            except Exception:
+                if self._metrics is not None:
+                    self._metrics.increment("peacemusic_agent_turn_failures_total")
+                raise
         if self._metrics is not None:
             self._metrics.increment("peacemusic_agent_turns_total")
         if self._conversation is not None and settings.memory.short_term_memory_enabled:
@@ -128,6 +167,14 @@ class AgentService:
                 ),
             )
         return response
+
+    @asynccontextmanager
+    async def _prepare_attachments(self, attachments):
+        if self._attachment_preparer is None or not attachments:
+            yield ()
+            return
+        async with self._attachment_preparer.prepare(attachments) as prepared:
+            yield prepared
 
     @staticmethod
     def _thread_id(context: AgentRequestContext) -> str:

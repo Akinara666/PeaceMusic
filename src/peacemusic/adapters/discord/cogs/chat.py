@@ -70,6 +70,7 @@ class ChatCog(commands.Cog):
                 filename=attachment.filename,
                 content_type=attachment.content_type,
                 size_bytes=attachment.size,
+                url=attachment.url,
             )
             for attachment in message.attachments
         ]

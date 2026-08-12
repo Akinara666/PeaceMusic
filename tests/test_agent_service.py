@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 from peacemusic.infrastructure.persistence.repositories.in_memory_settings import (
@@ -109,6 +110,56 @@ def test_agent_service_reuses_bounded_thread_history() -> None:
             {"role": "user", "content": "second message"},
         ]
         assert len(conversation.messages["guild:1:channel:2"]) == 4
+
+    asyncio.run(scenario())
+
+
+def test_agent_service_passes_provider_media_and_cleans_it_up() -> None:
+    class Uploaded:
+        provider_reference = type(
+            "Reference",
+            (),
+            {"uri": "https://files.test/1", "mime_type": "image/png"},
+        )()
+
+    class Preparer:
+        def __init__(self) -> None:
+            self.cleaned = False
+
+        @asynccontextmanager
+        async def prepare(self, attachments):
+            yield [Uploaded()]
+            self.cleaned = True
+
+    async def scenario() -> None:
+        settings = GuildSettingsService(InMemoryGuildSettingsRepository())
+        factory = FakeFactory()
+        preparer = Preparer()
+        service = AgentService(
+            settings_service=settings,
+            tool_registry=ToolRegistry(),
+            agent_factory=factory,
+            coordinator=TurnCoordinator(timeout_seconds=1),
+            attachment_preparer=preparer,
+        )
+        state = await service.handle(
+            AgentRequestContext("req", 1, 2, 3, "User"),
+            "describe this",
+            attachments=[
+                AttachmentRef(
+                    attachment_id="1",
+                    filename="image.png",
+                    content_type="image/png",
+                    size_bytes=4,
+                    url="https://discord.test/image.png",
+                )
+            ],
+        )
+
+        current_message = factory.agents[0].payloads[0]["messages"][-1]
+        assert current_message["content"][1]["file_uri"] == "https://files.test/1"
+        assert state.final_response == "agent response"
+        assert preparer.cleaned is True
 
     asyncio.run(scenario())
 

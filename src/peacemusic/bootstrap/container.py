@@ -8,6 +8,8 @@ from peacemusic.core.config import AppSettings
 from peacemusic.core.metrics import MetricsRegistry
 from peacemusic.core.tasks import TaskSupervisor
 from peacemusic.infrastructure.health.server import HealthServer
+from peacemusic.infrastructure.attachments.downloader import HttpAttachmentDownloader
+from peacemusic.infrastructure.llm.gemini_files import GeminiFilesAdapter
 from peacemusic.infrastructure.llm.langgraph_persistence import LangGraphPersistence
 from peacemusic.infrastructure.media.ytdlp import YtDlpMediaResolver
 from peacemusic.infrastructure.media.autoplay import ResolverAutoplayProvider
@@ -18,6 +20,8 @@ from peacemusic.modules.agent.memory_tools import build_memory_tool_specs
 from peacemusic.modules.agent.music_tools import build_music_tool_specs
 from peacemusic.modules.agent.service import AgentService
 from peacemusic.modules.agent.tools import ToolRegistry
+from peacemusic.modules.attachments.service import AttachmentService
+from peacemusic.modules.attachments.workflow import AttachmentProviderWorkflow
 from peacemusic.modules.audit.service import AuditService
 from peacemusic.modules.autoplay.service import AutoplayService
 from peacemusic.infrastructure.persistence.database import PostgresDatabase
@@ -127,6 +131,13 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
         resolved_settings.database.url,
         embedding_api_key=resolved_settings.gemini.api_key.get_secret_value(),
     )
+    attachment_workflow = AttachmentProviderWorkflow(
+        AttachmentService(
+            max_bytes=resolved_settings.limits.max_download_size_mb * 1024 * 1024
+        ),
+        GeminiFilesAdapter(api_key=resolved_settings.gemini.api_key.get_secret_value()),
+        downloader=HttpAttachmentDownloader(),
+    )
     memory = MemoryService(
         LangGraphMemoryRepository(langgraph),
         settings_service=guild_settings,
@@ -170,6 +181,7 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
         metrics=metrics,
         conversation_repository=conversation,
         rate_limiter=rate_limiter,
+        attachment_preparer=attachment_workflow,
     )
     health = HealthServer(
         host="0.0.0.0",
