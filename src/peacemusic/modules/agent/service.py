@@ -8,6 +8,7 @@ from typing import Any, Protocol
 from peacemusic.core.errors import ExternalServiceError
 from peacemusic.modules.agent.context import AgentRequestContext
 from peacemusic.modules.agent.coordinator import TurnCoordinator
+from peacemusic.modules.agent.graph import OuterAgentWorkflow
 from peacemusic.modules.agent.langchain_tools import build_langchain_tools
 from peacemusic.modules.agent.state import AttachmentRef, PeaceMusicState
 from peacemusic.modules.agent.tools import ToolRegistry
@@ -34,6 +35,7 @@ class AgentService:
         self._tools = tool_registry
         self._factory = agent_factory
         self._coordinator = coordinator
+        self._workflow = OuterAgentWorkflow()
 
     async def get_settings(self, guild_id: int):
         """Read effective settings for a Discord adapter policy check."""
@@ -48,18 +50,10 @@ class AgentService:
         attachments: Sequence[AttachmentRef] = (),
     ) -> PeaceMusicState:
         settings = await self._settings.get(context.guild_id or 0)
-        state = PeaceMusicState(
-            request_id=context.request_id,
-            guild_id=context.guild_id,
-            channel_id=context.channel_id,
-            user_id=context.user_id,
-            input_text=text,
-            attachments=list(attachments),
-        )
-        if not settings.ai.enabled:
-            return state.model_copy(
-                update={"final_response": "AI assistant is disabled for this server."}
-            )
+        state = self._workflow.initialize(context, text, attachments=attachments)
+        state = self._workflow.apply_policy(state, ai_enabled=settings.ai.enabled)
+        if state.final_response is not None:
+            return state
 
         available = self._tools.available(settings)
         langchain_tools = (
@@ -70,13 +64,13 @@ class AgentService:
         async def run_agent() -> Any:
             try:
                 return await agent.ainvoke(
-                    {"messages": [{"role": "user", "content": text}]}
+                    {"messages": [{"role": "user", "content": state.normalized_input}]}
                 )
             except Exception as exc:  # noqa: BLE001 - provider boundary
                 raise ExternalServiceError("Agent execution failed") from exc
 
         result = await self._coordinator.run(context.channel_id, run_agent)
-        return state.model_copy(update={"final_response": _extract_response(result)})
+        return self._workflow.finalize(state, _extract_response(result))
 
 
 def _extract_response(result: Any) -> str:

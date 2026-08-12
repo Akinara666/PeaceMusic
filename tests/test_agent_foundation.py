@@ -8,6 +8,7 @@ from peacemusic.core.errors import PermissionDeniedError
 from peacemusic.modules.agent.context import AgentRequestContext
 from peacemusic.modules.agent.coordinator import TurnCoordinator
 from peacemusic.modules.agent.results import ToolResult
+from peacemusic.modules.agent.graph import OuterAgentWorkflow
 from peacemusic.modules.agent.state import AttachmentRef, PeaceMusicState, ToolEvent
 from peacemusic.modules.agent.tools import ToolCategory, ToolRegistry, ToolSpec
 from peacemusic.modules.settings.models import GuildSettings
@@ -44,6 +45,26 @@ def test_agent_context_and_state_are_checkpoint_safe() -> None:
     assert checkpoint["request_id"] == "req-1"
     assert checkpoint["attachments"][0]["filename"] == "photo.png"
     assert "asyncio" not in repr(checkpoint)
+
+
+def test_outer_workflow_initializes_checkpoint_safe_route_state() -> None:
+    context = AgentRequestContext("req-1", 123, 456, 789, "User")
+    state = OuterAgentWorkflow().initialize(
+        context,
+        "  hello\n world ",
+        attachments=[
+            AttachmentRef(
+                attachment_id="a1",
+                filename="song.mp3",
+                content_type="audio/mpeg",
+                size_bytes=1,
+            )
+        ],
+    )
+
+    assert state.normalized_input == "hello world"
+    assert state.input_route == "direct_audio"
+    assert state.checkpoint()["input_route"] == "direct_audio"
 
 
 def test_tool_result_has_stable_success_and_failure_contract() -> None:

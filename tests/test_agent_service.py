@@ -63,8 +63,30 @@ def test_agent_service_coordinates_provider_and_returns_serializable_state() -> 
         )
 
         assert state.final_response == "agent response"
+        assert state.normalized_input == "hello"
         assert state.checkpoint()["final_response"] == "agent response"
         assert factory.tools == []
+
+    asyncio.run(scenario())
+
+
+def test_agent_service_does_not_call_provider_for_empty_ai_input() -> None:
+    async def scenario() -> None:
+        settings = GuildSettingsService(InMemoryGuildSettingsRepository())
+        factory = FakeFactory()
+        service = AgentService(
+            settings_service=settings,
+            tool_registry=ToolRegistry(),
+            agent_factory=factory,
+            coordinator=TurnCoordinator(timeout_seconds=1),
+        )
+
+        state = await service.handle(
+            AgentRequestContext("req", 1, 2, 3, "User"), "  \n  "
+        )
+
+        assert state.final_response == "Please provide a message to process."
+        assert factory.tools is None
 
     asyncio.run(scenario())
 
