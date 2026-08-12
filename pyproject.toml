@@ -33,6 +33,9 @@ dependencies = [
     "pydantic-settings>=2.13,<3",
 ]
 
+[project.scripts]
+peacemusic-v2 = "peacemusic.main:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

@@ -11,6 +11,7 @@ from peacemusic.core.config import AppSettings
 from peacemusic.core.tasks import TaskSupervisor
 from peacemusic.infrastructure.health.server import HealthServer
 from peacemusic.infrastructure.persistence.database import PostgresDatabase
+from peacemusic.bootstrap.container import ApplicationContainer
 
 
 def test_app_settings_reads_operator_environment() -> None:
@@ -100,5 +101,32 @@ def test_database_is_not_ready_before_connecting() -> None:
         assert database.connected is False
         assert await database.healthcheck() is False
         await database.close()
+
+    asyncio.run(scenario())
+
+
+def test_container_readiness_requires_discord_and_database() -> None:
+    class HealthyDatabase:
+        async def healthcheck(self) -> bool:
+            return True
+
+        async def close(self) -> None:
+            pass
+
+        async def connect(self) -> None:
+            pass
+
+    async def scenario() -> None:
+        container = ApplicationContainer(
+            settings=object(),  # type: ignore[arg-type]
+            database=HealthyDatabase(),  # type: ignore[arg-type]
+            guild_settings=object(),  # type: ignore[arg-type]
+            tasks=TaskSupervisor(),
+            health=object(),  # type: ignore[arg-type]
+        )
+
+        assert await container.is_ready() is False
+        container.mark_discord_ready(True)
+        assert await container.is_ready() is True
 
     asyncio.run(scenario())

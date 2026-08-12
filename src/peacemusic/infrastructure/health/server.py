@@ -30,6 +30,11 @@ class HealthServer:
         self._runner: web.AppRunner | None = None
         self._site: web.TCPSite | None = None
 
+    def set_readiness_check(self, readiness_check: ReadinessCheck) -> None:
+        """Replace the readiness probe after dependent resources are composed."""
+
+        self._readiness_check = readiness_check
+
     async def start(self) -> None:
         if self._runner is not None:
             return

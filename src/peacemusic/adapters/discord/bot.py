@@ -31,3 +31,8 @@ class PeaceMusicV2Bot(commands.Bot):
 
     async def on_ready(self) -> None:
         self._ready = True
+        self.container.mark_discord_ready(True)
+
+    async def on_disconnect(self) -> None:
+        self._ready = False
+        self.container.mark_discord_ready(False)
