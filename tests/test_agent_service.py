@@ -4,6 +4,9 @@ import asyncio
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
+import pytest
+
+from peacemusic.core.errors import ExternalServiceError
 from peacemusic.infrastructure.persistence.repositories.in_memory_settings import (
     InMemoryGuildSettingsRepository,
 )
@@ -13,7 +16,7 @@ from peacemusic.core.metrics import MetricsRegistry
 from peacemusic.modules.agent.context import AgentRequestContext
 from peacemusic.modules.agent.coordinator import TurnCoordinator
 from peacemusic.modules.agent.graph import InputRoute, normalize_input, route_input
-from peacemusic.modules.agent.service import AgentService
+from peacemusic.modules.agent.service import AgentService, _extract_response
 from peacemusic.modules.agent.tools import ToolRegistry
 from peacemusic.modules.agent.state import AttachmentRef
 from peacemusic.modules.settings.service import GuildSettingsService
@@ -39,6 +42,39 @@ class FakeFactory:
         agent = FakeAgent()
         self.agents.append(agent)
         return agent
+
+
+def test_extract_response_supports_structured_text_blocks() -> None:
+    result = {
+        "messages": [
+            {"role": "user", "content": "Привет!"},
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "Здравствуйте!"},
+                    {"type": "image_url", "image_url": "https://example.test/image"},
+                ],
+            },
+        ]
+    }
+
+    assert _extract_response(result) == "Здравствуйте!"
+
+
+def test_extract_response_uses_latest_textual_message() -> None:
+    result = {
+        "messages": [
+            SimpleNamespace(content="Answer before a tool call"),
+            {"role": "tool", "content": [{"type": "tool_result", "result": "ok"}]},
+        ]
+    }
+
+    assert _extract_response(result) == "Answer before a tool call"
+
+
+def test_extract_response_rejects_results_without_text() -> None:
+    with pytest.raises(ExternalServiceError, match="no textual response"):
+        _extract_response({"messages": [{"content": [{"type": "tool_call"}]}]})
 
 
 def test_outer_graph_normalizes_and_routes_audio() -> None:

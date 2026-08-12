@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
-from collections.abc import Awaitable, Callable
 import logging
 import time
 from typing import Any, Protocol
@@ -29,9 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 class AgentFactory(Protocol):
-    def create(
-        self, tools: Sequence[Any], *, system_prompt: str | None = None
-    ) -> Any:
+    def create(self, tools: Sequence[Any], *, system_prompt: str | None = None) -> Any:
         """Build an agent that exposes the supplied tools."""
 
 
@@ -268,19 +265,42 @@ class AgentService:
         return f"guild:{context.guild_id}:channel:{context.channel_id}"
 
 
+def _content_to_text(content: Any) -> str:
+    """Extract text from LangChain's string or structured content formats."""
+
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, Mapping):
+        text = content.get("text")
+        return text.strip() if isinstance(text, str) else ""
+    if isinstance(content, Sequence) and not isinstance(
+        content, (str, bytes, bytearray)
+    ):
+        parts = [_content_to_text(part) for part in content]
+        return "\n".join(part for part in parts if part)
+
+    text = getattr(content, "text", None)
+    return text.strip() if isinstance(text, str) else ""
+
+
 def _extract_response(result: Any) -> str:
     if isinstance(result, str):
-        return result
-    if isinstance(result, dict):
+        response = result.strip()
+        if response:
+            return response
+    if isinstance(result, Mapping):
         messages = result.get("messages")
-        if isinstance(messages, Sequence) and messages:
-            last = messages[-1]
-            content = getattr(last, "content", None)
-            if content is None and isinstance(last, dict):
-                content = last.get("content")
-            if isinstance(content, str):
-                return content
-        content = result.get("content")
-        if isinstance(content, str):
-            return content
+        if isinstance(messages, Sequence) and not isinstance(
+            messages, (str, bytes, bytearray)
+        ):
+            for message in reversed(messages):
+                content = getattr(message, "content", None)
+                if content is None and isinstance(message, Mapping):
+                    content = message.get("content")
+                response = _content_to_text(content)
+                if response:
+                    return response
+        response = _content_to_text(result.get("content"))
+        if response:
+            return response
     raise ExternalServiceError("Agent returned no textual response")
