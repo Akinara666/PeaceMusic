@@ -37,6 +37,8 @@ class PeaceMusicState(BaseModel):
     user_id: int
     discord_message_id: int | None = None
     input_text: str = ""
+    normalized_input: str = ""
+    input_route: str = "ai_agent"
     attachments: list[AttachmentRef] = Field(default_factory=list)
     tool_events: list[ToolEvent] = Field(default_factory=list)
     final_response: str | None = None
