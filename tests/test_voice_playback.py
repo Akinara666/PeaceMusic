@@ -13,6 +13,10 @@ from peacemusic.modules.music.permissions import (
 from peacemusic.modules.music.player_manager import GuildPlayerManager
 from peacemusic.modules.music.recovery import PlaybackRecoveryService
 from peacemusic.modules.music.service import MusicService
+from peacemusic.infrastructure.persistence.repositories.in_memory_settings import (
+    InMemoryGuildSettingsRepository,
+)
+from peacemusic.modules.settings.service import GuildSettingsService
 
 
 class Resolver:
@@ -96,6 +100,8 @@ def test_music_service_starts_voice_playback_and_advances_after_callback() -> No
         voice.callbacks[0](None)
         await asyncio.sleep(0)
         await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
         assert voice.played == [(1, "source:one"), (1, "source:two")]
 
         await service.pause(context)
@@ -173,5 +179,79 @@ def test_music_service_marks_player_failed_after_recovery_exhaustion() -> None:
 
         assert (await service.player_state(1)).status is PlaybackStatus.FAILED
         assert audio.attempts == 2
+
+    asyncio.run(scenario())
+
+
+def test_music_service_disconnects_after_idle_timeout() -> None:
+    async def scenario() -> None:
+        settings = GuildSettingsService(InMemoryGuildSettingsRepository())
+        await settings.update(
+            1,
+            actor_user_id=2,
+            section="voice",
+            values={"idle_disconnect_timeout": 0},
+        )
+        voice = VoiceGateway()
+        service = MusicService(
+            GuildPlayerManager(),
+            Resolver(),
+            AllowAllPermissionService(),
+            voice_gateway=voice,
+            audio_source_factory=AudioFactory(),
+            settings=settings,
+        )
+        context = MusicRequestContext(
+            guild_id=1,
+            user_id=2,
+            user_voice_channel_id=3,
+        )
+
+        await service.play(context, "idle")
+        voice.callbacks[0](None)
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+        assert voice.actions[-2:] == ["stop", "disconnect"]
+        assert (await service.player_state(1)).status is PlaybackStatus.DISCONNECTED
+        await service.shutdown()
+
+    asyncio.run(scenario())
+
+
+def test_music_service_preserves_voice_connection_in_247_mode() -> None:
+    async def scenario() -> None:
+        settings = GuildSettingsService(InMemoryGuildSettingsRepository())
+        await settings.update(
+            1,
+            actor_user_id=2,
+            section="voice",
+            values={"idle_disconnect_timeout": 0, "mode_24_7": True},
+        )
+        voice = VoiceGateway()
+        service = MusicService(
+            GuildPlayerManager(),
+            Resolver(),
+            AllowAllPermissionService(),
+            voice_gateway=voice,
+            audio_source_factory=AudioFactory(),
+            settings=settings,
+        )
+        context = MusicRequestContext(
+            guild_id=1,
+            user_id=2,
+            user_voice_channel_id=3,
+        )
+
+        await service.play(context, "always-on")
+        voice.callbacks[0](None)
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+        assert voice.actions == []
+        assert (await service.player_state(1)).status is PlaybackStatus.IDLE
+        await service.shutdown()
 
     asyncio.run(scenario())
