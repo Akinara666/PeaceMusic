@@ -1,0 +1,64 @@
+from __future__ import annotations
+
+import asyncio
+
+import pytest
+
+from peacemusic.core.errors import PermissionDeniedError, ValidationError
+from peacemusic.infrastructure.persistence.repositories.in_memory_memory import (
+    InMemoryMemoryRepository,
+)
+from peacemusic.infrastructure.persistence.repositories.in_memory_settings import (
+    InMemoryGuildSettingsRepository,
+)
+from peacemusic.modules.memory.namespaces import channel_namespace, user_namespace
+from peacemusic.modules.memory.service import MemoryService
+from peacemusic.modules.settings.service import GuildSettingsService
+
+
+def test_memory_namespaces_are_explicit_and_independent() -> None:
+    assert user_namespace(1, 2) != channel_namespace(1, 2)
+    assert user_namespace(1, 2) == ("guild", "1", "user", "2", "memory")
+
+
+def test_memory_service_remember_recall_and_forget() -> None:
+    async def scenario() -> None:
+        settings = GuildSettingsService(InMemoryGuildSettingsRepository())
+        repository = InMemoryMemoryRepository()
+        service = MemoryService(repository, settings_service=settings)
+
+        record = await service.remember(
+            guild_id=1,
+            user_id=2,
+            content="User prefers ambient music",
+        )
+        matches = await service.recall(
+            guild_id=1,
+            user_id=2,
+            query="ambient music",
+        )
+        assert matches == [record]
+        assert (
+            await service.forget(guild_id=1, user_id=2, memory_id=record.memory_id) == 1
+        )
+
+    asyncio.run(scenario())
+
+
+def test_memory_service_enforces_limits_and_settings() -> None:
+    async def scenario() -> None:
+        settings = GuildSettingsService(InMemoryGuildSettingsRepository())
+        service = MemoryService(InMemoryMemoryRepository(), settings_service=settings)
+        with pytest.raises(ValidationError):
+            await service.recall(guild_id=1, user_id=2, query="x", limit=0)
+
+        current = await settings.get(1)
+        current.memory.enabled = False
+        repository = InMemoryGuildSettingsRepository()
+        await repository.save(current)
+        settings = GuildSettingsService(repository)
+        service = MemoryService(InMemoryMemoryRepository(), settings_service=settings)
+        with pytest.raises(PermissionDeniedError):
+            await service.remember(guild_id=1, user_id=2, content="secret")
+
+    asyncio.run(scenario())
