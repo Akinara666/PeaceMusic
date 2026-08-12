@@ -6,6 +6,7 @@ import os
 import pytest
 
 from peacemusic.infrastructure.persistence.database import PostgresDatabase
+from peacemusic.infrastructure.llm.langgraph_persistence import LangGraphPersistence
 from peacemusic.infrastructure.persistence.repositories.postgres_settings import (
     PostgresGuildSettingsRepository,
 )
@@ -34,5 +35,36 @@ def test_postgres_settings_survive_service_restart() -> None:
             assert loaded.music.default_volume == 55
         finally:
             await database.close()
+
+    asyncio.run(scenario())
+
+
+def test_langgraph_store_survives_persistence_restart() -> None:
+    database_url = os.getenv("DATABASE_URL")
+    if not database_url:
+        pytest.skip("DATABASE_URL is required for PostgreSQL integration tests")
+
+    async def scenario() -> None:
+        namespace = ("integration", "restart")
+        first = LangGraphPersistence(database_url)
+        await first.start()
+        try:
+            await first.store.aput(
+                namespace,
+                "memory-1",
+                {"content": "persistent integration value"},
+                index=False,
+            )
+        finally:
+            await first.stop()
+
+        second = LangGraphPersistence(database_url)
+        await second.start()
+        try:
+            item = await second.store.aget(namespace, "memory-1")
+            assert item is not None
+            assert item.value["content"] == "persistent integration value"
+        finally:
+            await second.stop()
 
     asyncio.run(scenario())
