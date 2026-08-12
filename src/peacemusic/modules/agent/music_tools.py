@@ -186,6 +186,8 @@ def _music_context(context: AgentRequestContext) -> MusicRequestContext:
         user_voice_channel_id=context.user_voice_channel_id,
         bot_voice_channel_id=context.bot_voice_channel_id,
         can_manage_guild=context.can_manage_guild,
+        member_role_ids=context.member_role_ids,
+        dj_role_ids=context.dj_role_ids,
     )
 
 

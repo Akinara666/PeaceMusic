@@ -40,10 +40,12 @@ def music_request_context(interaction: discord.Interaction) -> MusicRequestConte
         getattr(interaction.guild, "voice_client", None), "channel", None
     )
     permissions = getattr(member, "guild_permissions", None)
+    role_ids = tuple(role.id for role in getattr(member, "roles", ()))
     return MusicRequestContext(
         guild_id=interaction.guild.id,
         user_id=interaction.user.id,
         user_voice_channel_id=getattr(user_voice, "id", None),
         bot_voice_channel_id=getattr(bot_voice, "id", None),
         can_manage_guild=bool(getattr(permissions, "manage_guild", False)),
+        member_role_ids=role_ids,
     )

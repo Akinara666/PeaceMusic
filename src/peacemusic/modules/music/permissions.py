@@ -22,6 +22,8 @@ class MusicCapability(StrEnum):
     LOOP = "loop"
     CONNECT = "connect"
     DISCONNECT = "disconnect"
+    SEEK = "seek"
+    AUTOPLAY = "autoplay"
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +33,12 @@ class MusicRequestContext:
     user_voice_channel_id: int | None = None
     bot_voice_channel_id: int | None = None
     can_manage_guild: bool = False
+    member_role_ids: tuple[int, ...] = ()
+    dj_role_ids: tuple[int, ...] = ()
+
+    @property
+    def has_dj_role(self) -> bool:
+        return bool(set(self.member_role_ids).intersection(self.dj_role_ids))
 
 
 class PermissionService(Protocol):

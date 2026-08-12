@@ -25,13 +25,31 @@ def test_discord_music_permissions_require_shared_voice_channel() -> None:
             bot_voice_channel_id=3,
         )
 
-        assert await service.allowed(same_voice, MusicCapability.SKIP)
+        assert not await service.allowed(same_voice, MusicCapability.SKIP)
         assert not await service.allowed(other_voice, MusicCapability.SKIP)
         assert await service.allowed(
             MusicRequestContext(guild_id=1, user_id=2, user_voice_channel_id=4),
             MusicCapability.PLAY,
         )
         assert not await service.allowed(other_voice, MusicCapability.PLAY)
+
+        dj_voice = MusicRequestContext(
+            guild_id=1,
+            user_id=2,
+            user_voice_channel_id=3,
+            bot_voice_channel_id=3,
+            member_role_ids=(10,),
+            dj_role_ids=(10,),
+        )
+        normal_voice = MusicRequestContext(
+            guild_id=1,
+            user_id=2,
+            user_voice_channel_id=3,
+            bot_voice_channel_id=3,
+        )
+        assert await service.allowed(dj_voice, MusicCapability.SKIP)
+        assert not await service.allowed(normal_voice, MusicCapability.SKIP)
+        assert await service.allowed(normal_voice, MusicCapability.PLAY)
 
     asyncio.run(scenario())
 

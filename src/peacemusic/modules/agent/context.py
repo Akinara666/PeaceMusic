@@ -15,6 +15,8 @@ class AgentRequestContext:
     user_voice_channel_id: int | None = None
     bot_voice_channel_id: int | None = None
     can_manage_guild: bool = False
+    member_role_ids: tuple[int, ...] = ()
+    dj_role_ids: tuple[int, ...] = ()
 
     def to_checkpoint(self) -> dict[str, object]:
         """Return only primitive checkpoint-safe values."""
