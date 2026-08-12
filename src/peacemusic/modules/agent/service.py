@@ -8,6 +8,10 @@ from typing import Any, Protocol
 from peacemusic.core.errors import ExternalServiceError
 from peacemusic.core.metrics import MetricsRegistry
 from peacemusic.modules.agent.context import AgentRequestContext
+from peacemusic.modules.agent.conversation import (
+    ConversationMessage,
+    ConversationRepository,
+)
 from peacemusic.modules.agent.coordinator import TurnCoordinator
 from peacemusic.modules.agent.graph import OuterAgentWorkflow
 from peacemusic.modules.agent.langchain_tools import build_langchain_tools
@@ -32,12 +36,18 @@ class AgentService:
         agent_factory: AgentFactory,
         coordinator: TurnCoordinator,
         metrics: MetricsRegistry | None = None,
+        conversation_repository: ConversationRepository | None = None,
+        conversation_limit: int = 20,
     ) -> None:
         self._settings = settings_service
         self._tools = tool_registry
         self._factory = agent_factory
         self._coordinator = coordinator
         self._metrics = metrics
+        if conversation_limit < 1:
+            raise ValueError("conversation_limit must be positive")
+        self._conversation = conversation_repository
+        self._conversation_limit = conversation_limit
         self._workflow = OuterAgentWorkflow()
 
     async def get_settings(self, guild_id: int):
@@ -63,12 +73,17 @@ class AgentService:
             build_langchain_tools(available, context=context) if available else []
         )
         agent = self._factory.create(langchain_tools)
+        history = ()
+        if self._conversation is not None and settings.memory.short_term_memory_enabled:
+            history = await self._conversation.recent(
+                self._thread_id(context), limit=self._conversation_limit
+            )
+        messages = [message.as_message() for message in history]
+        messages.append({"role": "user", "content": state.normalized_input})
 
         async def run_agent() -> Any:
             try:
-                return await agent.ainvoke(
-                    {"messages": [{"role": "user", "content": state.normalized_input}]}
-                )
+                return await agent.ainvoke({"messages": messages})
             except Exception as exc:  # noqa: BLE001 - provider boundary
                 raise ExternalServiceError("Agent execution failed") from exc
 
@@ -81,7 +96,25 @@ class AgentService:
             raise
         if self._metrics is not None:
             self._metrics.increment("peacemusic_agent_turns_total")
+        if self._conversation is not None and settings.memory.short_term_memory_enabled:
+            thread_id = self._thread_id(context)
+            await self._conversation.append(
+                thread_id,
+                ConversationMessage(role="user", content=state.normalized_input),
+            )
+            await self._conversation.append(
+                thread_id,
+                ConversationMessage(
+                    role="assistant", content=response.final_response or ""
+                ),
+            )
         return response
+
+    @staticmethod
+    def _thread_id(context: AgentRequestContext) -> str:
+        if context.guild_id is None:
+            return f"dm:{context.channel_id}"
+        return f"guild:{context.guild_id}:channel:{context.channel_id}"
 
 
 def _extract_response(result: Any) -> str:

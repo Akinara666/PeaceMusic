@@ -34,6 +34,9 @@ from peacemusic.infrastructure.persistence.repositories.postgres_history import 
 from peacemusic.infrastructure.persistence.repositories.postgres_memory import (
     PostgresMemoryRepository,
 )
+from peacemusic.infrastructure.persistence.repositories.postgres_conversation import (
+    PostgresConversationRepository,
+)
 from peacemusic.infrastructure.persistence.repositories.postgres_dj_roles import (
     PostgresDJRoleRepository,
 )
@@ -64,6 +67,7 @@ class ApplicationContainer:
     history: PlaybackHistoryService | None = None
     memory: MemoryService | None = None
     metrics: MetricsRegistry | None = None
+    conversation: PostgresConversationRepository | None = None
 
     async def start(self) -> None:
         await self.database.connect()
@@ -108,6 +112,7 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
         PostgresMemoryRepository(database),
         settings_service=guild_settings,
     )
+    conversation = PostgresConversationRepository(database)
     media_resolver = YtDlpMediaResolver()
     autoplay = AutoplayService(
         ResolverAutoplayProvider(media_resolver),
@@ -142,6 +147,7 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
             max_concurrent=resolved_settings.limits.max_concurrent_ai_turns,
         ),
         metrics=metrics,
+        conversation_repository=conversation,
     )
     health = HealthServer(
         host="0.0.0.0",
@@ -162,6 +168,7 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
         history=history,
         memory=memory,
         metrics=metrics,
+        conversation=conversation,
     )
     health.set_readiness_check(container.is_ready)
     return container
