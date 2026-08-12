@@ -8,6 +8,7 @@ from peacemusic.core.config import AppSettings
 from peacemusic.core.metrics import MetricsRegistry
 from peacemusic.core.tasks import TaskSupervisor
 from peacemusic.infrastructure.health.server import HealthServer
+from peacemusic.infrastructure.llm.langgraph_persistence import LangGraphPersistence
 from peacemusic.infrastructure.media.ytdlp import YtDlpMediaResolver
 from peacemusic.infrastructure.media.autoplay import ResolverAutoplayProvider
 from peacemusic.infrastructure.llm.langchain_agent import LangChainAgentFactory
@@ -69,15 +70,25 @@ class ApplicationContainer:
     memory: MemoryService | None = None
     metrics: MetricsRegistry | None = None
     conversation: PostgresConversationRepository | None = None
+    langgraph: LangGraphPersistence | None = None
+    agent_factory: LangChainAgentFactory | None = None
 
     async def start(self) -> None:
         await self.database.connect()
+        if self.langgraph is not None and self.agent_factory is not None:
+            await self.langgraph.start()
+            self.agent_factory.attach_persistence(
+                checkpointer=self.langgraph.checkpointer,
+                store=self.langgraph.store,
+            )
         await self.health.start()
 
     async def stop(self) -> None:
         await self.music.shutdown()
         await self.tasks.shutdown()
         await self.health.stop()
+        if self.langgraph is not None:
+            await self.langgraph.stop()
         await self.database.close()
 
     async def is_ready(self) -> bool:
@@ -115,6 +126,7 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
         settings_service=guild_settings,
     )
     conversation = PostgresConversationRepository(database)
+    langgraph = LangGraphPersistence(resolved_settings.database.url)
     media_resolver = YtDlpMediaResolver()
     autoplay = AutoplayService(
         ResolverAutoplayProvider(media_resolver),
@@ -138,13 +150,14 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
         music,
     )
     tool_registry = ToolRegistry(build_music_tool_specs(music))
+    agent_factory = LangChainAgentFactory(
+        api_key=resolved_settings.gemini.api_key.get_secret_value(),
+        model_name=resolved_settings.gemini.response_model,
+    )
     agent = AgentService(
         settings_service=guild_settings,
         tool_registry=tool_registry,
-        agent_factory=LangChainAgentFactory(
-            api_key=resolved_settings.gemini.api_key.get_secret_value(),
-            model_name=resolved_settings.gemini.response_model,
-        ),
+        agent_factory=agent_factory,
         coordinator=TurnCoordinator(
             max_concurrent=resolved_settings.limits.max_concurrent_ai_turns,
         ),
@@ -172,6 +185,8 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
         memory=memory,
         metrics=metrics,
         conversation=conversation,
+        langgraph=langgraph,
+        agent_factory=agent_factory,
     )
     health.set_readiness_check(container.is_ready)
     return container

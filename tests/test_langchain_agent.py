@@ -74,7 +74,12 @@ def test_langchain_factory_uses_create_agent(monkeypatch) -> None:
         temperature=0.3,
         system_prompt="Be concise",
     )
+    checkpointer = object()
+    store = object()
+    factory.attach_persistence(checkpointer=checkpointer, store=store)
     assert factory.create(["tool"]) == "agent"
     assert captured["tools"] == ["tool"]
     assert captured["system_prompt"] == "Be concise"
+    assert captured["checkpointer"] is checkpointer
+    assert captured["store"] is store
     assert captured["model"].kwargs["model"] == "gemini-test"
