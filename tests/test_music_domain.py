@@ -110,6 +110,22 @@ def test_music_service_enforces_permission_before_resolving() -> None:
     asyncio.run(scenario())
 
 
+def test_music_service_can_resolve_search_results_without_enqueueing() -> None:
+    async def scenario() -> None:
+        manager = GuildPlayerManager()
+        service = MusicService(manager, Resolver(), Permissions())
+        context = MusicRequestContext(guild_id=123, user_id=456)
+
+        result = await service.resolve_track(context, "search term")
+
+        assert result.title == "search term"
+        player = await service.player_state(123)
+        assert player.current_track is None
+        assert player.queue.list() == []
+
+    asyncio.run(scenario())
+
+
 def test_music_service_exposes_shared_queue_mutations() -> None:
     async def scenario() -> None:
         manager = GuildPlayerManager()

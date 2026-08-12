@@ -43,7 +43,11 @@ class PeaceMusicV2Bot(commands.Bot):
         self.add_view(PlayerView(self.container.music))
         await self.add_cog(SettingsCog(self.container.guild_settings))
         await self.add_cog(
-            MusicCog(self.container.music, getattr(self.container, "history", None))
+            MusicCog(
+                self.container.music,
+                getattr(self.container, "history", None),
+                getattr(self.container, "guild_settings", None),
+            )
         )
         playlist_service = getattr(self.container, "playlists", None)
         if playlist_service is not None:
