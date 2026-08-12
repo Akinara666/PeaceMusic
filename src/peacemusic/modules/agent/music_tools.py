@@ -72,6 +72,12 @@ def build_music_tool_specs(service: MusicService) -> tuple[ToolSpec, ...]:
     async def stop_music(context: AgentRequestContext) -> ToolResult:
         return await _run(service.stop, context, "Playback stopped")
 
+    async def join_voice(context: AgentRequestContext) -> ToolResult:
+        return await _run(service.connect, context, "Joined your voice channel")
+
+    async def disconnect_voice(context: AgentRequestContext) -> ToolResult:
+        return await _run(service.disconnect, context, "Disconnected from voice")
+
     async def seek_music(context: AgentRequestContext, seconds: int) -> ToolResult:
         try:
             args = SeekArguments(seconds=seconds)
@@ -175,6 +181,8 @@ def build_music_tool_specs(service: MusicService) -> tuple[ToolSpec, ...]:
         ToolSpec("resume_music", ToolCategory.MUSIC, resume_music),
         ToolSpec("skip_music", ToolCategory.MUSIC, skip_music),
         ToolSpec("stop_music", ToolCategory.MUSIC, stop_music),
+        ToolSpec("join_voice", ToolCategory.MUSIC, join_voice),
+        ToolSpec("disconnect_voice", ToolCategory.MUSIC, disconnect_voice),
         ToolSpec("seek_music", ToolCategory.MUSIC, seek_music),
         ToolSpec("set_volume", ToolCategory.MUSIC, set_volume),
         ToolSpec("set_loop_mode", ToolCategory.MUSIC, set_loop_mode),
