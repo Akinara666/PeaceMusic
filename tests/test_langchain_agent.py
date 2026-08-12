@@ -31,8 +31,10 @@ def test_langchain_tools_bind_context_and_return_serializable_result(
     tools = build_langchain_tools(
         [ToolSpec("example", ToolCategory.MUSIC, handler)],
         context=AgentRequestContext("req", 1, 2, 3, "user"),
+        max_tool_calls=1,
     )
     result = asyncio.run(tools[0].coroutine(value=4))
+    limited = asyncio.run(tools[0].coroutine(value=5))
 
     assert result == {
         "ok": True,
@@ -41,6 +43,7 @@ def test_langchain_tools_bind_context_and_return_serializable_result(
         "data": {},
         "user_notified": False,
     }
+    assert limited["code"] == "TOOL_CALL_LIMIT"
 
 
 def test_langchain_factory_uses_create_agent(monkeypatch) -> None:

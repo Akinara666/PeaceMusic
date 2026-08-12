@@ -12,6 +12,7 @@ from peacemusic.infrastructure.media.ytdlp import YtDlpMediaResolver
 from peacemusic.infrastructure.media.autoplay import ResolverAutoplayProvider
 from peacemusic.infrastructure.llm.langchain_agent import LangChainAgentFactory
 from peacemusic.modules.agent.coordinator import TurnCoordinator
+from peacemusic.modules.agent.limits import UserRateLimiter
 from peacemusic.modules.agent.music_tools import build_music_tool_specs
 from peacemusic.modules.agent.service import AgentService
 from peacemusic.modules.agent.tools import ToolRegistry
@@ -92,6 +93,7 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
     resolved_settings = settings or AppSettings()
     tasks = TaskSupervisor()
     metrics = MetricsRegistry()
+    rate_limiter = UserRateLimiter()
     database = PostgresDatabase(
         resolved_settings.database.url,
         min_size=resolved_settings.database.min_pool_size,
@@ -148,6 +150,7 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
         ),
         metrics=metrics,
         conversation_repository=conversation,
+        rate_limiter=rate_limiter,
     )
     health = HealthServer(
         host="0.0.0.0",

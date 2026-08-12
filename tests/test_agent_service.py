@@ -7,6 +7,7 @@ from peacemusic.infrastructure.persistence.repositories.in_memory_settings impor
     InMemoryGuildSettingsRepository,
 )
 from peacemusic.modules.agent.conversation import InMemoryConversationRepository
+from peacemusic.modules.agent.limits import UserRateLimiter
 from peacemusic.core.metrics import MetricsRegistry
 from peacemusic.modules.agent.context import AgentRequestContext
 from peacemusic.modules.agent.coordinator import TurnCoordinator
@@ -108,6 +109,35 @@ def test_agent_service_reuses_bounded_thread_history() -> None:
             {"role": "user", "content": "second message"},
         ]
         assert len(conversation.messages["guild:1:channel:2"]) == 4
+
+    asyncio.run(scenario())
+
+
+def test_agent_service_enforces_per_user_rate_limit_before_provider_call() -> None:
+    async def scenario() -> None:
+        repository = InMemoryGuildSettingsRepository()
+        settings = GuildSettingsService(repository)
+        current = await settings.get(1)
+        current.ai.per_user_rate_limit = 1
+        await repository.save(current)
+        settings.invalidate(1)
+        factory = FakeFactory()
+        service = AgentService(
+            settings_service=settings,
+            tool_registry=ToolRegistry(),
+            agent_factory=factory,
+            coordinator=TurnCoordinator(timeout_seconds=1),
+            rate_limiter=UserRateLimiter(),
+        )
+        context = AgentRequestContext("req-1", 1, 2, 3, "User")
+
+        await service.handle(context, "first")
+        limited = await service.handle(
+            AgentRequestContext("req-2", 1, 2, 3, "User"), "second"
+        )
+
+        assert limited.final_response == "You have reached the AI request rate limit."
+        assert len(factory.agents) == 1
 
     asyncio.run(scenario())
 

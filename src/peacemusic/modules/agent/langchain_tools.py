@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from peacemusic.modules.agent.context import AgentRequestContext
+from peacemusic.modules.agent.results import ToolResult
 from peacemusic.modules.agent.tools import ToolSpec
 
 
@@ -12,6 +13,7 @@ def build_langchain_tools(
     specs: Iterable[ToolSpec],
     *,
     context: AgentRequestContext,
+    max_tool_calls: int = 8,
 ) -> list[object]:
     """Bind runtime context before exposing tools to ``create_agent``.
 
@@ -19,6 +21,8 @@ def build_langchain_tools(
     database handles, locks, and authorization context remain application-owned.
     """
 
+    if max_tool_calls < 1:
+        raise ValueError("max_tool_calls must be positive")
     try:
         from langchain_core.tools import StructuredTool
     except ImportError as exc:  # pragma: no cover - optional provider boundary
@@ -28,8 +32,16 @@ def build_langchain_tools(
 
     tools: list[object] = []
     for spec in specs:
+        call_count = 0
 
         async def invoke(_spec: ToolSpec = spec, **arguments: object):
+            nonlocal call_count
+            if call_count >= max_tool_calls:
+                return ToolResult.failure(
+                    "TOOL_CALL_LIMIT",
+                    "The maximum number of tool calls for this turn was reached.",
+                ).model_dump(mode="json")
+            call_count += 1
             result = await _spec.handler(context, **arguments)
             return result.model_dump(mode="json")
 
