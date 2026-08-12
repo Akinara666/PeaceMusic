@@ -3,6 +3,9 @@ from __future__ import annotations
 import asyncio
 
 from peacemusic.adapters.discord.permissions import DiscordMusicPermissionService
+from peacemusic.infrastructure.persistence.repositories.in_memory_dj_roles import (
+    InMemoryDJRoleRepository,
+)
 from peacemusic.adapters.discord.presenters.music import player_embed, track_embed
 from peacemusic.modules.music.models import Track
 from peacemusic.modules.music.permissions import MusicCapability, MusicRequestContext
@@ -50,6 +53,28 @@ def test_discord_music_permissions_require_shared_voice_channel() -> None:
         assert await service.allowed(dj_voice, MusicCapability.SKIP)
         assert not await service.allowed(normal_voice, MusicCapability.SKIP)
         assert await service.allowed(normal_voice, MusicCapability.PLAY)
+
+    asyncio.run(scenario())
+
+
+def test_discord_music_permissions_load_persistent_dj_roles() -> None:
+    async def scenario() -> None:
+        roles = InMemoryDJRoleRepository()
+        await roles.add_role(1, 10, "DJ")
+        service = DiscordMusicPermissionService(roles)
+        context = MusicRequestContext(
+            guild_id=1,
+            user_id=2,
+            user_voice_channel_id=3,
+            bot_voice_channel_id=3,
+            member_role_ids=(10,),
+        )
+
+        assert await service.allowed(context, MusicCapability.SKIP)
+        assert await roles.list_roles(1) == [(10, "DJ")]
+
+        await roles.remove_role(1, 10)
+        assert not await service.allowed(context, MusicCapability.SKIP)
 
     asyncio.run(scenario())
 
