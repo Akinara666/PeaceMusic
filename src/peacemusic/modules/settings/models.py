@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 class GeneralGuildSettings(BaseModel):
     language: str = Field(default="en", min_length=2, max_length=16)
+    music_channel_id: int | None = None
     notifications_enabled: bool = True
 
 
