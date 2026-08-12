@@ -3,6 +3,10 @@ services:
     build: .
     image: ghcr.io/akinara666/peacemusic:latest
     init: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     restart: unless-stopped
     mem_limit: 1g
     cpus: 1.0
@@ -32,6 +36,7 @@ services:
       # resolved from the directory containing this Compose file.
       - ${MUSIC_FILES_HOST_DIR:-./music_files}:/app/music_files
       - ${APP_DATA_HOST_DIR:-./data}:/app/data
+      - ytdlp_cache:/app/.cache/yt-dlp
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health/live', timeout=3)"]
       interval: 30s
@@ -76,3 +81,4 @@ services:
 
 volumes:
   postgres_data:
+  ytdlp_cache:

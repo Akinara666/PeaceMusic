@@ -4,7 +4,6 @@ import asyncio
 
 import pytest
 
-from peacemusic.core.errors import PermissionDeniedError
 from peacemusic.modules.agent.context import AgentRequestContext
 from peacemusic.modules.agent.coordinator import TurnCoordinator
 from peacemusic.modules.agent.results import ToolResult
