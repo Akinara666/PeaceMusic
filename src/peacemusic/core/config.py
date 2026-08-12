@@ -26,6 +26,12 @@ class _EnvironmentSettings(BaseSettings):
 PositiveInt = Annotated[int, Field(ge=1)]
 NonNegativeInt = Annotated[int, Field(ge=0)]
 
+DEFAULT_AGENT_SYSTEM_PROMPT = (
+    "You are PeaceMusic, a helpful and friendly Discord music assistant. "
+    "Be concise, clear, and respectful. Use available tools when needed, "
+    "and never claim an action succeeded unless a tool confirms it."
+)
+
 
 class DiscordSettings(_EnvironmentSettings):
     """Secrets and bootstrap options required to connect to Discord."""
@@ -59,6 +65,14 @@ class GeminiSettings(_EnvironmentSettings):
     response_model: str = Field(
         default="gemini-3.1-flash-lite",
         validation_alias=AliasChoices("GEMINI_RESPONSE_MODEL", "GEMINI_MODEL"),
+    )
+    system_prompt: str = Field(
+        default=DEFAULT_AGENT_SYSTEM_PROMPT,
+        min_length=1,
+        max_length=4000,
+        validation_alias=AliasChoices(
+            "GEMINI_SYSTEM_PROMPT", "AGENT_SYSTEM_PROMPT"
+        ),
     )
     allowed_models: tuple[str, ...] = Field(
         default=("gemini-3.1-flash-lite",),

@@ -308,6 +308,8 @@ This is a deliberate boundary rather than evidence that the graph owns every ope
 
 `LangChainAgentFactory` lazily imports the LangChain and Google GenAI integrations and creates a Gemini-backed agent only when an AI turn is requested. The factory receives model name, API key, temperature, and system prompt from typed settings. LangGraph checkpointer and store objects are attached when persistence is configured.
 
+The system prompt is a per-guild setting inside `AIGuildSettings`. `GEMINI_SYSTEM_PROMPT` provides the operator-controlled default used when a guild is first initialized; a Manage Server administrator can replace it through the `Edit AI personality` Discord settings modal. `AgentService` reads the effective guild prompt for each request and passes it to the factory, so changing one guild’s personality does not affect other guilds or require a process restart. The settings service validates, persists, caches, and audits the change.
+
 The rest of the agent layer works with application contracts. A provider exception is converted by `AgentService` into `ExternalServiceError`, logged with request/guild/channel context, and reflected in metrics. The model provider can therefore be changed primarily in the infrastructure factory and configuration rather than throughout the cogs and modules.
 
 ### Dynamic tools and bounded execution
@@ -382,6 +384,7 @@ The current Alembic schema contains:
 | `0004_memory_records` | App-owned memory records with JSONB namespace/metadata and expiry. |
 | `0005_conversation_messages` | Bounded short-term conversation messages with thread indexing. |
 | `0006_player_messages` | Persisted guild-to-channel/message identity for the player UI. |
+| `0007_guild_ai_system_prompt` | Per-guild AI personality/system prompt. |
 
 Concrete repositories include settings, access, audit, conversation, DJ roles, history, memory, player messages, and playlists. SQL is kept in repositories, so services do not combine business decisions with query construction.
 

@@ -132,6 +132,7 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
         settings_repository,
         limits=resolved_settings.limits,
         allowed_models=resolved_settings.gemini.allowed_models,
+        default_system_prompt=resolved_settings.gemini.system_prompt,
         audit_writer=settings_audit,
     )
     dj_roles = PostgresDJRoleRepository(database)

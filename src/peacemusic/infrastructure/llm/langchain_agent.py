@@ -30,7 +30,9 @@ class LangChainAgentFactory:
         self._checkpointer = checkpointer
         self._store = store
 
-    def create(self, tools: Sequence[Any]) -> Any:
+    def create(
+        self, tools: Sequence[Any], *, system_prompt: str | None = None
+    ) -> Any:
         try:
             from langchain.agents import create_agent
             from langchain_google_genai import ChatGoogleGenerativeAI
@@ -48,7 +50,7 @@ class LangChainAgentFactory:
         kwargs: dict[str, Any] = {
             "model": model,
             "tools": list(tools),
-            "system_prompt": self.system_prompt or None,
+            "system_prompt": system_prompt or self.system_prompt or None,
         }
         if self._checkpointer is not None:
             kwargs["checkpointer"] = self._checkpointer

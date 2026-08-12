@@ -21,10 +21,14 @@ def settings_embed(
     }
     section_model = getattr(settings, section, settings.general)
     values = section_model.model_dump()
-    description = "\n".join(
-        f"**{key.replace('_', ' ').title()}:** `{value}`"
-        for key, value in values.items()
-    )
+    lines = []
+    for key, value in values.items():
+        if key == "system_prompt":
+            value = str(value).replace("\n", " ")
+            if len(value) > 300:
+                value = value[:300].rstrip() + "…"
+        lines.append(f"**{key.replace('_', ' ').title()}:** `{value}`")
+    description = "\n".join(lines)
     return discord.Embed(
         title=f"⚙ PeaceMusic Settings — {titles.get(section, section)}",
         description=description or "No settings in this section.",

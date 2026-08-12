@@ -62,6 +62,23 @@ class SettingsView(discord.ui.View):
     ) -> None:
         await self._toggle(interaction, "memory", "enabled")
 
+    @discord.ui.button(label="Edit AI personality", style=discord.ButtonStyle.primary)
+    async def edit_ai_personality(
+        self, interaction: discord.Interaction, _button: discord.ui.Button
+    ) -> None:
+        try:
+            settings = await self.service.get(self.guild_id)
+            await interaction.response.send_modal(
+                AIPersonalityModal(
+                    self.service,
+                    guild_id=self.guild_id,
+                    actor_user_id=self.actor_user_id,
+                    current_prompt=settings.ai.system_prompt,
+                )
+            )
+        except PeaceMusicError as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
+
     async def show_section(
         self, interaction: discord.Interaction, section: str
     ) -> None:
@@ -90,6 +107,48 @@ class SettingsView(discord.ui.View):
             await interaction.response.edit_message(
                 embed=settings_embed(updated, section=section),
                 view=self,
+            )
+        except PeaceMusicError as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
+
+
+class AIPersonalityModal(discord.ui.Modal, title="AI personality"):
+    """Edit the system prompt used for this guild's AI conversations."""
+
+    prompt = discord.ui.TextInput(
+        label="System prompt",
+        style=discord.TextStyle.paragraph,
+        placeholder="Describe the assistant's personality and behavior...",
+        min_length=1,
+        max_length=4000,
+        required=True,
+    )
+
+    def __init__(
+        self,
+        service: GuildSettingsService,
+        *,
+        guild_id: int,
+        actor_user_id: int,
+        current_prompt: str,
+    ) -> None:
+        super().__init__()
+        self.service = service
+        self.guild_id = guild_id
+        self.actor_user_id = actor_user_id
+        self.prompt.default = current_prompt
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        try:
+            await self.service.update(
+                self.guild_id,
+                actor_user_id=self.actor_user_id,
+                section="ai",
+                values={"system_prompt": str(self.prompt.value).strip()},
+            )
+            await interaction.response.send_message(
+                "AI personality updated. The new personality will be used for the next AI request.",
+                ephemeral=True,
             )
         except PeaceMusicError as exc:
             await interaction.response.send_message(str(exc), ephemeral=True)

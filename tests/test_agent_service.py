@@ -33,8 +33,9 @@ class FakeFactory:
         self.tools = None
         self.agents = []
 
-    def create(self, tools):
+    def create(self, tools, *, system_prompt=None):
         self.tools = tools
+        self.system_prompt = system_prompt
         agent = FakeAgent()
         self.agents.append(agent)
         return agent
@@ -60,7 +61,10 @@ def test_outer_graph_normalizes_and_routes_audio() -> None:
 
 def test_agent_service_coordinates_provider_and_returns_serializable_state() -> None:
     async def scenario() -> None:
-        settings = GuildSettingsService(InMemoryGuildSettingsRepository())
+        settings = GuildSettingsService(
+            InMemoryGuildSettingsRepository(),
+            default_system_prompt="You are a cheerful music guide.",
+        )
         factory = FakeFactory()
         metrics = MetricsRegistry()
         service = AgentService(
@@ -79,6 +83,7 @@ def test_agent_service_coordinates_provider_and_returns_serializable_state() -> 
         assert state.normalized_input == "hello"
         assert state.checkpoint()["final_response"] == "agent response"
         assert factory.tools == []
+        assert factory.system_prompt == "You are a cheerful music guide."
         assert "peacemusic_agent_turns_total 1" in metrics.render()
         assert "peacemusic_agent_turn_duration_seconds_count 1" in metrics.render()
 

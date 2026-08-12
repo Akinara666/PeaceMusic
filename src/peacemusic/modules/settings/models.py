@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from peacemusic.core.config import DEFAULT_AGENT_SYSTEM_PROMPT
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
@@ -54,6 +55,11 @@ class AIGuildSettings(BaseModel):
     channel_id: int | None = None
     require_mention: bool = False
     model: str = "gemini-3.1-flash-lite"
+    system_prompt: str = Field(
+        default=DEFAULT_AGENT_SYSTEM_PROMPT,
+        min_length=1,
+        max_length=4000,
+    )
     temperature: float = Field(default=1.0, ge=0.0, le=2.0)
     attachments_enabled: bool = True
     image_input_enabled: bool = True
