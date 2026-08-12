@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 
 import pytest
 
@@ -11,6 +12,9 @@ from peacemusic.infrastructure.persistence.repositories.in_memory_audit import (
 )
 from peacemusic.infrastructure.persistence.repositories.in_memory_access import (
     InMemoryAccessControlRepository,
+)
+from peacemusic.infrastructure.persistence.repositories.postgres_access import (
+    PostgresAccessControlRepository,
 )
 from peacemusic.modules.access.service import AccessControlService
 from peacemusic.modules.audit.service import AuditService
@@ -106,3 +110,37 @@ def test_chat_cog_suppresses_access_blocked_messages() -> None:
     )()
 
     asyncio.run(ChatCog(object(), Access()).on_message(message))
+
+
+def test_postgres_access_repository_uses_expected_operations() -> None:
+    class Connection:
+        def __init__(self) -> None:
+            self.commands: list[tuple[str, object]] = []
+
+        async def fetchval(self, query: str, *_args: int) -> bool:
+            self.commands.append((query, "fetchval"))
+            return "disabled_users" in query
+
+        async def execute(self, query: str, *_args: object) -> None:
+            self.commands.append((query, "execute"))
+
+    class Database:
+        def __init__(self, connection: Connection) -> None:
+            self.connection = connection
+
+        @asynccontextmanager
+        async def acquire(self):
+            yield self.connection
+
+    async def scenario() -> None:
+        connection = Connection()
+        repository = PostgresAccessControlRepository(Database(connection))
+        assert await repository.is_user_disabled(1, 2)
+        assert not await repository.is_channel_muted(1, 3)
+        await repository.set_user_disabled(1, 2, True)
+        await repository.set_user_disabled(1, 2, False)
+        await repository.set_channel_muted(1, 3, True)
+        await repository.set_channel_muted(1, 3, False)
+        assert len(connection.commands) == 6
+
+    asyncio.run(scenario())
