@@ -5,6 +5,7 @@ from __future__ import annotations
 import discord
 from discord.ext import commands
 
+from peacemusic.adapters.discord.cogs.music import MusicCog
 from peacemusic.adapters.discord.cogs.settings import SettingsCog
 from peacemusic.bootstrap.container import ApplicationContainer
 
@@ -27,6 +28,7 @@ class PeaceMusicV2Bot(commands.Bot):
 
     async def setup_hook(self) -> None:
         await self.add_cog(SettingsCog(self.container.guild_settings))
+        await self.add_cog(MusicCog(self.container.music))
         await self.tree.sync()
 
     async def on_ready(self) -> None:
