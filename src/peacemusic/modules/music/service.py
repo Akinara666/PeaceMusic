@@ -56,13 +56,18 @@ class MusicService:
         self._audio_source_factory = audio_source_factory
 
     async def play(self, context: MusicRequestContext, query: str) -> Track:
-        await self._require(context, MusicCapability.PLAY)
-        if not query.strip():
-            raise ValidationError("Music query cannot be empty")
         if self._voice_gateway is not None and context.user_voice_channel_id is None:
             raise ValidationError("User must be in a voice channel")
-        media = await self._resolver.resolve(query)
-        track = self._track_from_media(media, requested_by=context.user_id)
+        track = await self.resolve_track(context, query)
+        await self.enqueue_track(context, track)
+        return track
+
+    async def enqueue_track(self, context: MusicRequestContext, track: Track) -> None:
+        """Enqueue already validated metadata into the shared player."""
+
+        await self._require(context, MusicCapability.PLAY)
+        if self._voice_gateway is not None and context.user_voice_channel_id is None:
+            raise ValidationError("User must be in a voice channel")
         player = await self._players.get_or_create(context.guild_id)
         was_idle = player.current_track is None
         if self._voice_gateway is not None:
@@ -73,7 +78,15 @@ class MusicService:
         player.enqueue(track)
         if self._voice_gateway is not None and was_idle:
             await self._start_current(player)
-        return track
+
+    async def resolve_track(self, context: MusicRequestContext, query: str) -> Track:
+        """Resolve metadata without enqueueing it into a live player."""
+
+        await self._require(context, MusicCapability.PLAY)
+        if not query.strip():
+            raise ValidationError("Music query cannot be empty")
+        media = await self._resolver.resolve(query)
+        return self._track_from_media(media, requested_by=context.user_id)
 
     async def pause(self, context: MusicRequestContext) -> None:
         await self._require(context, MusicCapability.PAUSE)

@@ -20,9 +20,13 @@ from peacemusic.infrastructure.persistence.repositories.postgres_audit import (
 from peacemusic.infrastructure.persistence.repositories.postgres_settings import (
     PostgresGuildSettingsRepository,
 )
+from peacemusic.infrastructure.persistence.repositories.postgres_playlists import (
+    PostgresPlaylistRepository,
+)
 from peacemusic.adapters.discord.permissions import DiscordMusicPermissionService
 from peacemusic.modules.music.player_manager import GuildPlayerManager
 from peacemusic.modules.music.service import MusicService
+from peacemusic.modules.playlists.service import PlaylistService
 from peacemusic.modules.settings.service import GuildSettingsService
 
 
@@ -38,6 +42,7 @@ class ApplicationContainer:
     tasks: TaskSupervisor
     health: HealthServer
     _discord_ready: bool = False
+    playlists: PlaylistService | None = None
 
     async def start(self) -> None:
         await self.database.connect()
@@ -80,6 +85,10 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
         YtDlpMediaResolver(),
         DiscordMusicPermissionService(),
     )
+    playlists = PlaylistService(
+        PostgresPlaylistRepository(database),
+        music,
+    )
     tool_registry = ToolRegistry(build_music_tool_specs(music))
     agent = AgentService(
         settings_service=guild_settings,
@@ -105,6 +114,7 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
         agent=agent,
         tasks=tasks,
         health=health,
+        playlists=playlists,
     )
     health.set_readiness_check(container.is_ready)
     return container
