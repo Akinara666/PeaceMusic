@@ -378,12 +378,24 @@ Manage Server unless noted otherwise.
 | `/dj remove <role_id>` | Remove a DJ role. |
 | `/dj list` | List configured DJ roles. |
 
-The `/settings` panel includes **Edit AI personality**. It opens a Discord
-modal where a Manage Server administrator can replace the system prompt for
-that guild. The prompt is persisted in PostgreSQL and is used for the next AI
-request. `GEMINI_SYSTEM_PROMPT` controls the operator default for guilds that
-do not yet have saved settings; it does not overwrite an existing guild's
-custom personality.
+The `/settings` panel lets a Manage Server administrator select a section and
+edit every persisted guild option through Discord. It covers General, Music,
+Voice, AI, and Memory settings, including channels, volumes, queue limits,
+autoplay, voice timeouts, model selection, tool permissions, reactions,
+memory behavior, and the per-server system prompt. Values are converted and
+validated before being written to PostgreSQL, and invalid values or values
+outside operator safety limits are rejected with an ephemeral error.
+
+Discord channel fields accept a channel ID; leave an optional channel field
+blank to clear it. Boolean fields accept `true`/`false` (also `yes`/`no` or
+`on`/`off`), and loop mode accepts `off`, `track`, or `queue`. The panel is
+intentionally limited to guild behavior: bot tokens, API keys, database
+URLs, global safety ceilings, and other infrastructure settings remain in
+`.env` and are not exposed to guild administrators.
+
+`GEMINI_SYSTEM_PROMPT` controls the operator default for guilds that do not
+yet have saved settings; it does not overwrite an existing guild's custom
+personality.
 
 The setup wizard configures the music channel, AI channel, AI enablement,
 mention mode, DJ role, default volume, and autoplay. The settings panel groups
