@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Protocol
 
 from peacemusic.modules.music.models import ResolvedMedia, Track
@@ -23,3 +24,24 @@ class VoiceGateway(Protocol):
 
     async def disconnect(self, guild_id: int) -> None:
         """Disconnect the guild player."""
+
+    async def play(
+        self,
+        guild_id: int,
+        source: object,
+        *,
+        after: Callable[[Exception | None], None] | None = None,
+    ) -> None:
+        """Start a source and invoke ``after`` when Discord finishes it."""
+
+    async def pause(self, guild_id: int) -> None:
+        """Pause the live voice client."""
+
+    async def resume(self, guild_id: int) -> None:
+        """Resume the live voice client."""
+
+    async def stop(self, guild_id: int) -> None:
+        """Stop the live voice client."""
+
+    async def set_volume(self, guild_id: int, volume: int) -> None:
+        """Apply volume to the active source."""

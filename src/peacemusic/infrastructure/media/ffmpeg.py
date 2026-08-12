@@ -29,12 +29,13 @@ class FFmpegAudioSourceFactory:
         if not source:
             raise PlaybackError("Track has no FFmpeg source")
         try:
-            return discord.FFmpegPCMAudio(
+            raw_source = discord.FFmpegPCMAudio(
                 source,
                 executable=self._executable,
                 before_options=self._before_options,
                 options=self._options,
             )
+            return discord.PCMVolumeTransformer(raw_source, volume=0.7)
         except (OSError, ValueError) as exc:
             raise PlaybackError("FFmpeg audio source could not be created") from exc
 

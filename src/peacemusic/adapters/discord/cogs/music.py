@@ -94,6 +94,15 @@ class MusicCog(commands.Cog):
         except PeaceMusicError as exc:
             await self._send_error(interaction, exc)
 
+    @app_commands.command(name="leave", description="Disconnect from voice")
+    @app_commands.guild_only()
+    async def leave(self, interaction: discord.Interaction) -> None:
+        try:
+            await self._service.disconnect(self._context(interaction))
+            await interaction.response.send_message("👋 Disconnected from voice.")
+        except PeaceMusicError as exc:
+            await self._send_error(interaction, exc)
+
     @app_commands.command(name="volume", description="Set player volume")
     @app_commands.guild_only()
     async def volume(self, interaction: discord.Interaction, value: int) -> None:
