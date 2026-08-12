@@ -14,9 +14,11 @@ from peacemusic.modules.agent.coordinator import TurnCoordinator
 from peacemusic.modules.agent.music_tools import build_music_tool_specs
 from peacemusic.modules.agent.service import AgentService
 from peacemusic.modules.agent.tools import ToolRegistry
+from peacemusic.modules.audit.service import AuditService
 from peacemusic.modules.autoplay.service import AutoplayService
 from peacemusic.infrastructure.persistence.database import PostgresDatabase
 from peacemusic.infrastructure.persistence.repositories.postgres_audit import (
+    PostgresAuditWriter,
     PostgresSettingsAuditWriter,
 )
 from peacemusic.infrastructure.persistence.repositories.postgres_settings import (
@@ -86,6 +88,7 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
     )
     settings_repository = PostgresGuildSettingsRepository(database)
     settings_audit = PostgresSettingsAuditWriter(database)
+    audit = AuditService(PostgresAuditWriter(database))
     guild_settings = GuildSettingsService(
         settings_repository,
         limits=resolved_settings.limits,
@@ -112,6 +115,7 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
         autoplay=autoplay,
         recovery=PlaybackRecoveryService(),
         settings=guild_settings,
+        audit=audit,
     )
     playlists = PlaylistService(
         PostgresPlaylistRepository(database),
