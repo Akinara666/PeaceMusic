@@ -25,10 +25,11 @@ COPY . .
 
 RUN groupadd --system peacemusic && \
     useradd --system --gid peacemusic --home-dir /app peacemusic && \
-    mkdir -p /app/data /app/music_files && \
+    mkdir -p /app/data /app/music_files /app/.cache/yt-dlp && \
     chown -R peacemusic:peacemusic /app
 
 USER peacemusic
+ENV HOME=/app
 
 # Run the bot
 CMD ["sh", "-c", "alembic upgrade head && exec python -m peacemusic.main"]
