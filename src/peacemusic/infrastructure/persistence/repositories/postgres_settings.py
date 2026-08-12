@@ -1,4 +1,4 @@
-"""PostgreSQL repository for the guild settings aggregate."""
+"""PostgreSQL repository for the complete guild settings aggregate."""
 
 from __future__ import annotations
 
@@ -16,94 +16,180 @@ from peacemusic.modules.settings.models import (
 
 
 class PostgresGuildSettingsRepository:
-    """Persist guild settings without exposing SQL to application services."""
+    """Persist all guild behavior settings without exposing SQL to services."""
+
+    _COLUMNS = """
+        guild_id, language, music_channel_id, notifications_enabled,
+        ai_channel_id, default_volume, max_volume, max_queue_size,
+        autoplay_enabled, default_loop_mode, track_announce, max_playlist_size,
+        history_enabled, allow_direct_urls, allow_search, audio_filters_enabled,
+        idle_disconnect_enabled, idle_disconnect_timeout, alone_pause_enabled,
+        alone_disconnect_timeout, auto_resume_enabled, mode_24_7,
+        default_voice_channel, ai_enabled, require_ai_mention, ai_model,
+        ai_temperature, attachments_enabled, image_input_enabled,
+        video_input_enabled, music_tools_enabled, memory_tools_enabled,
+        discord_tools_enabled, reactions_enabled, per_user_rate_limit,
+        turn_timeout, memory_enabled, short_term_memory_enabled,
+        long_term_memory_enabled, user_memory_enabled, channel_memory_enabled,
+        semantic_search_enabled, summarization_enabled, memory_retention_days
+    """
 
     async def get(self, guild_id: int) -> GuildSettings | None:
         async with self._database.acquire() as connection:
             row = await connection.fetchrow(
-                """
-                SELECT guild_id, language, music_channel_id, ai_channel_id,
-                       default_volume, max_volume, max_queue_size,
-                       autoplay_enabled, track_announce, idle_disconnect_timeout,
-                       mode_24_7, ai_enabled, require_ai_mention, ai_model,
-                       ai_temperature, memory_enabled
-                  FROM guild_settings
-                 WHERE guild_id = $1
-                """,
+                f"SELECT {self._COLUMNS} FROM guild_settings WHERE guild_id = $1",
                 guild_id,
             )
-        if row is None:
-            return None
-        return self._from_row(row)
+        return self._from_row(row) if row is not None else None
 
     async def save(self, settings: GuildSettings) -> None:
+        values = self._values(settings)
+        placeholders = ", ".join(f"${index}" for index in range(1, len(values) + 1))
+        assignments = ", ".join(
+            f"{column} = EXCLUDED.{column}" for column in self._column_names()[1:]
+        )
         async with self._database.acquire() as connection:
             await connection.execute(
-                """
-                INSERT INTO guild_settings (
-                    guild_id, language, music_channel_id, ai_channel_id,
-                    default_volume, max_volume, max_queue_size,
-                    autoplay_enabled, track_announce, idle_disconnect_timeout,
-                    mode_24_7, ai_enabled, require_ai_mention, ai_model,
-                    ai_temperature, memory_enabled, updated_at
-                ) VALUES (
-                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-                    $13, $14, $15, $16, CURRENT_TIMESTAMP
-                )
+                f"""
+                INSERT INTO guild_settings ({self._COLUMNS})
+                VALUES ({placeholders})
                 ON CONFLICT (guild_id) DO UPDATE SET
-                    language = EXCLUDED.language,
-                    music_channel_id = EXCLUDED.music_channel_id,
-                    ai_channel_id = EXCLUDED.ai_channel_id,
-                    default_volume = EXCLUDED.default_volume,
-                    max_volume = EXCLUDED.max_volume,
-                    max_queue_size = EXCLUDED.max_queue_size,
-                    autoplay_enabled = EXCLUDED.autoplay_enabled,
-                    track_announce = EXCLUDED.track_announce,
-                    idle_disconnect_timeout = EXCLUDED.idle_disconnect_timeout,
-                    mode_24_7 = EXCLUDED.mode_24_7,
-                    ai_enabled = EXCLUDED.ai_enabled,
-                    require_ai_mention = EXCLUDED.require_ai_mention,
-                    ai_model = EXCLUDED.ai_model,
-                    ai_temperature = EXCLUDED.ai_temperature,
-                    memory_enabled = EXCLUDED.memory_enabled,
-                    updated_at = CURRENT_TIMESTAMP
+                    {assignments}, updated_at = CURRENT_TIMESTAMP
                 """,
-                settings.guild_id,
-                settings.general.language,
-                settings.general.music_channel_id,
-                settings.ai.channel_id,
-                settings.music.default_volume,
-                settings.music.max_volume,
-                settings.music.max_queue_size,
-                settings.music.autoplay_enabled,
-                settings.music.track_announce,
-                settings.voice.idle_disconnect_timeout,
-                settings.voice.mode_24_7,
-                settings.ai.enabled,
-                settings.ai.require_mention,
-                settings.ai.model,
-                settings.ai.temperature,
-                settings.memory.enabled,
+                *values,
             )
 
     def __init__(self, database: PostgresDatabase) -> None:
         self._database = database
 
     @staticmethod
+    def _column_names() -> tuple[str, ...]:
+        return (
+            "guild_id",
+            "language",
+            "music_channel_id",
+            "notifications_enabled",
+            "ai_channel_id",
+            "default_volume",
+            "max_volume",
+            "max_queue_size",
+            "autoplay_enabled",
+            "default_loop_mode",
+            "track_announce",
+            "max_playlist_size",
+            "history_enabled",
+            "allow_direct_urls",
+            "allow_search",
+            "audio_filters_enabled",
+            "idle_disconnect_enabled",
+            "idle_disconnect_timeout",
+            "alone_pause_enabled",
+            "alone_disconnect_timeout",
+            "auto_resume_enabled",
+            "mode_24_7",
+            "default_voice_channel",
+            "ai_enabled",
+            "require_ai_mention",
+            "ai_model",
+            "ai_temperature",
+            "attachments_enabled",
+            "image_input_enabled",
+            "video_input_enabled",
+            "music_tools_enabled",
+            "memory_tools_enabled",
+            "discord_tools_enabled",
+            "reactions_enabled",
+            "per_user_rate_limit",
+            "turn_timeout",
+            "memory_enabled",
+            "short_term_memory_enabled",
+            "long_term_memory_enabled",
+            "user_memory_enabled",
+            "channel_memory_enabled",
+            "semantic_search_enabled",
+            "summarization_enabled",
+            "memory_retention_days",
+        )
+
+    @staticmethod
+    def _values(settings: GuildSettings) -> tuple[object, ...]:
+        return (
+            settings.guild_id,
+            settings.general.language,
+            settings.general.music_channel_id,
+            settings.general.notifications_enabled,
+            settings.ai.channel_id,
+            settings.music.default_volume,
+            settings.music.max_volume,
+            settings.music.max_queue_size,
+            settings.music.autoplay_enabled,
+            settings.music.default_loop_mode,
+            settings.music.track_announce,
+            settings.music.max_playlist_size,
+            settings.music.history_enabled,
+            settings.music.allow_direct_urls,
+            settings.music.allow_search,
+            settings.music.audio_filters_enabled,
+            settings.voice.idle_disconnect_enabled,
+            settings.voice.idle_disconnect_timeout,
+            settings.voice.alone_pause_enabled,
+            settings.voice.alone_disconnect_timeout,
+            settings.voice.auto_resume_enabled,
+            settings.voice.mode_24_7,
+            settings.voice.default_voice_channel,
+            settings.ai.enabled,
+            settings.ai.require_mention,
+            settings.ai.model,
+            settings.ai.temperature,
+            settings.ai.attachments_enabled,
+            settings.ai.image_input_enabled,
+            settings.ai.video_input_enabled,
+            settings.ai.music_tools_enabled,
+            settings.ai.memory_tools_enabled,
+            settings.ai.discord_tools_enabled,
+            settings.ai.reactions_enabled,
+            settings.ai.per_user_rate_limit,
+            settings.ai.turn_timeout,
+            settings.memory.enabled,
+            settings.memory.short_term_memory_enabled,
+            settings.memory.long_term_memory_enabled,
+            settings.memory.user_memory_enabled,
+            settings.memory.channel_memory_enabled,
+            settings.memory.semantic_search_enabled,
+            settings.memory.summarization_enabled,
+            settings.memory.memory_retention_days,
+        )
+
+    @staticmethod
     def _from_row(row: Any) -> GuildSettings:
         return GuildSettings(
             guild_id=row["guild_id"],
-            general=GeneralGuildSettings(language=row["language"]),
+            general=GeneralGuildSettings(
+                language=row["language"],
+                music_channel_id=row["music_channel_id"],
+                notifications_enabled=row["notifications_enabled"],
+            ),
             music=MusicGuildSettings(
                 default_volume=row["default_volume"],
                 max_volume=row["max_volume"],
                 max_queue_size=row["max_queue_size"],
                 autoplay_enabled=row["autoplay_enabled"],
+                default_loop_mode=row["default_loop_mode"],
                 track_announce=row["track_announce"],
+                max_playlist_size=row["max_playlist_size"],
+                history_enabled=row["history_enabled"],
+                allow_direct_urls=row["allow_direct_urls"],
+                allow_search=row["allow_search"],
+                audio_filters_enabled=row["audio_filters_enabled"],
             ),
             voice=VoiceGuildSettings(
+                idle_disconnect_enabled=row["idle_disconnect_enabled"],
                 idle_disconnect_timeout=row["idle_disconnect_timeout"],
+                alone_pause_enabled=row["alone_pause_enabled"],
+                alone_disconnect_timeout=row["alone_disconnect_timeout"],
+                auto_resume_enabled=row["auto_resume_enabled"],
                 mode_24_7=row["mode_24_7"],
+                default_voice_channel=row["default_voice_channel"],
             ),
             ai=AIGuildSettings(
                 enabled=row["ai_enabled"],
@@ -111,6 +197,24 @@ class PostgresGuildSettingsRepository:
                 require_mention=row["require_ai_mention"],
                 model=row["ai_model"],
                 temperature=row["ai_temperature"],
+                attachments_enabled=row["attachments_enabled"],
+                image_input_enabled=row["image_input_enabled"],
+                video_input_enabled=row["video_input_enabled"],
+                music_tools_enabled=row["music_tools_enabled"],
+                memory_tools_enabled=row["memory_tools_enabled"],
+                discord_tools_enabled=row["discord_tools_enabled"],
+                reactions_enabled=row["reactions_enabled"],
+                per_user_rate_limit=row["per_user_rate_limit"],
+                turn_timeout=row["turn_timeout"],
             ),
-            memory=MemoryGuildSettings(enabled=row["memory_enabled"]),
+            memory=MemoryGuildSettings(
+                enabled=row["memory_enabled"],
+                short_term_memory_enabled=row["short_term_memory_enabled"],
+                long_term_memory_enabled=row["long_term_memory_enabled"],
+                user_memory_enabled=row["user_memory_enabled"],
+                channel_memory_enabled=row["channel_memory_enabled"],
+                semantic_search_enabled=row["semantic_search_enabled"],
+                summarization_enabled=row["summarization_enabled"],
+                memory_retention_days=row["memory_retention_days"],
+            ),
         )
