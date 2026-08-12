@@ -14,14 +14,19 @@ from peacemusic.modules.music.models import LoopMode
 from peacemusic.modules.music.permissions import MusicRequestContext
 from peacemusic.modules.music.service import MusicService
 from peacemusic.modules.history.service import PlaybackHistoryService
+from peacemusic.modules.settings.service import GuildSettingsService
 
 
 class MusicCog(commands.Cog):
     def __init__(
-        self, service: MusicService, history: PlaybackHistoryService | None = None
+        self,
+        service: MusicService,
+        history: PlaybackHistoryService | None = None,
+        settings: GuildSettingsService | None = None,
     ) -> None:
         self._service = service
         self._history = history
+        self._settings = settings
 
     @staticmethod
     def _context(interaction: discord.Interaction) -> MusicRequestContext:
@@ -46,6 +51,17 @@ class MusicCog(commands.Cog):
             track = await self._service.play(self._context(interaction), query)
             await interaction.response.send_message(
                 embed=track_embed(track), view=PlayerView(self._service)
+            )
+        except PeaceMusicError as exc:
+            await self._send_error(interaction, exc)
+
+    @app_commands.command(name="search", description="Search for a playable track")
+    @app_commands.guild_only()
+    async def search(self, interaction: discord.Interaction, query: str) -> None:
+        try:
+            track = await self._service.resolve_track(self._context(interaction), query)
+            await interaction.response.send_message(
+                embed=track_embed(track, description="Search result")
             )
         except PeaceMusicError as exc:
             await self._send_error(interaction, exc)
@@ -137,6 +153,36 @@ class MusicCog(commands.Cog):
         try:
             player = await self._service.player_state(interaction.guild.id)  # type: ignore[union-attr]
             await interaction.response.send_message(embed=player_embed(player))
+        except PeaceMusicError as exc:
+            await self._send_error(interaction, exc)
+
+    @app_commands.command(name="nowplaying", description="Show the current track")
+    @app_commands.guild_only()
+    async def nowplaying(self, interaction: discord.Interaction) -> None:
+        try:
+            if interaction.guild is None:
+                raise PeaceMusicError("Music commands are only available in guilds")
+            player = await self._service.player_state(interaction.guild.id)
+            await interaction.response.send_message(
+                embed=player_embed(player), view=PlayerView(self._service)
+            )
+        except PeaceMusicError as exc:
+            await self._send_error(interaction, exc)
+
+    @app_commands.command(name="autoplay", description="Enable or disable autoplay")
+    @app_commands.guild_only()
+    async def autoplay(self, interaction: discord.Interaction, enabled: bool) -> None:
+        try:
+            if self._settings is None or interaction.guild is None:
+                raise PeaceMusicError("Guild settings are unavailable")
+            settings = await self._settings.update(
+                interaction.guild.id,
+                actor_user_id=interaction.user.id,
+                section="music",
+                values={"autoplay_enabled": enabled},
+            )
+            state = "enabled" if settings.music.autoplay_enabled else "disabled"
+            await interaction.response.send_message(f"Autoplay {state}.")
         except PeaceMusicError as exc:
             await self._send_error(interaction, exc)
 
