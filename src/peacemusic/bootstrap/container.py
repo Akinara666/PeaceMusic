@@ -20,6 +20,7 @@ from peacemusic.modules.agent.memory_tools import build_memory_tool_specs
 from peacemusic.modules.agent.music_context import music_context
 from peacemusic.modules.agent.music_tools import build_music_tool_specs
 from peacemusic.modules.agent.service import AgentService
+from peacemusic.modules.access.service import AccessControlService
 from peacemusic.modules.agent.tools import ToolRegistry
 from peacemusic.modules.attachments.service import AttachmentService
 from peacemusic.modules.attachments.workflow import AttachmentProviderWorkflow
@@ -50,6 +51,9 @@ from peacemusic.infrastructure.persistence.repositories.postgres_conversation im
 )
 from peacemusic.infrastructure.persistence.repositories.postgres_dj_roles import (
     PostgresDJRoleRepository,
+)
+from peacemusic.infrastructure.persistence.repositories.postgres_access import (
+    PostgresAccessControlRepository,
 )
 from peacemusic.adapters.discord.permissions import DiscordMusicPermissionService
 from peacemusic.modules.music.player_manager import GuildPlayerManager
@@ -82,6 +86,7 @@ class ApplicationContainer:
     langgraph: LangGraphPersistence | None = None
     agent_factory: LangChainAgentFactory | None = None
     player_messages: PostgresPlayerMessageRepository | None = None
+    access: AccessControlService | None = None
 
     async def start(self) -> None:
         await self.database.connect()
@@ -130,6 +135,9 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
         audit_writer=settings_audit,
     )
     dj_roles = PostgresDJRoleRepository(database)
+    access = AccessControlService(
+        PostgresAccessControlRepository(database), audit=audit
+    )
     history = PlaybackHistoryService(PostgresPlaybackHistoryRepository(database))
     conversation = PostgresConversationRepository(database)
     player_messages = PostgresPlayerMessageRepository(database)
@@ -218,6 +226,7 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
         conversation=conversation,
         langgraph=langgraph,
         agent_factory=agent_factory,
+        access=access,
     )
     health.set_readiness_check(container.is_ready)
     return container

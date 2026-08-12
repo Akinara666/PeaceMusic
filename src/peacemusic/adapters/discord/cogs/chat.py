@@ -9,6 +9,7 @@ import discord
 from discord.ext import commands
 
 from peacemusic.core.errors import PeaceMusicError
+from peacemusic.modules.access.service import AccessControlService
 from peacemusic.modules.agent.context import AgentRequestContext
 from peacemusic.modules.agent.service import AgentService
 from peacemusic.modules.agent.state import AttachmentRef
@@ -17,14 +18,23 @@ logger = logging.getLogger(__name__)
 
 
 class ChatCog(commands.Cog):
-    def __init__(self, service: AgentService) -> None:
+    def __init__(
+        self, service: AgentService, access: AccessControlService | None = None
+    ) -> None:
         self._service = service
+        self._access = access
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
         if message.author.bot:
             return
         if message.guild is None:
+            return
+        if self._access is not None and await self._access.is_suppressed(
+            guild_id=message.guild.id,
+            user_id=message.author.id,
+            channel_id=message.channel.id,
+        ):
             return
 
         settings = await self._service.get_settings(message.guild.id)
