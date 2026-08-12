@@ -14,6 +14,7 @@ from peacemusic.infrastructure.media.autoplay import ResolverAutoplayProvider
 from peacemusic.infrastructure.llm.langchain_agent import LangChainAgentFactory
 from peacemusic.modules.agent.coordinator import TurnCoordinator
 from peacemusic.modules.agent.limits import UserRateLimiter
+from peacemusic.modules.agent.memory_tools import build_memory_tool_specs
 from peacemusic.modules.agent.music_tools import build_music_tool_specs
 from peacemusic.modules.agent.service import AgentService
 from peacemusic.modules.agent.tools import ToolRegistry
@@ -33,8 +34,8 @@ from peacemusic.infrastructure.persistence.repositories.postgres_playlists impor
 from peacemusic.infrastructure.persistence.repositories.postgres_history import (
     PostgresPlaybackHistoryRepository,
 )
-from peacemusic.infrastructure.persistence.repositories.postgres_memory import (
-    PostgresMemoryRepository,
+from peacemusic.infrastructure.persistence.repositories.langgraph_memory import (
+    LangGraphMemoryRepository,
 )
 from peacemusic.infrastructure.persistence.repositories.postgres_conversation import (
     PostgresConversationRepository,
@@ -121,12 +122,15 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
     )
     dj_roles = PostgresDJRoleRepository(database)
     history = PlaybackHistoryService(PostgresPlaybackHistoryRepository(database))
+    conversation = PostgresConversationRepository(database)
+    langgraph = LangGraphPersistence(
+        resolved_settings.database.url,
+        embedding_api_key=resolved_settings.gemini.api_key.get_secret_value(),
+    )
     memory = MemoryService(
-        PostgresMemoryRepository(database),
+        LangGraphMemoryRepository(langgraph),
         settings_service=guild_settings,
     )
-    conversation = PostgresConversationRepository(database)
-    langgraph = LangGraphPersistence(resolved_settings.database.url)
     media_resolver = YtDlpMediaResolver()
     autoplay = AutoplayService(
         ResolverAutoplayProvider(media_resolver),
@@ -149,7 +153,9 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
         PostgresPlaylistRepository(database),
         music,
     )
-    tool_registry = ToolRegistry(build_music_tool_specs(music))
+    tool_registry = ToolRegistry(
+        (*build_music_tool_specs(music), *build_memory_tool_specs(memory))
+    )
     agent_factory = LangChainAgentFactory(
         api_key=resolved_settings.gemini.api_key.get_secret_value(),
         model_name=resolved_settings.gemini.response_model,
