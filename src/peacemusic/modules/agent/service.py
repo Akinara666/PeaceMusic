@@ -8,7 +8,7 @@ import logging
 import time
 from typing import Any, Protocol
 
-from peacemusic.core.errors import ExternalServiceError
+from peacemusic.core.errors import ExternalServiceError, describe_exception
 from peacemusic.core.metrics import MetricsRegistry
 from peacemusic.modules.agent.context import AgentRequestContext
 from peacemusic.modules.agent.conversation import (
@@ -195,7 +195,9 @@ class AgentService:
                 except Exception as exc:  # noqa: BLE001 - provider boundary
                     if self._metrics is not None:
                         self._metrics.increment("peacemusic_llm_request_errors_total")
-                    raise ExternalServiceError("Agent execution failed") from exc
+                    raise ExternalServiceError(
+                        f"Agent execution failed: {describe_exception(exc)}"
+                    ) from exc
 
             started = time.monotonic()
             logger.info(

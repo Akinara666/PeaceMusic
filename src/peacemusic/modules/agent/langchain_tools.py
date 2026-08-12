@@ -8,6 +8,7 @@ from typing import Any, get_type_hints
 
 from pydantic import BaseModel, create_model
 
+from peacemusic.core.errors import describe_exception
 from peacemusic.modules.agent.context import AgentRequestContext
 from peacemusic.modules.agent.results import ToolResult
 from peacemusic.modules.agent.tools import ToolSpec
@@ -46,7 +47,12 @@ def build_langchain_tools(
                     "The maximum number of tool calls for this turn was reached.",
                 ).model_dump(mode="json")
             call_count += 1
-            result = await _spec.handler(context, **arguments)
+            try:
+                result = await _spec.handler(context, **arguments)
+            except Exception as exc:  # noqa: BLE001 - return failure to the model
+                result = ToolResult.failure(
+                    "TOOL_EXECUTION_ERROR", describe_exception(exc)
+                )
             return result.model_dump(mode="json")
 
         tools.append(

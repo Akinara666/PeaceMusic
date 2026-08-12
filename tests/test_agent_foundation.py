@@ -99,6 +99,22 @@ def test_tool_registry_filters_by_guild_capability_settings() -> None:
     asyncio.run(scenario())
 
 
+def test_tool_registry_returns_unexpected_failures_to_the_model() -> None:
+    async def handler(_context: AgentRequestContext) -> ToolResult:
+        raise RuntimeError("database connection refused")
+
+    registry = ToolRegistry([ToolSpec("broken", ToolCategory.MUSIC, handler)])
+    context = AgentRequestContext("req", 1, 2, 3, "user")
+
+    async def scenario() -> None:
+        result = await registry.invoke("broken", context, {}, GuildSettings(guild_id=1))
+        assert result.ok is False
+        assert result.code == "TOOL_EXECUTION_ERROR"
+        assert "database connection refused" in result.message
+
+    asyncio.run(scenario())
+
+
 def test_turn_coordinator_serializes_same_channel_and_limits_timeouts() -> None:
     async def scenario() -> None:
         coordinator = TurnCoordinator(max_concurrent=1, timeout_seconds=0.05)
