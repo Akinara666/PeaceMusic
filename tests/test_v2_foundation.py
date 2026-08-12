@@ -121,6 +121,7 @@ def test_container_readiness_requires_discord_and_database() -> None:
             settings=object(),  # type: ignore[arg-type]
             database=HealthyDatabase(),  # type: ignore[arg-type]
             guild_settings=object(),  # type: ignore[arg-type]
+            music=object(),  # type: ignore[arg-type]
             tasks=TaskSupervisor(),
             health=object(),  # type: ignore[arg-type]
         )
