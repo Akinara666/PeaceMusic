@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from urllib.parse import urlparse
 
 from peacemusic.core.errors import PermissionDeniedError, PlaybackError, ValidationError
 from peacemusic.core.metrics import MetricsRegistry
@@ -78,6 +79,32 @@ class MusicService:
         if self._voice_gateway is not None and context.user_voice_channel_id is None:
             raise ValidationError("User must be in a voice channel")
         track = await self.resolve_track(context, query)
+        await self.enqueue_track(context, track)
+        return track
+
+    async def play_direct_audio(
+        self, context: MusicRequestContext, *, title: str, url: str
+    ) -> Track:
+        """Queue a Discord attachment URL without sending it through yt-dlp."""
+
+        await self._require(context, MusicCapability.PLAY)
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower().rstrip(".")
+        if parsed.scheme != "https" or host not in {
+            "cdn.discordapp.com",
+            "media.discordapp.net",
+        }:
+            raise ValidationError(
+                "Direct audio URL is not a trusted Discord attachment"
+            )
+        if not title.strip():
+            raise ValidationError("Audio attachment has no filename")
+        track = Track(
+            title=title.strip(),
+            source_url=url,
+            requested_by=context.user_id,
+            stream_url=url,
+        )
         await self.enqueue_track(context, track)
         return track
 

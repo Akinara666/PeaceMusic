@@ -63,7 +63,7 @@ class OuterAgentWorkflow:
     def apply_policy(
         self, state: PeaceMusicState, *, ai_enabled: bool
     ) -> PeaceMusicState:
-        if not ai_enabled:
+        if not ai_enabled and state.input_route != InputRoute.DIRECT_AUDIO:
             return state.model_copy(
                 update={"final_response": "AI assistant is disabled for this server."}
             )

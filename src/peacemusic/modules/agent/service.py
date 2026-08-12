@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from contextlib import asynccontextmanager
+from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
 from peacemusic.core.errors import ExternalServiceError
@@ -43,6 +44,9 @@ class AgentService:
         rate_limiter: UserRateLimiter | None = None,
         max_tool_calls: int = 8,
         attachment_preparer=None,
+        direct_audio_handler: (
+            Callable[[AgentRequestContext, AttachmentRef], Awaitable[Any]] | None
+        ) = None,
     ) -> None:
         self._settings = settings_service
         self._tools = tool_registry
@@ -58,6 +62,7 @@ class AgentService:
         self._rate_limiter = rate_limiter
         self._max_tool_calls = max_tool_calls
         self._attachment_preparer = attachment_preparer
+        self._direct_audio_handler = direct_audio_handler
         self._workflow = OuterAgentWorkflow()
 
     async def get_settings(self, guild_id: int):
@@ -77,6 +82,13 @@ class AgentService:
         state = self._workflow.apply_policy(state, ai_enabled=settings.ai.enabled)
         if state.final_response is not None:
             return state
+        if (
+            state.input_route == "direct_audio"
+            and self._direct_audio_handler is not None
+            and len(attachments) == 1
+        ):
+            track = await self._direct_audio_handler(context, attachments[0])
+            return self._workflow.finalize(state, f"Queued {track.title}")
         if attachments and not settings.ai.attachments_enabled:
             return state.model_copy(
                 update={"final_response": "Attachments are disabled for this server."}
