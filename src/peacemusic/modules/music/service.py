@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
+import logging
 from urllib.parse import urlparse
 
 from peacemusic.core.errors import PermissionDeniedError, PlaybackError, ValidationError
@@ -31,6 +32,8 @@ from peacemusic.modules.music.ports import (
 )
 from peacemusic.modules.music.recovery import PlaybackRecoveryService
 from peacemusic.modules.settings.service import GuildSettingsService
+
+logger = logging.getLogger(__name__)
 
 
 class MusicService:
@@ -352,15 +355,35 @@ class MusicService:
             return
         player = await self._player(guild_id)
         if error is not None:
+            logger.warning(
+                "Playback stream failed for %s: %s",
+                player.current_track.title if player.current_track else "unknown track",
+                error,
+                extra={"guild_id": guild_id},
+            )
             if self._recovery is not None and player.current_track is not None:
                 try:
+                    logger.info(
+                        "Retrying playback stream for %s",
+                        player.current_track.title,
+                        extra={"guild_id": guild_id},
+                    )
                     await self._start_current(player)
                 except PlaybackError:
+                    logger.exception(
+                        "Playback stream recovery failed",
+                        extra={"guild_id": guild_id},
+                    )
                     return
                 return
             player.status = PlaybackStatus.FAILED
             return
         previous_track = player.current_track
+        logger.info(
+            "Playback stream finished normally for %s",
+            previous_track.title if previous_track else "unknown track",
+            extra={"guild_id": guild_id},
+        )
         next_track = player.start_next()
         if next_track is None and self._autoplay is not None and previous_track:
             candidate = await self._autoplay.next(guild_id, previous_track)
