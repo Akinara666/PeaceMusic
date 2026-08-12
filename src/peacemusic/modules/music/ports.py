@@ -14,7 +14,7 @@ class MediaResolver(Protocol):
 
 
 class AudioSourceFactory(Protocol):
-    async def create(self, track: Track) -> object:
+    async def create(self, track: Track, *, start_seconds: int = 0) -> object:
         """Create an adapter-owned audio source for a track."""
 
 

@@ -66,6 +66,25 @@ def test_player_state_transitions_and_volume_limits() -> None:
     assert player.volume == 50
 
 
+def test_player_seek_validates_and_updates_position() -> None:
+    player = GuildPlayer(123)
+    player.enqueue(
+        Track(
+            title="Timed",
+            source_url="https://example.test/timed",
+            requested_by=1,
+            duration=120,
+        )
+    )
+
+    assert player.seek(45) == 45
+    assert player.position_seconds == 45
+    with pytest.raises(ValidationError):
+        player.seek(121)
+    with pytest.raises(ValidationError):
+        player.seek(-1)
+
+
 class Resolver:
     async def resolve(self, query: str) -> ResolvedMedia:
         return ResolvedMedia(title=query, source_url=f"https://media.test/{query}")
@@ -92,8 +111,10 @@ def test_music_service_is_shared_operation_boundary() -> None:
         assert (await service.player_state(123)).current_track == added
 
         await service.set_volume(context, 60)
+        assert await service.seek(context, 30) == 30
         await service.set_loop_mode(context, LoopMode.QUEUE)
         assert (await service.player_state(123)).volume == 60
+        assert (await service.player_state(123)).position_seconds == 30
         assert (await service.player_state(123)).queue.loop_mode is LoopMode.QUEUE
 
     asyncio.run(scenario())

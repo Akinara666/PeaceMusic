@@ -149,6 +149,18 @@ class MusicService:
         self._increment_metric("peacemusic_music_skip_total")
         return next_track
 
+    async def seek(self, context: MusicRequestContext, position_seconds: int) -> int:
+        await self._require(context, MusicCapability.SEEK)
+        player = await self._player(context.guild_id)
+        position = player.seek(position_seconds)
+        if self._voice_gateway is not None:
+            self._invalidate_playback(context.guild_id)
+            await self._voice_gateway.stop(context.guild_id)
+            await self._start_current(player, start_seconds=position)
+        await self._record_audit(context, "SEEK", {"position_seconds": position})
+        self._increment_metric("peacemusic_music_seek_total")
+        return position
+
     async def stop(self, context: MusicRequestContext) -> None:
         await self._require(context, MusicCapability.STOP)
         player = await self._player(context.guild_id)
@@ -241,7 +253,9 @@ class MusicService:
                 payload=payload,
             )
 
-    async def _start_current(self, player: GuildPlayer) -> None:
+    async def _start_current(
+        self, player: GuildPlayer, *, start_seconds: int = 0
+    ) -> None:
         if self._voice_gateway is None or self._audio_source_factory is None:
             return
         track = player.current_track
@@ -259,7 +273,12 @@ class MusicService:
             )
 
         async def start(_attempt: int) -> None:
-            source = await self._audio_source_factory.create(track)
+            if start_seconds:
+                source = await self._audio_source_factory.create(
+                    track, start_seconds=start_seconds
+                )
+            else:
+                source = await self._audio_source_factory.create(track)
             await self._voice_gateway.play(player.guild_id, source, after=after)
 
         try:

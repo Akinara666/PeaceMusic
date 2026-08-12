@@ -29,8 +29,9 @@ class Resolver:
 
 
 class AudioFactory:
-    async def create(self, track):
-        return f"source:{track.title}"
+    async def create(self, track, *, start_seconds: int = 0):
+        suffix = f"@{start_seconds}" if start_seconds else ""
+        return f"source:{track.title}{suffix}"
 
 
 class FlakyAudioFactory(AudioFactory):
@@ -38,11 +39,11 @@ class FlakyAudioFactory(AudioFactory):
         self.failures = failures
         self.attempts = 0
 
-    async def create(self, track):
+    async def create(self, track, *, start_seconds: int = 0):
         self.attempts += 1
         if self.attempts <= self.failures:
             raise RuntimeError("temporary source failure")
-        return await super().create(track)
+        return await super().create(track, start_seconds=start_seconds)
 
 
 class VoiceGateway:
@@ -127,6 +128,31 @@ def test_voice_play_requires_voice_before_media_resolution() -> None:
         with pytest.raises(ValidationError, match="voice channel"):
             await service.play(context, "one")
         assert resolver.calls == []
+
+    asyncio.run(scenario())
+
+
+def test_music_service_restarts_voice_source_when_seeking() -> None:
+    async def scenario() -> None:
+        voice = VoiceGateway()
+        service = MusicService(
+            GuildPlayerManager(),
+            Resolver(),
+            AllowAllPermissionService(),
+            voice_gateway=voice,
+            audio_source_factory=AudioFactory(),
+        )
+        context = MusicRequestContext(
+            guild_id=1,
+            user_id=2,
+            user_voice_channel_id=3,
+        )
+
+        await service.play(context, "one")
+        assert await service.seek(context, 15) == 15
+
+        assert voice.played == [(1, "source:one"), (1, "source:one@15")]
+        assert voice.actions == ["stop"]
 
     asyncio.run(scenario())
 
