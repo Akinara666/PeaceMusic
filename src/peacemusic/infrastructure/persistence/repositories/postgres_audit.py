@@ -32,7 +32,7 @@ class PostgresAuditWriter:
 
 class PostgresSettingsAuditWriter:
     def __init__(self, database: PostgresDatabase) -> None:
-        self._database = database
+        self._writer = PostgresAuditWriter(database)
 
     async def record_settings_change(
         self,
