@@ -160,6 +160,9 @@ def _install_discord_stub() -> None:
         async def add_cog(self, cog):
             return cog
 
+        def add_view(self, view):
+            return view
+
     commands_module.when_mentioned = object()
 
     class AudioSource:
