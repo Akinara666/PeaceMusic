@@ -71,6 +71,9 @@ def test_langchain_tools_expose_public_argument_schemas() -> None:
 
     assert music_tool.args_schema is PlayMusicArguments
     assert set(music_tool.args) == {"query"}
+    assert music_tool.description == (
+        "Play or queue a song from a supported media URL or search query."
+    )
     assert memory_tool.args_schema is RecallArguments
     assert set(memory_tool.args) == {"query", "scope", "limit"}
 

@@ -29,6 +29,7 @@ class ToolSpec:
     category: ToolCategory
     handler: ToolHandler
     args_schema: type[BaseModel] | None = None
+    description: str = ""
 
 
 class ToolRegistry:
