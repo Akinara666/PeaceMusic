@@ -5,6 +5,10 @@ import asyncio
 import pytest
 
 from peacemusic.core.errors import PermissionDeniedError, ValidationError
+from peacemusic.infrastructure.persistence.repositories.in_memory_audit import (
+    InMemoryAuditWriter,
+)
+from peacemusic.modules.audit.service import AuditService
 from peacemusic.modules.music.models import LoopMode, ResolvedMedia, Track
 from peacemusic.modules.music.permissions import MusicCapability, MusicRequestContext
 from peacemusic.modules.music.player import GuildPlayer
@@ -91,6 +95,30 @@ def test_music_service_is_shared_operation_boundary() -> None:
         await service.set_loop_mode(context, LoopMode.QUEUE)
         assert (await service.player_state(123)).volume == 60
         assert (await service.player_state(123)).queue.loop_mode is LoopMode.QUEUE
+
+    asyncio.run(scenario())
+
+
+def test_music_service_audits_side_effecting_operations() -> None:
+    async def scenario() -> None:
+        writer = InMemoryAuditWriter()
+        service = MusicService(
+            GuildPlayerManager(),
+            Resolver(),
+            Permissions(),
+            audit=AuditService(writer),
+        )
+        context = MusicRequestContext(guild_id=123, user_id=456)
+
+        await service.play(context, "audited")
+        await service.set_volume(context, 55)
+        await service.stop(context)
+
+        assert [event.event_type for event in writer.events] == [
+            "PLAY",
+            "SET_VOLUME",
+            "STOP",
+        ]
 
     asyncio.run(scenario())
 

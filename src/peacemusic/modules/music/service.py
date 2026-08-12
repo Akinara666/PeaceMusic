@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 
 from peacemusic.core.errors import PermissionDeniedError, PlaybackError, ValidationError
+from peacemusic.modules.audit.service import AuditService
 from peacemusic.modules.autoplay.service import AutoplayService
 from peacemusic.modules.history.service import PlaybackHistoryService
 from peacemusic.modules.music.models import (
@@ -44,6 +45,7 @@ class MusicService:
         autoplay: AutoplayService | None = None,
         recovery: PlaybackRecoveryService | None = None,
         settings: GuildSettingsService | None = None,
+        audit: AuditService | None = None,
     ) -> None:
         self._players = player_manager
         self._resolver = resolver
@@ -54,6 +56,7 @@ class MusicService:
         self._autoplay = autoplay
         self._recovery = recovery
         self._settings = settings
+        self._audit = audit
         self._playback_tokens: dict[int, int] = {}
         self._idle_disconnect_tasks: dict[int, asyncio.Task[None]] = {}
 
@@ -92,6 +95,11 @@ class MusicService:
         player.enqueue(track)
         if self._history is not None:
             await self._history.record(context.guild_id, track)
+        await self._record_audit(
+            context,
+            "PLAY",
+            {"title": track.title, "source_url": track.source_url},
+        )
         if self._voice_gateway is not None and was_idle:
             await self._start_current(player)
 
@@ -127,6 +135,11 @@ class MusicService:
         next_track = player.skip()
         if self._voice_gateway is not None and next_track is not None:
             await self._start_current(player)
+        await self._record_audit(
+            context,
+            "SKIP",
+            {"next_track": next_track.title if next_track else None},
+        )
         return next_track
 
     async def stop(self, context: MusicRequestContext) -> None:
@@ -136,6 +149,7 @@ class MusicService:
         player.stop()
         if self._voice_gateway is not None:
             await self._voice_gateway.stop(context.guild_id)
+        await self._record_audit(context, "STOP")
 
     async def set_volume(self, context: MusicRequestContext, volume: int) -> int:
         await self._require(context, MusicCapability.SET_VOLUME)
@@ -143,6 +157,7 @@ class MusicService:
         player.set_volume(volume)
         if self._voice_gateway is not None:
             await self._voice_gateway.set_volume(context.guild_id, volume)
+        await self._record_audit(context, "SET_VOLUME", {"volume": player.volume})
         return player.volume
 
     async def disconnect(self, context: MusicRequestContext) -> None:
@@ -153,6 +168,7 @@ class MusicService:
             await self._voice_gateway.stop(context.guild_id)
             await self._voice_gateway.disconnect(context.guild_id)
         player.disconnect()
+        await self._record_audit(context, "DISCONNECT")
 
     async def set_loop_mode(
         self, context: MusicRequestContext, mode: LoopMode | str
@@ -196,6 +212,20 @@ class MusicService:
 
     async def _player(self, guild_id: int) -> GuildPlayer:
         return await self._players.get_or_create(guild_id)
+
+    async def _record_audit(
+        self,
+        context: MusicRequestContext,
+        event_type: str,
+        payload: dict[str, object] | None = None,
+    ) -> None:
+        if self._audit is not None:
+            await self._audit.record(
+                guild_id=context.guild_id,
+                actor_user_id=context.user_id,
+                event_type=event_type,
+                payload=payload,
+            )
 
     async def _start_current(self, player: GuildPlayer) -> None:
         if self._voice_gateway is None or self._audio_source_factory is None:
