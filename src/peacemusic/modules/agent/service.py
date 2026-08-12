@@ -15,6 +15,7 @@ from peacemusic.modules.agent.conversation import (
 from peacemusic.modules.agent.coordinator import TurnCoordinator
 from peacemusic.modules.agent.graph import OuterAgentWorkflow
 from peacemusic.modules.agent.langchain_tools import build_langchain_tools
+from peacemusic.modules.agent.limits import UserRateLimiter
 from peacemusic.modules.agent.state import AttachmentRef, PeaceMusicState
 from peacemusic.modules.agent.tools import ToolRegistry
 from peacemusic.modules.settings.service import GuildSettingsService
@@ -38,6 +39,8 @@ class AgentService:
         metrics: MetricsRegistry | None = None,
         conversation_repository: ConversationRepository | None = None,
         conversation_limit: int = 20,
+        rate_limiter: UserRateLimiter | None = None,
+        max_tool_calls: int = 8,
     ) -> None:
         self._settings = settings_service
         self._tools = tool_registry
@@ -48,6 +51,10 @@ class AgentService:
             raise ValueError("conversation_limit must be positive")
         self._conversation = conversation_repository
         self._conversation_limit = conversation_limit
+        if max_tool_calls < 1:
+            raise ValueError("max_tool_calls must be positive")
+        self._rate_limiter = rate_limiter
+        self._max_tool_calls = max_tool_calls
         self._workflow = OuterAgentWorkflow()
 
     async def get_settings(self, guild_id: int):
@@ -67,10 +74,22 @@ class AgentService:
         state = self._workflow.apply_policy(state, ai_enabled=settings.ai.enabled)
         if state.final_response is not None:
             return state
+        if self._rate_limiter is not None and not await self._rate_limiter.allow(
+            (context.guild_id, context.user_id), settings.ai.per_user_rate_limit
+        ):
+            if self._metrics is not None:
+                self._metrics.increment("peacemusic_agent_rate_limited_total")
+            return state.model_copy(
+                update={"final_response": "You have reached the AI request rate limit."}
+            )
 
         available = self._tools.available(settings)
         langchain_tools = (
-            build_langchain_tools(available, context=context) if available else []
+            build_langchain_tools(
+                available, context=context, max_tool_calls=self._max_tool_calls
+            )
+            if available
+            else []
         )
         agent = self._factory.create(langchain_tools)
         history = ()
