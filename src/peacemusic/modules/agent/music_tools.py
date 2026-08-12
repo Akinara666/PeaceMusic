@@ -10,7 +10,6 @@ from peacemusic.core.errors import PeaceMusicError
 from peacemusic.modules.agent.context import AgentRequestContext
 from peacemusic.modules.agent.results import ToolResult
 from peacemusic.modules.agent.tools import ToolCategory, ToolSpec
-from peacemusic.modules.music.models import LoopMode
 from peacemusic.modules.music.permissions import MusicRequestContext
 from peacemusic.modules.music.service import MusicService
 
