@@ -20,12 +20,15 @@ services:
       - "host.docker.internal:host-gateway"
     environment:
       CHAT_MEMORY_DB: /app/data/chat_memory.sqlite3
+      DATABASE_URL: postgresql://${POSTGRES_USER:-peacemusic}:${POSTGRES_PASSWORD:-change-me}@postgres:5432/${POSTGRES_DB:-peacemusic}
       MUSIC_DIRECTORY: /app/music_files
       BOT_PROMPT_FILE: /app/config/prompt.txt
       YTDL_POT_PROVIDER_URL: http://bgutil-provider:4416
       # The host path is selected separately below; the app always sees this path.
       YTDL_COOKIE_FILE: /app/config/cookies.txt
     depends_on:
+      postgres:
+        condition: service_healthy
       bgutil-provider:
         condition: service_started
     volumes:
@@ -61,3 +64,26 @@ services:
       options:
         max-size: "5m"
         max-file: "2"
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-peacemusic}
+      POSTGRES_USER: ${POSTGRES_USER:-peacemusic}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  postgres_data:
