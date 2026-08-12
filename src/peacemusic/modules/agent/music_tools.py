@@ -35,6 +35,10 @@ class QueueMoveArguments(BaseModel):
     target_index: int = Field(ge=0)
 
 
+class SeekArguments(BaseModel):
+    seconds: int = Field(ge=0)
+
+
 def build_music_tool_specs(service: MusicService) -> tuple[ToolSpec, ...]:
     """Create model-facing tools with no duplicated music business logic."""
 
@@ -67,6 +71,17 @@ def build_music_tool_specs(service: MusicService) -> tuple[ToolSpec, ...]:
 
     async def stop_music(context: AgentRequestContext) -> ToolResult:
         return await _run(service.stop, context, "Playback stopped")
+
+    async def seek_music(context: AgentRequestContext, seconds: int) -> ToolResult:
+        try:
+            args = SeekArguments(seconds=seconds)
+            position = await service.seek(_music_context(context), args.seconds)
+            return ToolResult.success(
+                f"Playback seeked to {position} seconds",
+                data={"position_seconds": position},
+            )
+        except (PydanticValidationError, PeaceMusicError) as exc:
+            return _failure(exc)
 
     async def set_volume(context: AgentRequestContext, value: int) -> ToolResult:
         try:
@@ -160,6 +175,7 @@ def build_music_tool_specs(service: MusicService) -> tuple[ToolSpec, ...]:
         ToolSpec("resume_music", ToolCategory.MUSIC, resume_music),
         ToolSpec("skip_music", ToolCategory.MUSIC, skip_music),
         ToolSpec("stop_music", ToolCategory.MUSIC, stop_music),
+        ToolSpec("seek_music", ToolCategory.MUSIC, seek_music),
         ToolSpec("set_volume", ToolCategory.MUSIC, set_volume),
         ToolSpec("set_loop_mode", ToolCategory.MUSIC, set_loop_mode),
         ToolSpec("get_queue", ToolCategory.MUSIC, get_queue),

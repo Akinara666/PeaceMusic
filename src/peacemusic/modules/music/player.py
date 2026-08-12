@@ -55,6 +55,19 @@ class GuildPlayer:
     def skip(self) -> Track | None:
         return self.start_next()
 
+    def seek(self, position_seconds: int) -> int:
+        if position_seconds < 0:
+            raise ValidationError("Seek position cannot be negative")
+        if self.current_track is None:
+            raise ValidationError("Nothing is currently playing")
+        if (
+            self.current_track.duration is not None
+            and position_seconds > self.current_track.duration
+        ):
+            raise ValidationError("Seek position exceeds track duration")
+        self.position_seconds = position_seconds
+        return position_seconds
+
     def stop(self) -> None:
         self.queue.clear()
         self.current_track = None

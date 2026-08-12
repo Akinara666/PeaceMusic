@@ -107,6 +107,17 @@ class MusicCog(commands.Cog):
         except PeaceMusicError as exc:
             await self._send_error(interaction, exc)
 
+    @app_commands.command(name="seek", description="Seek within the current track")
+    @app_commands.guild_only()
+    async def seek(self, interaction: discord.Interaction, seconds: int) -> None:
+        try:
+            position = await self._service.seek(self._context(interaction), seconds)
+            await interaction.response.send_message(
+                f"⏩ Playback moved to {position} seconds."
+            )
+        except PeaceMusicError as exc:
+            await self._send_error(interaction, exc)
+
     @app_commands.command(name="leave", description="Disconnect from voice")
     @app_commands.guild_only()
     async def leave(self, interaction: discord.Interaction) -> None:
