@@ -31,4 +31,4 @@ RUN groupadd --system peacemusic && \
 USER peacemusic
 
 # Run the bot
-CMD ["python", "main.py"]
+CMD ["python", "-m", "peacemusic.main"]

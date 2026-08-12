@@ -27,10 +27,10 @@ jobs:
           python -m pip install -r requirements-dev.txt
 
       - name: Lint
-        run: flake8 cogs config.py main.py src utils
+        run: flake8 src
 
       - name: Check formatting
-        run: black --check cogs config.py main.py src utils tests
+        run: black --check src tests
 
       - name: Validate Docker Compose
         run: |
@@ -54,7 +54,7 @@ jobs:
           python -m pip install -r requirements-dev.txt
 
       - name: Run tests with coverage
-        run: pytest --cov=cogs --cov=config --cov=utils --cov=src/peacemusic --cov-report=term-missing --cov-fail-under=45
+        run: pytest --cov=src/peacemusic --cov-report=term-missing --cov-fail-under=45
 
   build-and-push:
     needs: [lint, test]
