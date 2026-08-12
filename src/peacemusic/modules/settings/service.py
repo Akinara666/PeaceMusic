@@ -111,6 +111,11 @@ class GuildSettingsService:
     def invalidate_all(self) -> None:
         self._cache.clear()
 
+    def set_authorizer(self, authorizer: SettingsAuthorizer) -> None:
+        """Attach the runtime adapter used to authorize future mutations."""
+
+        self._authorizer = authorizer
+
     def _validate_effective(self, settings: GuildSettings) -> GuildSettings:
         if settings.music.max_queue_size > self._limits.max_queue_size:
             raise ValidationError("max_queue_size exceeds the global safety limit")

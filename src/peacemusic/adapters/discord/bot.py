@@ -9,6 +9,7 @@ from peacemusic.adapters.discord.cogs.music import MusicCog
 from peacemusic.adapters.discord.cogs.playlists import PlaylistCog
 from peacemusic.adapters.discord.cogs.chat import ChatCog
 from peacemusic.adapters.discord.cogs.settings import SettingsCog
+from peacemusic.adapters.discord.context import DiscordSettingsAuthorizer
 from peacemusic.adapters.discord.voice import DiscordVoiceGateway
 from peacemusic.adapters.discord.views.player import PlayerView
 from peacemusic.bootstrap.container import ApplicationContainer
@@ -25,6 +26,9 @@ class PeaceMusicV2Bot(commands.Bot):
             allowed_mentions=discord.AllowedMentions.none(),
         )
         self.container = container
+        set_authorizer = getattr(self.container.guild_settings, "set_authorizer", None)
+        if set_authorizer is not None:
+            set_authorizer(DiscordSettingsAuthorizer(self))
         self.container.music.attach_runtime(
             voice_gateway=DiscordVoiceGateway(self),
             audio_source_factory=FFmpegAudioSourceFactory(),
