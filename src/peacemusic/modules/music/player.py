@@ -68,3 +68,13 @@ class GuildPlayer:
 
     def set_loop_mode(self, mode: LoopMode | str) -> None:
         self.queue.set_loop_mode(mode)
+
+    def attach_voice(self, channel_id: int) -> None:
+        self.voice_channel_id = channel_id
+
+    def disconnect(self) -> None:
+        self.queue.clear()
+        self.current_track = None
+        self.position_seconds = 0
+        self.voice_channel_id = None
+        self.status = PlaybackStatus.DISCONNECTED

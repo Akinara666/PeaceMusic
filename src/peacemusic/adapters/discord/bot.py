@@ -8,7 +8,9 @@ from discord.ext import commands
 from peacemusic.adapters.discord.cogs.music import MusicCog
 from peacemusic.adapters.discord.cogs.chat import ChatCog
 from peacemusic.adapters.discord.cogs.settings import SettingsCog
+from peacemusic.adapters.discord.voice import DiscordVoiceGateway
 from peacemusic.bootstrap.container import ApplicationContainer
+from peacemusic.infrastructure.media.ffmpeg import FFmpegAudioSourceFactory
 
 
 class PeaceMusicV2Bot(commands.Bot):
@@ -21,6 +23,10 @@ class PeaceMusicV2Bot(commands.Bot):
             allowed_mentions=discord.AllowedMentions.none(),
         )
         self.container = container
+        self.container.music.attach_runtime(
+            voice_gateway=DiscordVoiceGateway(self),
+            audio_source_factory=FFmpegAudioSourceFactory(),
+        )
         self._ready = False
 
     @property
