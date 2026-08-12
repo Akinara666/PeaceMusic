@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
+from pydantic import BaseModel
+
 from peacemusic.modules.agent.context import AgentRequestContext
 from peacemusic.modules.agent.results import ToolResult
 from peacemusic.modules.settings.models import GuildSettings
@@ -26,6 +28,7 @@ class ToolSpec:
     name: str
     category: ToolCategory
     handler: ToolHandler
+    args_schema: type[BaseModel] | None = None
 
 
 class ToolRegistry:

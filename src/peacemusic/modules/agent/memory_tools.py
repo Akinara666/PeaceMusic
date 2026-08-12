@@ -85,9 +85,9 @@ def build_memory_tool_specs(service: MemoryService) -> tuple[ToolSpec, ...]:
             return _failure(exc)
 
     return (
-        ToolSpec("remember", ToolCategory.MEMORY, remember),
-        ToolSpec("recall", ToolCategory.MEMORY, recall),
-        ToolSpec("forget", ToolCategory.MEMORY, forget),
+        ToolSpec("remember", ToolCategory.MEMORY, remember, RememberArguments),
+        ToolSpec("recall", ToolCategory.MEMORY, recall, RecallArguments),
+        ToolSpec("forget", ToolCategory.MEMORY, forget, ForgetArguments),
     )
 
 

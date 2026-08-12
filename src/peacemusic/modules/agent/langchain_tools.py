@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from inspect import Parameter, signature
+from typing import Any, get_type_hints
+
+from pydantic import BaseModel, create_model
 
 from peacemusic.modules.agent.context import AgentRequestContext
 from peacemusic.modules.agent.results import ToolResult
@@ -50,6 +54,36 @@ def build_langchain_tools(
                 coroutine=invoke,
                 name=spec.name,
                 description=f"PeaceMusic {spec.category.value} operation: {spec.name}",
+                args_schema=_args_schema(spec),
             )
         )
     return tools
+
+
+def _args_schema(spec: ToolSpec) -> type[BaseModel]:
+    """Return the model-facing schema without exposing runtime context."""
+
+    if spec.args_schema is not None:
+        return spec.args_schema
+
+    try:
+        parameters = signature(spec.handler).parameters.values()
+        type_hints = get_type_hints(spec.handler)
+    except (NameError, TypeError, ValueError):
+        parameters = ()
+        type_hints = {}
+
+    fields: dict[str, tuple[Any, Any]] = {}
+    for parameter in parameters:
+        if parameter.name == "context" or parameter.kind in {
+            Parameter.VAR_POSITIONAL,
+            Parameter.VAR_KEYWORD,
+        }:
+            continue
+        annotation = type_hints.get(parameter.name, parameter.annotation)
+        if annotation is Parameter.empty:
+            annotation = Any
+        default = parameter.default if parameter.default is not Parameter.empty else ...
+        fields[parameter.name] = (annotation, default)
+
+    return create_model(f"{spec.name.replace('-', '_')}_arguments", **fields)
