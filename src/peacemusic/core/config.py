@@ -121,3 +121,17 @@ class AppSettings:
             )
         if self.database.min_pool_size > self.database.max_pool_size:
             raise ValueError("DB_MIN_POOL_SIZE cannot exceed DB_MAX_POOL_SIZE")
+
+    @property
+    def discord_intents(self):
+        """Build Discord intents at the composition boundary."""
+
+        import discord
+
+        intents = discord.Intents.default()
+        intents.guilds = True
+        intents.members = True
+        intents.messages = True
+        intents.message_content = True
+        intents.voice_states = True
+        return intents

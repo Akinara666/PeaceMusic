@@ -8,6 +8,13 @@ from peacemusic.core.config import AppSettings
 from peacemusic.core.tasks import TaskSupervisor
 from peacemusic.infrastructure.health.server import HealthServer
 from peacemusic.infrastructure.persistence.database import PostgresDatabase
+from peacemusic.infrastructure.persistence.repositories.postgres_audit import (
+    PostgresSettingsAuditWriter,
+)
+from peacemusic.infrastructure.persistence.repositories.postgres_settings import (
+    PostgresGuildSettingsRepository,
+)
+from peacemusic.modules.settings.service import GuildSettingsService
 
 
 @dataclass
@@ -16,6 +23,7 @@ class ApplicationContainer:
 
     settings: AppSettings
     database: PostgresDatabase
+    guild_settings: GuildSettingsService
     tasks: TaskSupervisor
     health: HealthServer
 
@@ -42,6 +50,14 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
         min_size=resolved_settings.database.min_pool_size,
         max_size=resolved_settings.database.max_pool_size,
     )
+    settings_repository = PostgresGuildSettingsRepository(database)
+    settings_audit = PostgresSettingsAuditWriter(database)
+    guild_settings = GuildSettingsService(
+        settings_repository,
+        limits=resolved_settings.limits,
+        allowed_models=resolved_settings.gemini.allowed_models,
+        audit_writer=settings_audit,
+    )
     health = HealthServer(
         host="0.0.0.0",
         port=resolved_settings.limits.health_server_port,
@@ -50,6 +66,7 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
     return ApplicationContainer(
         settings=resolved_settings,
         database=database,
+        guild_settings=guild_settings,
         tasks=tasks,
         health=health,
     )
