@@ -8,8 +8,11 @@ from typing import Any
 class LangGraphPersistence:
     """Own LangGraph persistence resources from application startup to shutdown."""
 
-    def __init__(self, database_url: str) -> None:
+    def __init__(
+        self, database_url: str, *, embedding_api_key: str | None = None
+    ) -> None:
         self.database_url = to_psycopg_database_url(database_url)
+        self._embedding_api_key = embedding_api_key
         self._checkpointer_context: Any | None = None
         self._store_context: Any | None = None
         self._checkpointer: Any | None = None
@@ -42,7 +45,19 @@ class LangGraphPersistence:
         self._checkpointer_context = AsyncPostgresSaver.from_conn_string(
             self.database_url
         )
-        self._store_context = AsyncPostgresStore.from_conn_string(self.database_url)
+        store_kwargs: dict[str, Any] = {}
+        if self._embedding_api_key:
+            from langgraph.store.base import IndexConfig
+            from peacemusic.infrastructure.llm.embeddings import GeminiEmbeddingFunction
+
+            store_kwargs["index"] = IndexConfig(
+                embed=GeminiEmbeddingFunction(api_key=self._embedding_api_key),
+                dims=768,
+                fields=["content"],
+            )
+        self._store_context = AsyncPostgresStore.from_conn_string(
+            self.database_url, **store_kwargs
+        )
         try:
             self._checkpointer = await self._checkpointer_context.__aenter__()
             self._store = await self._store_context.__aenter__()
