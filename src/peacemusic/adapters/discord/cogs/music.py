@@ -142,3 +142,45 @@ class MusicCog(commands.Cog):
             await interaction.response.send_message(embed=player_embed(player))
         except PeaceMusicError as exc:
             await self._send_error(interaction, exc)
+
+    @app_commands.command(name="remove", description="Remove a queued track")
+    @app_commands.guild_only()
+    async def remove(self, interaction: discord.Interaction, index: int) -> None:
+        try:
+            track = await self._service.remove_from_queue(
+                self._context(interaction), index
+            )
+            await interaction.response.send_message(f"Removed **{track.title}**.")
+        except PeaceMusicError as exc:
+            await self._send_error(interaction, exc)
+
+    @app_commands.command(name="move", description="Move a queued track")
+    @app_commands.guild_only()
+    async def move(
+        self, interaction: discord.Interaction, source_index: int, target_index: int
+    ) -> None:
+        try:
+            await self._service.move_in_queue(
+                self._context(interaction), source_index, target_index
+            )
+            await interaction.response.send_message("Queue position updated.")
+        except PeaceMusicError as exc:
+            await self._send_error(interaction, exc)
+
+    @app_commands.command(name="shuffle", description="Shuffle the queue")
+    @app_commands.guild_only()
+    async def shuffle(self, interaction: discord.Interaction) -> None:
+        try:
+            await self._service.shuffle_queue(self._context(interaction))
+            await interaction.response.send_message("🔀 Queue shuffled.")
+        except PeaceMusicError as exc:
+            await self._send_error(interaction, exc)
+
+    @app_commands.command(name="clear", description="Clear the queue")
+    @app_commands.guild_only()
+    async def clear(self, interaction: discord.Interaction) -> None:
+        try:
+            count = await self._service.clear_queue(self._context(interaction))
+            await interaction.response.send_message(f"Cleared {count} queued tracks.")
+        except PeaceMusicError as exc:
+            await self._send_error(interaction, exc)
