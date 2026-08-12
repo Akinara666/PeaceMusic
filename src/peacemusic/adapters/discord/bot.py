@@ -43,12 +43,18 @@ class PeaceMusicV2Bot(commands.Bot):
 
     async def setup_hook(self) -> None:
         self.add_view(PlayerView(self.container.music))
-        await self.add_cog(SettingsCog(self.container.guild_settings))
+        await self.add_cog(
+            SettingsCog(
+                self.container.guild_settings,
+                getattr(self.container, "dj_roles", None),
+            )
+        )
         await self.add_cog(
             MusicCog(
                 self.container.music,
                 getattr(self.container, "history", None),
                 getattr(self.container, "guild_settings", None),
+                getattr(self.container, "player_messages", None),
             )
         )
         playlist_service = getattr(self.container, "playlists", None)

@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+import time
 from uuid import uuid4
 
 from peacemusic.core.errors import PermissionDeniedError, ValidationError
+from peacemusic.core.metrics import MetricsRegistry
 from peacemusic.modules.memory.models import MemoryKind, MemoryRecord
 from peacemusic.modules.memory.namespaces import channel_namespace, user_namespace
 from peacemusic.modules.memory.ports import MemoryRepository
@@ -19,9 +21,11 @@ class MemoryService:
         repository: MemoryRepository,
         *,
         settings_service: GuildSettingsService,
+        metrics: MetricsRegistry | None = None,
     ) -> None:
         self._repository = repository
         self._settings = settings_service
+        self._metrics = metrics
 
     async def remember(
         self,
@@ -36,15 +40,21 @@ class MemoryService:
         settings = await self._settings.get(guild_id)
         if not settings.memory.enabled or not settings.memory.long_term_memory_enabled:
             raise PermissionDeniedError("Long-term memory is disabled")
+        self._ensure_scope_enabled(settings, scope)
         namespace = self._namespace(guild_id, user_id, scope, channel_id)
+        now = datetime.now(timezone.utc)
+        retention_days = settings.memory.memory_retention_days
         record = MemoryRecord(
             memory_id=uuid4().hex,
             namespace=namespace,
             kind=kind,
             content=content,
-            created_at=datetime.now(timezone.utc),
+            created_at=now,
+            expires_at=now + timedelta(days=retention_days),
         )
         await self._repository.put(record)
+        if self._metrics is not None:
+            self._metrics.increment("peacemusic_memory_write_total")
         return record
 
     async def recall(
@@ -61,14 +71,27 @@ class MemoryService:
         if limit < 1:
             raise ValidationError("Memory recall limit must be positive")
         settings = await self._settings.get(guild_id)
-        if not settings.memory.enabled or not settings.memory.long_term_memory_enabled:
+        if (
+            not settings.memory.enabled
+            or not settings.memory.long_term_memory_enabled
+            or not settings.memory.semantic_search_enabled
+            or not self._scope_enabled(settings, scope)
+        ):
             return ()
-        return await self._repository.search(
-            self._namespace(guild_id, user_id, scope, channel_id),
-            query,
-            kind=kind,
-            limit=limit,
-        )
+        started = time.monotonic()
+        try:
+            return await self._repository.search(
+                self._namespace(guild_id, user_id, scope, channel_id),
+                query,
+                kind=kind,
+                limit=limit,
+            )
+        finally:
+            if self._metrics is not None:
+                self._metrics.observe(
+                    "peacemusic_memory_search_duration_seconds",
+                    time.monotonic() - started,
+                )
 
     async def forget(
         self,
@@ -82,6 +105,7 @@ class MemoryService:
         settings = await self._settings.get(guild_id)
         if not settings.memory.enabled:
             raise PermissionDeniedError("Long-term memory is disabled")
+        self._ensure_scope_enabled(settings, scope)
         return await self._repository.delete(
             self._namespace(guild_id, user_id, scope, channel_id), memory_id=memory_id
         )
@@ -136,3 +160,16 @@ class MemoryService:
                 raise ValidationError("channel_id is required for channel memory")
             return channel_namespace(guild_id, channel_id)
         raise ValidationError("Memory scope must be user or channel")
+
+    @staticmethod
+    def _scope_enabled(settings, scope: str) -> bool:
+        if scope == "user":
+            return settings.memory.user_memory_enabled
+        if scope == "channel":
+            return settings.memory.channel_memory_enabled
+        raise ValidationError("Memory scope must be user or channel")
+
+    @classmethod
+    def _ensure_scope_enabled(cls, settings, scope: str) -> None:
+        if not cls._scope_enabled(settings, scope):
+            raise PermissionDeniedError(f"{scope} memory is disabled")

@@ -59,3 +59,20 @@ def test_langgraph_memory_repository_round_trips_records() -> None:
         assert await repository.delete(record.namespace, memory_id="m1") == 1
 
     asyncio.run(scenario())
+
+
+def test_langgraph_memory_repository_ignores_invalid_and_expired_values() -> None:
+    async def scenario() -> None:
+        persistence = Persistence()
+        repository = LangGraphMemoryRepository(persistence)
+        namespace = ("guild", "1", "memory")
+        persistence.store.values[(namespace, "bad")] = SimpleNamespace(
+            namespace=namespace,
+            key="bad",
+            value={"content": "", "created_at": "not-a-date"},
+        )
+        assert await repository.count(namespace) == 0
+        assert await repository.delete(namespace, memory_id="missing") == 0
+        assert await repository.delete(namespace, memory_id=None) == 1
+
+    asyncio.run(scenario())

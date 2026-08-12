@@ -13,8 +13,11 @@ from peacemusic.modules.settings.service import GuildSettingsService
 
 
 class SettingsCog(commands.Cog):
-    def __init__(self, service: GuildSettingsService) -> None:
+    def __init__(
+        self, service: GuildSettingsService, dj_roles: object | None = None
+    ) -> None:
         self._service = service
+        self._dj_roles = dj_roles
 
     @app_commands.command(
         name="setup", description="Configure PeaceMusic for this server"
@@ -28,11 +31,12 @@ class SettingsCog(commands.Cog):
             return
         assert interaction.guild is not None
         await interaction.response.send_message(
-            "PeaceMusic Setup — Step 1/3\nSelect the channel for music commands:",
+            "PeaceMusic Setup — Step 1/7\nSelect the channel for music commands:",
             view=SetupView(
                 self._service,
                 guild_id=interaction.guild.id,
                 actor_user_id=interaction.user.id,
+                dj_roles=self._dj_roles,
             ),
             ephemeral=True,
         )

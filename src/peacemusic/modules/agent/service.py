@@ -15,6 +15,7 @@ from peacemusic.modules.agent.context import AgentRequestContext
 from peacemusic.modules.agent.conversation import (
     ConversationMessage,
     ConversationRepository,
+    compact_conversation,
 )
 from peacemusic.modules.agent.coordinator import TurnCoordinator
 from peacemusic.modules.agent.graph import OuterAgentWorkflow
@@ -45,6 +46,7 @@ class AgentService:
         metrics: MetricsRegistry | None = None,
         conversation_repository: ConversationRepository | None = None,
         conversation_limit: int = 20,
+        conversation_token_limit: int = 3000,
         rate_limiter: UserRateLimiter | None = None,
         max_tool_calls: int = 8,
         attachment_preparer=None,
@@ -61,6 +63,9 @@ class AgentService:
             raise ValueError("conversation_limit must be positive")
         self._conversation = conversation_repository
         self._conversation_limit = conversation_limit
+        if conversation_token_limit < 1:
+            raise ValueError("conversation_token_limit must be positive")
+        self._conversation_token_limit = conversation_token_limit
         if max_tool_calls < 1:
             raise ValueError("max_tool_calls must be positive")
         self._rate_limiter = rate_limiter
@@ -137,6 +142,10 @@ class AgentService:
             history = await self._conversation.recent(
                 self._thread_id(context), limit=self._conversation_limit
             )
+            if settings.memory.summarization_enabled:
+                history = compact_conversation(
+                    history, max_tokens=self._conversation_token_limit
+                )
         async with self._prepare_attachments(attachments) as uploaded:
             agent = self._factory.create(langchain_tools)
             messages = [message.as_message() for message in history]
@@ -159,7 +168,19 @@ class AgentService:
                 try:
                     if self._metrics is not None:
                         self._metrics.increment("peacemusic_llm_requests_total")
-                    return await agent.ainvoke({"messages": messages})
+                    return await agent.ainvoke(
+                        {"messages": messages},
+                        config={
+                            "configurable": {
+                                "thread_id": self._thread_id(context),
+                            },
+                            "metadata": {
+                                "request_id": context.request_id,
+                                "guild_id": context.guild_id,
+                                "channel_id": context.channel_id,
+                            },
+                        },
+                    )
                 except Exception as exc:  # noqa: BLE001 - provider boundary
                     if self._metrics is not None:
                         self._metrics.increment("peacemusic_llm_request_errors_total")
@@ -176,7 +197,11 @@ class AgentService:
                 },
             )
             try:
-                result = await self._coordinator.run(context.channel_id, run_agent)
+                result = await self._coordinator.run(
+                    context.channel_id,
+                    run_agent,
+                    timeout_seconds=settings.ai.turn_timeout,
+                )
                 response = self._workflow.finalize(state, _extract_response(result))
             except Exception:
                 if self._metrics is not None:

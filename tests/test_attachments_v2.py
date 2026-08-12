@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 import pytest
 
 from peacemusic.core.errors import ValidationError
 from peacemusic.modules.attachments.models import AttachmentInput
+from peacemusic.modules.attachments.models import PreparedAttachment
 from peacemusic.modules.attachments.service import AttachmentService
+from peacemusic.infrastructure.llm.gemini_files import GeminiFilesAdapter
 
 
 def attachment(**overrides) -> AttachmentInput:
@@ -62,5 +65,40 @@ def test_attachment_preparation_enforces_downloaded_size() -> None:
         with pytest.raises(ValidationError, match="Downloaded"):
             async with service.prepare([attachment()], downloader=downloader):
                 pass
+
+    asyncio.run(scenario())
+
+
+def test_gemini_files_adapter_uploads_and_cleans_provider_files(monkeypatch) -> None:
+    from google import genai
+
+    class Files:
+        def upload(self, **_kwargs):
+            return type("Uploaded", (), {"name": "files/1", "uri": "https://files/1"})()
+
+        def delete(self, **kwargs):
+            self.deleted = kwargs["name"]
+
+    files = Files()
+    monkeypatch.setattr(
+        genai, "Client", lambda **_kwargs: type("Client", (), {"files": files})()
+    )
+
+    async def immediate_to_thread(function, *args):
+        return function(*args)
+
+    monkeypatch.setattr(
+        "peacemusic.infrastructure.llm.gemini_files.asyncio.to_thread",
+        immediate_to_thread,
+    )
+
+    async def scenario() -> None:
+        adapter = GeminiFilesAdapter(api_key="secret")
+        reference = await adapter.upload(
+            PreparedAttachment("a", "photo.png", "image/png", Path("/tmp/photo.png"), 1)
+        )
+        assert reference.uri == "https://files/1"
+        await adapter.cleanup(reference)
+        assert files.deleted == "files/1"
 
     asyncio.run(scenario())

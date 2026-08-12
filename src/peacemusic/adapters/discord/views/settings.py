@@ -6,6 +6,7 @@ import discord
 
 from peacemusic.adapters.discord.presenters.settings import settings_embed
 from peacemusic.core.errors import PeaceMusicError
+from peacemusic.modules.music.roles import DJRoleRepository
 from peacemusic.modules.settings.service import GuildSettingsService
 
 _SECTIONS = ("general", "music", "voice", "ai", "memory")
@@ -100,6 +101,12 @@ class SetupMusicChannelSelect(discord.ui.ChannelSelect):
             await self.view.on_channel_selected(interaction, self.values[0])
 
 
+class SetupAIChannelSelect(discord.ui.ChannelSelect):
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if self.view is not None:
+            await self.view.on_channel_selected(interaction, self.values[0])
+
+
 class SetupView(discord.ui.View):
     """Small initial wizard that progressively writes through the service."""
 
@@ -109,11 +116,13 @@ class SetupView(discord.ui.View):
         *,
         guild_id: int,
         actor_user_id: int,
+        dj_roles: DJRoleRepository | None = None,
     ) -> None:
         super().__init__(timeout=600)
         self.service = service
         self.guild_id = guild_id
         self.actor_user_id = actor_user_id
+        self.dj_roles = dj_roles
         self._add_channel_step()
 
     def _add_channel_step(self) -> None:
@@ -140,12 +149,60 @@ class SetupView(discord.ui.View):
                 values={"music_channel_id": channel_id},
             )
             await interaction.response.edit_message(
-                content="Step 2/3 — Should the AI assistant be enabled?",
+                content="Step 2/7 — Select the AI channel:",
                 embed=None,
+                view=AIChannelSetupView(
+                    self.service,
+                    guild_id=self.guild_id,
+                    actor_user_id=self.actor_user_id,
+                    dj_roles=self.dj_roles,
+                ),
+            )
+        except (ValueError, PeaceMusicError) as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
+
+
+class AIChannelSetupView(discord.ui.View):
+    def __init__(
+        self,
+        service: GuildSettingsService,
+        *,
+        guild_id: int,
+        actor_user_id: int,
+        dj_roles: DJRoleRepository | None,
+    ) -> None:
+        super().__init__(timeout=600)
+        self.service = service
+        self.guild_id = guild_id
+        self.actor_user_id = actor_user_id
+        self.dj_roles = dj_roles
+        self.add_item(
+            SetupAIChannelSelect(
+                placeholder="Select the AI channel",
+                channel_types=[discord.ChannelType.text],
+                min_values=1,
+                max_values=1,
+                custom_id="peacemusic_setup_ai_channel",
+            )
+        )
+
+    async def on_channel_selected(
+        self, interaction: discord.Interaction, channel: object
+    ) -> None:
+        try:
+            await self.service.update(
+                self.guild_id,
+                actor_user_id=self.actor_user_id,
+                section="ai",
+                values={"channel_id": int(getattr(channel, "id", channel))},
+            )
+            await interaction.response.edit_message(
+                content="Step 3/7 — Should the AI assistant be enabled?",
                 view=AISetupView(
                     self.service,
                     guild_id=self.guild_id,
                     actor_user_id=self.actor_user_id,
+                    dj_roles=self.dj_roles,
                 ),
             )
         except (ValueError, PeaceMusicError) as exc:
@@ -159,11 +216,13 @@ class AISetupView(discord.ui.View):
         *,
         guild_id: int,
         actor_user_id: int,
+        dj_roles: DJRoleRepository | None,
     ) -> None:
         super().__init__(timeout=600)
         self.service = service
         self.guild_id = guild_id
         self.actor_user_id = actor_user_id
+        self.dj_roles = dj_roles
 
     @discord.ui.button(label="Enable AI", style=discord.ButtonStyle.success)
     async def enable_ai(
@@ -186,7 +245,176 @@ class AISetupView(discord.ui.View):
                 values={"enabled": enabled},
             )
             await interaction.response.edit_message(
-                content="Step 3/3 — Enable autoplay for this server?",
+                content="Step 4/7 — Require a mention before the AI responds?",
+                embed=None,
+                view=SetupMentionView(
+                    self.service,
+                    guild_id=self.guild_id,
+                    actor_user_id=self.actor_user_id,
+                    dj_roles=self.dj_roles,
+                ),
+            )
+        except PeaceMusicError as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
+
+
+class SetupMentionView(discord.ui.View):
+    def __init__(
+        self,
+        service: GuildSettingsService,
+        *,
+        guild_id: int,
+        actor_user_id: int,
+        dj_roles: DJRoleRepository | None,
+    ) -> None:
+        super().__init__(timeout=600)
+        self.service = service
+        self.guild_id = guild_id
+        self.actor_user_id = actor_user_id
+        self.dj_roles = dj_roles
+
+    @discord.ui.button(label="Require mention", style=discord.ButtonStyle.secondary)
+    async def require_mention(
+        self, interaction: discord.Interaction, _button: discord.ui.Button
+    ) -> None:
+        await self._finish(interaction, required=True)
+
+    @discord.ui.button(label="Respond in AI channel", style=discord.ButtonStyle.success)
+    async def allow_without_mention(
+        self, interaction: discord.Interaction, _button: discord.ui.Button
+    ) -> None:
+        await self._finish(interaction, required=False)
+
+    async def _finish(
+        self, interaction: discord.Interaction, *, required: bool
+    ) -> None:
+        try:
+            await self.service.update(
+                self.guild_id,
+                actor_user_id=self.actor_user_id,
+                section="ai",
+                values={"require_mention": required},
+            )
+            await interaction.response.edit_message(
+                content="Step 5/7 — Select an optional DJ role:",
+                embed=None,
+                view=SetupDJRoleView(
+                    self.service,
+                    guild_id=self.guild_id,
+                    actor_user_id=self.actor_user_id,
+                    dj_roles=self.dj_roles,
+                ),
+            )
+        except PeaceMusicError as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
+
+
+class SetupDJRoleView(discord.ui.View):
+    def __init__(
+        self,
+        service: GuildSettingsService,
+        *,
+        guild_id: int,
+        actor_user_id: int,
+        dj_roles: DJRoleRepository | None,
+    ) -> None:
+        super().__init__(timeout=600)
+        self.service = service
+        self.guild_id = guild_id
+        self.actor_user_id = actor_user_id
+        self.dj_roles = dj_roles
+        if dj_roles is not None:
+            self.add_item(
+                SetupRoleSelect(
+                    placeholder="Select a DJ role",
+                    min_values=1,
+                    max_values=1,
+                    custom_id="peacemusic_setup_dj_role",
+                )
+            )
+        else:
+            self.add_item(SetupSkipDJButton())
+
+    async def on_role_selected(
+        self, interaction: discord.Interaction, role: object
+    ) -> None:
+        try:
+            if self.dj_roles is not None:
+                await self.dj_roles.add_role(
+                    self.guild_id,
+                    int(getattr(role, "id")),
+                    str(getattr(role, "name", "DJ")),
+                )
+            await interaction.response.edit_message(
+                content="Step 6/7 — Choose the default volume:",
+                view=SetupVolumeView(
+                    self.service,
+                    guild_id=self.guild_id,
+                    actor_user_id=self.actor_user_id,
+                ),
+            )
+        except (ValueError, PeaceMusicError) as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
+
+
+class SetupRoleSelect(discord.ui.RoleSelect):
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if self.view is not None:
+            await self.view.on_role_selected(interaction, self.values[0])
+
+
+class SetupSkipDJButton(discord.ui.Button):
+    def __init__(self) -> None:
+        super().__init__(label="Skip DJ role", style=discord.ButtonStyle.secondary)
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if self.view is not None:
+            await self.view.on_role_selected(
+                interaction, type("Role", (), {"id": 0, "name": "DJ"})()
+            )
+
+
+class SetupVolumeView(discord.ui.View):
+    def __init__(
+        self,
+        service: GuildSettingsService,
+        *,
+        guild_id: int,
+        actor_user_id: int,
+    ) -> None:
+        super().__init__(timeout=600)
+        self.service = service
+        self.guild_id = guild_id
+        self.actor_user_id = actor_user_id
+
+    @discord.ui.button(label="50%", style=discord.ButtonStyle.secondary)
+    async def volume_50(
+        self, interaction: discord.Interaction, _button: discord.ui.Button
+    ) -> None:
+        await self._finish(interaction, 50)
+
+    @discord.ui.button(label="70%", style=discord.ButtonStyle.success)
+    async def volume_70(
+        self, interaction: discord.Interaction, _button: discord.ui.Button
+    ) -> None:
+        await self._finish(interaction, 70)
+
+    @discord.ui.button(label="100%", style=discord.ButtonStyle.secondary)
+    async def volume_100(
+        self, interaction: discord.Interaction, _button: discord.ui.Button
+    ) -> None:
+        await self._finish(interaction, 100)
+
+    async def _finish(self, interaction: discord.Interaction, volume: int) -> None:
+        try:
+            await self.service.update(
+                self.guild_id,
+                actor_user_id=self.actor_user_id,
+                section="music",
+                values={"default_volume": volume},
+            )
+            await interaction.response.edit_message(
+                content="Step 7/7 — Enable autoplay for this server?",
                 embed=None,
                 view=SetupAutoplayView(
                     self.service,

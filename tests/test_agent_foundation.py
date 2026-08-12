@@ -122,3 +122,15 @@ def test_turn_coordinator_serializes_same_channel_and_limits_timeouts() -> None:
         assert (await coordinator.stats()).timed_out_turns == 1
 
     asyncio.run(scenario())
+
+
+def test_turn_coordinator_rejects_invalid_limits() -> None:
+    with pytest.raises(ValueError):
+        TurnCoordinator(max_concurrent=0)
+
+    async def scenario() -> None:
+        coordinator = TurnCoordinator()
+        with pytest.raises(ValueError):
+            await coordinator.run(1, lambda: asyncio.sleep(0), timeout_seconds=0)
+
+    asyncio.run(scenario())

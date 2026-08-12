@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from urllib.parse import urlparse
 from typing import Any
 
 from peacemusic.core.errors import MediaExtractionError, ValidationError
+from peacemusic.core.metrics import MetricsRegistry
 from peacemusic.modules.music.models import ResolvedMedia
 
 
@@ -27,6 +29,7 @@ class YtDlpMediaResolver:
         max_concurrent: int = 2,
         timeout_seconds: float = 30.0,
         max_search_results: int = 1,
+        metrics: MetricsRegistry | None = None,
     ) -> None:
         if max_concurrent < 1 or timeout_seconds <= 0 or max_search_results < 1:
             raise ValueError("Invalid yt-dlp execution limits")
@@ -36,6 +39,7 @@ class YtDlpMediaResolver:
         )
         self._timeout_seconds = timeout_seconds
         self._max_search_results = max_search_results
+        self._metrics = metrics
         self._semaphore = asyncio.Semaphore(max_concurrent)
 
     async def resolve(self, query: str) -> ResolvedMedia:
@@ -43,6 +47,8 @@ class YtDlpMediaResolver:
         if not normalized:
             raise ValidationError("Media query cannot be empty")
         target = self._normalize_target(normalized)
+        started = time.monotonic()
+        self._increment_metric("peacemusic_ytdlp_requests_total")
         async with self._semaphore:
             try:
                 data = await asyncio.wait_for(
@@ -50,12 +56,28 @@ class YtDlpMediaResolver:
                     timeout=self._timeout_seconds,
                 )
             except asyncio.TimeoutError as exc:
+                self._increment_metric("peacemusic_ytdlp_errors_total")
                 raise MediaExtractionError("Media extraction timed out") from exc
             except MediaExtractionError:
+                self._increment_metric("peacemusic_ytdlp_errors_total")
                 raise
             except Exception as exc:  # noqa: BLE001 - translate adapter errors
+                self._increment_metric("peacemusic_ytdlp_errors_total")
                 raise MediaExtractionError("Media extraction failed") from exc
+            finally:
+                self._observe_metric(
+                    "peacemusic_ytdlp_duration_seconds",
+                    time.monotonic() - started,
+                )
         return self._to_media(data)
+
+    def _increment_metric(self, name: str) -> None:
+        if self._metrics is not None:
+            self._metrics.increment(name)
+
+    def _observe_metric(self, name: str, value: float) -> None:
+        if self._metrics is not None:
+            self._metrics.observe(name, value)
 
     def _extract(self, target: str) -> dict[str, Any]:
         try:

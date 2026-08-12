@@ -5,6 +5,7 @@ import asyncio
 import pytest
 
 from peacemusic.core.errors import PermissionDeniedError, ValidationError
+from peacemusic.core.metrics import MetricsRegistry
 from peacemusic.infrastructure.persistence.repositories.in_memory_memory import (
     InMemoryMemoryRepository,
 )
@@ -25,7 +26,9 @@ def test_memory_service_remember_recall_and_forget() -> None:
     async def scenario() -> None:
         settings = GuildSettingsService(InMemoryGuildSettingsRepository())
         repository = InMemoryMemoryRepository()
-        service = MemoryService(repository, settings_service=settings)
+        service = MemoryService(
+            repository, settings_service=settings, metrics=MetricsRegistry()
+        )
 
         record = await service.remember(
             guild_id=1,
@@ -38,6 +41,7 @@ def test_memory_service_remember_recall_and_forget() -> None:
             query="ambient music",
         )
         assert matches == [record]
+        assert record.expires_at is not None
         assert (
             await service.forget(guild_id=1, user_id=2, memory_id=record.memory_id) == 1
         )

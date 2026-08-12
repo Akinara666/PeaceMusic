@@ -39,6 +39,9 @@ from peacemusic.infrastructure.persistence.repositories.postgres_playlists impor
 from peacemusic.infrastructure.persistence.repositories.postgres_history import (
     PostgresPlaybackHistoryRepository,
 )
+from peacemusic.infrastructure.persistence.repositories.postgres_player_messages import (
+    PostgresPlayerMessageRepository,
+)
 from peacemusic.infrastructure.persistence.repositories.langgraph_memory import (
     LangGraphMemoryRepository,
 )
@@ -78,6 +81,7 @@ class ApplicationContainer:
     conversation: PostgresConversationRepository | None = None
     langgraph: LangGraphPersistence | None = None
     agent_factory: LangChainAgentFactory | None = None
+    player_messages: PostgresPlayerMessageRepository | None = None
 
     async def start(self) -> None:
         await self.database.connect()
@@ -128,6 +132,7 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
     dj_roles = PostgresDJRoleRepository(database)
     history = PlaybackHistoryService(PostgresPlaybackHistoryRepository(database))
     conversation = PostgresConversationRepository(database)
+    player_messages = PostgresPlayerMessageRepository(database)
     langgraph = LangGraphPersistence(
         resolved_settings.database.url,
         embedding_api_key=resolved_settings.gemini.api_key.get_secret_value(),
@@ -142,8 +147,9 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
     memory = MemoryService(
         LangGraphMemoryRepository(langgraph),
         settings_service=guild_settings,
+        metrics=metrics,
     )
-    media_resolver = YtDlpMediaResolver()
+    media_resolver = YtDlpMediaResolver(metrics=metrics)
     autoplay = AutoplayService(
         ResolverAutoplayProvider(media_resolver),
         guild_settings,
@@ -156,7 +162,7 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
         DiscordMusicPermissionService(dj_roles),
         history=history,
         autoplay=autoplay,
-        recovery=PlaybackRecoveryService(),
+        recovery=PlaybackRecoveryService(metrics=metrics),
         settings=guild_settings,
         audit=audit,
         metrics=metrics,
@@ -176,6 +182,7 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
         settings_service=guild_settings,
         tool_registry=tool_registry,
         agent_factory=agent_factory,
+        player_messages=player_messages,
         coordinator=TurnCoordinator(
             max_concurrent=resolved_settings.limits.max_concurrent_ai_turns,
         ),
