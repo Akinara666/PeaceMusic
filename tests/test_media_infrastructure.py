@@ -254,5 +254,11 @@ def test_ffmpeg_factory_builds_bounded_source_and_cleans_it(monkeypatch) -> None
             await FFmpegAudioSourceFactory().create(Track("bad", "", 1))
 
     asyncio.run(scenario())
-    assert calls[0][1]["before_options"] == "-nostdin -ss 9"
+    before_options = calls[0][1]["before_options"]
+    assert "-reconnect 1" in before_options
+    assert "-reconnect_streamed 1" in before_options
+    assert "-reconnect_delay_max 5" in before_options
+    assert "-reconnect_on_network_error 1" in before_options
+    assert "-reconnect_on_http_error 4xx,5xx" in before_options
+    assert before_options.endswith("-ss 9")
     assert calls[-1][0] == "cleanup"

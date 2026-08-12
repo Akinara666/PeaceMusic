@@ -17,7 +17,11 @@ class FFmpegAudioSourceFactory:
         self,
         *,
         executable: str = "ffmpeg",
-        before_options: str = "-nostdin",
+        before_options: str = (
+            "-nostdin -reconnect 1 -reconnect_streamed 1 "
+            "-reconnect_delay_max 5 -reconnect_on_network_error 1 "
+            "-reconnect_on_http_error 4xx,5xx"
+        ),
         options: str = "-vn -sn -dn -loglevel warning",
     ) -> None:
         self._executable = executable
