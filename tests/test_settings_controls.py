@@ -4,8 +4,13 @@ import asyncio
 
 from peacemusic.adapters.discord.views.settings import (
     AIPersonalityModal,
+    SectionSettingsView,
+    SettingsFieldSelect,
     SettingsView,
     SetupAutoplayView,
+    _SETTING_DEFINITIONS,
+    _definition_for,
+    _parse_value,
 )
 from peacemusic.modules.settings.models import GuildSettings
 
@@ -89,3 +94,53 @@ def test_ai_personality_modal_prefills_current_guild_prompt() -> None:
     )
 
     assert modal.prompt.default == "Be calm and concise."
+
+
+def test_settings_editor_exposes_every_guild_setting() -> None:
+    settings = GuildSettings(guild_id=123)
+
+    for section, definitions in _SETTING_DEFINITIONS.items():
+        assert {item.key for item in definitions} == set(
+            getattr(settings, section).model_dump()
+        )
+        view = SectionSettingsView(
+            FakeSettingsService(),
+            guild_id=123,
+            actor_user_id=456,
+            section=section,
+            settings=settings,
+        )  # type: ignore[arg-type]
+        selector = next(
+            item for item in view.children if isinstance(item, SettingsFieldSelect)
+        )
+        assert len(selector.options) == len(definitions)
+
+
+def test_settings_editor_parses_supported_value_types() -> None:
+    assert _parse_value(_definition_for("ai", "enabled"), "off") is False  # type: ignore[arg-type]
+    assert _parse_value(_definition_for("music", "default_volume"), "80") == 80  # type: ignore[arg-type]
+    assert _parse_value(_definition_for("ai", "temperature"), "0.25") == 0.25  # type: ignore[arg-type]
+    assert _parse_value(_definition_for("voice", "default_voice_channel"), "") is None  # type: ignore[arg-type]
+    assert _parse_value(_definition_for("music", "default_loop_mode"), "queue") == "queue"  # type: ignore[arg-type]
+
+
+def test_settings_editor_refresh_keeps_navigation_buttons() -> None:
+    async def scenario() -> None:
+        service = FakeSettingsService()
+        view = SectionSettingsView(
+            service,
+            guild_id=123,
+            actor_user_id=456,
+            section="music",
+            settings=service.settings,
+        )  # type: ignore[arg-type]
+        interaction = type("Interaction", (), {"response": Response()})()
+
+        await view.refresh(interaction)
+
+        assert {getattr(item, "label", None) for item in view.children} >= {
+            "Refresh",
+            "Back to sections",
+        }
+
+    asyncio.run(scenario())
