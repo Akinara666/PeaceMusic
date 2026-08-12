@@ -26,6 +26,7 @@ from peacemusic.modules.music.ports import (
     VoiceGateway,
 )
 from peacemusic.modules.music.recovery import PlaybackRecoveryService
+from peacemusic.modules.settings.service import GuildSettingsService
 
 
 class MusicService:
@@ -42,6 +43,7 @@ class MusicService:
         history: PlaybackHistoryService | None = None,
         autoplay: AutoplayService | None = None,
         recovery: PlaybackRecoveryService | None = None,
+        settings: GuildSettingsService | None = None,
     ) -> None:
         self._players = player_manager
         self._resolver = resolver
@@ -51,7 +53,9 @@ class MusicService:
         self._history = history
         self._autoplay = autoplay
         self._recovery = recovery
+        self._settings = settings
         self._playback_tokens: dict[int, int] = {}
+        self._idle_disconnect_tasks: dict[int, asyncio.Task[None]] = {}
 
     def attach_runtime(
         self,
@@ -78,6 +82,7 @@ class MusicService:
         if self._voice_gateway is not None and context.user_voice_channel_id is None:
             raise ValidationError("User must be in a voice channel")
         player = await self._players.get_or_create(context.guild_id)
+        self._cancel_idle_disconnect(context.guild_id)
         was_idle = player.current_track is None
         if self._voice_gateway is not None:
             await self._voice_gateway.connect(
@@ -250,9 +255,45 @@ class MusicService:
                     await self._history.record(guild_id, candidate)
         if next_track is not None:
             await self._start_current(player)
+        elif self._voice_gateway is not None:
+            self._schedule_idle_disconnect(guild_id)
 
     def _invalidate_playback(self, guild_id: int) -> None:
         self._playback_tokens[guild_id] = self._playback_tokens.get(guild_id, 0) + 1
+
+    def _schedule_idle_disconnect(self, guild_id: int) -> None:
+        if self._settings is None or self._voice_gateway is None:
+            return
+        self._cancel_idle_disconnect(guild_id)
+        self._idle_disconnect_tasks[guild_id] = asyncio.create_task(
+            self._idle_disconnect_after(guild_id)
+        )
+
+    def _cancel_idle_disconnect(self, guild_id: int) -> None:
+        task = self._idle_disconnect_tasks.pop(guild_id, None)
+        if task is not None and not task.done():
+            task.cancel()
+
+    async def _idle_disconnect_after(self, guild_id: int) -> None:
+        try:
+            settings = await self._settings.get(guild_id)  # type: ignore[union-attr]
+            if not settings.voice.idle_disconnect_enabled or settings.voice.mode_24_7:
+                return
+            await asyncio.sleep(settings.voice.idle_disconnect_timeout)
+            player = await self._player(guild_id)
+            if player.current_track is not None or player.voice_channel_id is None:
+                return
+            self._invalidate_playback(guild_id)
+            await self._voice_gateway.stop(guild_id)  # type: ignore[union-attr]
+            await self._voice_gateway.disconnect(guild_id)  # type: ignore[union-attr]
+            player.disconnect()
+        finally:
+            if self._idle_disconnect_tasks.get(guild_id) is asyncio.current_task():
+                self._idle_disconnect_tasks.pop(guild_id, None)
+
+    async def shutdown(self) -> None:
+        for guild_id in tuple(self._idle_disconnect_tasks):
+            self._cancel_idle_disconnect(guild_id)
 
     @staticmethod
     def _track_from_media(media: ResolvedMedia, *, requested_by: int) -> Track:
