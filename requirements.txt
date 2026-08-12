@@ -12,3 +12,4 @@ pydantic==2.12.5
 pydantic-settings==2.13.1
 asyncpg==0.30.0
 alembic==1.16.5
+SQLAlchemy==2.0.43

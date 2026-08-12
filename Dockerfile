@@ -14,6 +14,7 @@ COPY --from=deno /deno /usr/local/bin/deno
 RUN deno --version
 
 WORKDIR /app
+ENV PYTHONPATH=/app/src
 
 # Install dependencies
 COPY requirements.txt .
