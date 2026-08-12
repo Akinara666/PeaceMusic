@@ -7,6 +7,8 @@ from discord import app_commands
 from discord.ext import commands
 
 from peacemusic.adapters.discord.presenters.music import player_embed, track_embed
+from peacemusic.adapters.discord.context import music_request_context
+from peacemusic.adapters.discord.views.player import PlayerView
 from peacemusic.core.errors import PeaceMusicError
 from peacemusic.modules.music.models import LoopMode
 from peacemusic.modules.music.permissions import MusicRequestContext
@@ -23,21 +25,10 @@ class MusicCog(commands.Cog):
 
     @staticmethod
     def _context(interaction: discord.Interaction) -> MusicRequestContext:
-        if interaction.guild is None:
-            raise PeaceMusicError("Music commands are only available in guilds")
-        member = interaction.user
-        user_voice = getattr(getattr(member, "voice", None), "channel", None)
-        bot_voice = getattr(
-            getattr(interaction.guild, "voice_client", None), "channel", None
-        )
-        permissions = getattr(member, "guild_permissions", None)
-        return MusicRequestContext(
-            guild_id=interaction.guild.id,
-            user_id=interaction.user.id,
-            user_voice_channel_id=getattr(user_voice, "id", None),
-            bot_voice_channel_id=getattr(bot_voice, "id", None),
-            can_manage_guild=bool(getattr(permissions, "manage_guild", False)),
-        )
+        try:
+            return music_request_context(interaction)
+        except ValueError as exc:
+            raise PeaceMusicError(str(exc)) from exc
 
     async def _send_error(
         self, interaction: discord.Interaction, error: Exception
@@ -53,7 +44,9 @@ class MusicCog(commands.Cog):
     async def play(self, interaction: discord.Interaction, query: str) -> None:
         try:
             track = await self._service.play(self._context(interaction), query)
-            await interaction.response.send_message(embed=track_embed(track))
+            await interaction.response.send_message(
+                embed=track_embed(track), view=PlayerView(self._service)
+            )
         except PeaceMusicError as exc:
             await self._send_error(interaction, exc)
 
