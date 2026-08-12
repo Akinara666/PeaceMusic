@@ -83,6 +83,8 @@ class ChatCog(commands.Cog):
                 )
             for chunk in split_message(state.final_response or ""):
                 await message.channel.send(chunk)
+            if settings.ai.reactions_enabled:
+                await message.add_reaction("🤖")
         except PeaceMusicError as exc:
             logger.warning("Agent request failed: %s", exc)
         except Exception:  # noqa: BLE001 - Discord listener must not die

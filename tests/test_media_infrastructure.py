@@ -5,6 +5,7 @@ import asyncio
 import pytest
 
 from peacemusic.core.errors import MediaExtractionError, PlaybackError, ValidationError
+from peacemusic.core.metrics import MetricsRegistry
 from peacemusic.infrastructure.media.buffered_source import BufferedAudioSource
 from peacemusic.infrastructure.media.ytdlp import YtDlpMediaResolver
 from peacemusic.modules.music.recovery import PlaybackRecoveryService
@@ -42,7 +43,8 @@ def test_ytdlp_metadata_is_translated_to_domain_model() -> None:
 
 
 def test_buffered_audio_source_is_bounded_and_reports_underruns() -> None:
-    buffer = BufferedAudioSource(capacity_frames=1, frame_size=4)
+    metrics = MetricsRegistry()
+    buffer = BufferedAudioSource(capacity_frames=1, frame_size=4, metrics=metrics)
     assert buffer.read(timeout=0) == b"\x00" * 4
     assert buffer.stats().underruns == 1
     buffer.push(b"abcd")
@@ -51,11 +53,17 @@ def test_buffered_audio_source_is_bounded_and_reports_underruns() -> None:
     assert buffer.read(timeout=0) == b"abcd"
     buffer.close()
     assert buffer.stats().closed is True
+    rendered = metrics.render()
+    assert "peacemusic_voice_buffer_underruns_total 1" in rendered
+    assert "peacemusic_voice_buffered_frames" in rendered
 
 
 def test_recovery_is_bounded_and_refreshes_between_attempts() -> None:
     async def scenario() -> None:
-        service = PlaybackRecoveryService(max_attempts=3, retry_delay_seconds=0)
+        metrics = MetricsRegistry()
+        service = PlaybackRecoveryService(
+            max_attempts=3, retry_delay_seconds=0, metrics=metrics
+        )
         attempts: list[int] = []
         refreshes: list[bool] = []
 
@@ -77,5 +85,37 @@ def test_recovery_is_bounded_and_refreshes_between_attempts() -> None:
 
         with pytest.raises(PlaybackError):
             await service.run(always_fails)
+        assert "peacemusic_voice_stream_restarts_total 4" in metrics.render()
+
+    asyncio.run(scenario())
+
+
+def test_ytdlp_resolver_records_request_error_and_duration_metrics(monkeypatch) -> None:
+    async def scenario() -> None:
+        metrics = MetricsRegistry()
+        resolver = YtDlpMediaResolver(
+            allowed_domains=("example.test",), metrics=metrics
+        )
+
+        def extract(_target: str) -> dict[str, object]:
+            return {
+                "title": "Example",
+                "webpage_url": "https://example.test/video",
+            }
+
+        resolver._extract = extract  # type: ignore[method-assign]
+
+        async def immediate_to_thread(function, *args):
+            return function(*args)
+
+        monkeypatch.setattr(
+            "peacemusic.infrastructure.media.ytdlp.asyncio.to_thread",
+            immediate_to_thread,
+        )
+        await resolver.resolve("https://example.test/video")
+
+        rendered = metrics.render()
+        assert "peacemusic_ytdlp_requests_total 1" in rendered
+        assert "peacemusic_ytdlp_duration_seconds_count 1" in rendered
 
     asyncio.run(scenario())

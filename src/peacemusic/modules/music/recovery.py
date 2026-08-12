@@ -7,18 +7,24 @@ from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
 from peacemusic.core.errors import PlaybackError
+from peacemusic.core.metrics import MetricsRegistry
 
 T = TypeVar("T")
 
 
 class PlaybackRecoveryService:
     def __init__(
-        self, *, max_attempts: int = 3, retry_delay_seconds: float = 1.0
+        self,
+        *,
+        max_attempts: int = 3,
+        retry_delay_seconds: float = 1.0,
+        metrics: MetricsRegistry | None = None,
     ) -> None:
         if max_attempts < 1 or retry_delay_seconds < 0:
             raise ValueError("Invalid playback recovery limits")
         self.max_attempts = max_attempts
         self.retry_delay_seconds = retry_delay_seconds
+        self._metrics = metrics
 
     async def run(
         self,
@@ -34,6 +40,8 @@ class PlaybackRecoveryService:
                 last_error = exc
                 if attempt == self.max_attempts:
                     break
+                if self._metrics is not None:
+                    self._metrics.increment("peacemusic_voice_stream_restarts_total")
                 if refresh_source is not None:
                     await refresh_source()
                 if self.retry_delay_seconds:

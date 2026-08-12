@@ -5,6 +5,7 @@ import asyncio
 from peacemusic.modules.agent.conversation import (
     ConversationMessage,
     InMemoryConversationRepository,
+    compact_conversation,
 )
 
 
@@ -25,3 +26,17 @@ def test_in_memory_conversation_repository_returns_bounded_chronological_history
         ]
 
     asyncio.run(scenario())
+
+
+def test_conversation_compaction_keeps_recent_context_and_summary() -> None:
+    messages = [
+        ConversationMessage("user", "a" * 50),
+        ConversationMessage("assistant", "b" * 50),
+        ConversationMessage("user", "recent"),
+    ]
+
+    compacted = compact_conversation(messages, max_tokens=20)
+
+    assert compacted[0].role == "system"
+    assert "Earlier conversation summary" in compacted[0].content
+    assert compacted[-1].content == "recent"

@@ -31,13 +31,22 @@ class TurnCoordinator:
         self._stats_lock = asyncio.Lock()
         self._timeout_seconds = timeout_seconds
 
-    async def run(self, channel_id: int, operation: Callable[[], Awaitable[T]]) -> T:
+    async def run(
+        self,
+        channel_id: int,
+        operation: Callable[[], Awaitable[T]],
+        *,
+        timeout_seconds: float | None = None,
+    ) -> T:
+        timeout = self._timeout_seconds if timeout_seconds is None else timeout_seconds
+        if timeout <= 0:
+            raise ValueError("timeout_seconds must be positive")
         lock = self._channel_locks.setdefault(channel_id, asyncio.Lock())
         async with lock, self._semaphore:
             async with self._stats_lock:
                 self._active_turns += 1
             try:
-                result = await asyncio.wait_for(operation(), self._timeout_seconds)
+                result = await asyncio.wait_for(operation(), timeout)
             except asyncio.TimeoutError:
                 async with self._stats_lock:
                     self._timed_out_turns += 1

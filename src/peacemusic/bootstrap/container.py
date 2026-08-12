@@ -147,8 +147,9 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
     memory = MemoryService(
         LangGraphMemoryRepository(langgraph),
         settings_service=guild_settings,
+        metrics=metrics,
     )
-    media_resolver = YtDlpMediaResolver()
+    media_resolver = YtDlpMediaResolver(metrics=metrics)
     autoplay = AutoplayService(
         ResolverAutoplayProvider(media_resolver),
         guild_settings,
@@ -161,7 +162,7 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
         DiscordMusicPermissionService(dj_roles),
         history=history,
         autoplay=autoplay,
-        recovery=PlaybackRecoveryService(),
+        recovery=PlaybackRecoveryService(metrics=metrics),
         settings=guild_settings,
         audit=audit,
         metrics=metrics,
