@@ -1,14 +1,44 @@
-# PeaceMusic v2
+<div align="center">
 
-PeaceMusic is a production-oriented Discord music and AI assistant bot. It
-supports multi-guild configuration, first-party music playback, persistent
-playlists and history, LangChain/LangGraph agent workflows, multimodal Gemini
-input, and PostgreSQL-backed memory.
+# 🎵 PeaceMusic v2
 
-PeaceMusic owns its playback stack with `discord.py`, `yt-dlp`, and FFmpeg.
-Lavalink is not used.
+### A production-ready Discord music player with a persistent Gemini AI assistant
 
-## Contents
+<p>
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.12%2B-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.12+"></a>
+  <a href="https://discord.com/developers/docs/intro"><img src="https://img.shields.io/badge/Discord-discord.py-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="discord.py"></a>
+  <a href="https://www.postgresql.org/"><img src="https://img.shields.io/badge/PostgreSQL-16%2B-4169E1?style=for-the-badge&logo=postgresql&logoColor=white" alt="PostgreSQL 16+"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-see%20LICENSE-111827?style=for-the-badge" alt="License"></a>
+</p>
+
+<p>
+  <strong>Music owned by PeaceMusic.</strong><br>
+  <code>discord.py</code> · <code>yt-dlp</code> · <code>FFmpeg</code> · <code>LangGraph</code> · <code>Gemini</code> · <code>PostgreSQL</code>
+</p>
+
+</div>
+
+PeaceMusic is a multi-guild Discord music and AI assistant built for reliable
+operation, clear boundaries, and configuration from Discord. It combines
+first-party voice playback with persistent playlists, playback history,
+LangChain/LangGraph agent workflows, multimodal Gemini input, and PostgreSQL-
+backed memory.
+
+> **No Lavalink.** PeaceMusic owns the playback stack with `discord.py`,
+> `yt-dlp`, and FFmpeg.
+
+<div align="center">
+
+| 🎶 Music | 🤖 AI | 🧠 Memory | 🛡️ Operations |
+|:---:|:---:|:---:|:---:|
+| Queues, playlists, autoplay, voice | Gemini tools and LangGraph | Persistent semantic memory | Docker, health, metrics, CI |
+
+</div>
+
+## ✨ Contents
+
+<details open>
+<summary>Explore the documentation</summary>
 
 - [Highlights](#highlights)
 - [Architecture](#architecture)
@@ -27,9 +57,27 @@ Lavalink is not used.
 - [Troubleshooting](#troubleshooting)
 - [License](#license)
 
-## Highlights
+</details>
 
-### Music
+## 🚀 Quick start
+
+```bash
+cp .env.example .env
+# Set DISCORD_BOT_TOKEN, GEMINI_API_KEY, and DATABASE_URL in .env
+uv sync --group dev
+uv run alembic upgrade head
+uv run peacemusic-v2
+```
+
+For the full production stack:
+
+```bash
+docker compose up --build -d
+```
+
+## ✨ Highlights
+
+### 🎶 Music
 
 - YouTube and other supported media sources through an isolated `yt-dlp`
   resolver.
@@ -42,7 +90,7 @@ Lavalink is not used.
 - Direct playback of trusted Discord audio attachments.
 - DJ-role and capability-aware authorization for live-player operations.
 
-### AI and memory
+### 🤖 AI and memory
 
 - Gemini through LangChain's `create_agent` interface.
 - A compiled outer LangGraph `StateGraph` for deterministic normalization,
@@ -59,7 +107,7 @@ Lavalink is not used.
 - Secure multimodal attachment validation, temporary download handling, Gemini
   Files upload, and guaranteed cleanup.
 
-### Guild administration
+### ⚙️ Guild administration
 
 - `/setup` interactive seven-step onboarding wizard.
 - `/settings` interactive guild configuration center.
@@ -69,7 +117,7 @@ Lavalink is not used.
   voice behavior, memory features, and operator-controlled AI model allowlists.
 - Persistent blocked-user and silent-channel controls.
 
-### Production readiness
+### 🛡️ Production readiness
 
 - PostgreSQL and Alembic migrations.
 - Structured application logging and in-process metrics.
@@ -80,7 +128,7 @@ Lavalink is not used.
 - CI checks for formatting, linting, tests, PostgreSQL integration, migrations,
   and Docker builds.
 
-## Architecture
+## 🧭 Architecture
 
 The repository uses explicit dependency boundaries and a single composition
 root:
@@ -118,7 +166,7 @@ Important boundaries include:
 - `LangGraphPersistence` owns the PostgreSQL checkpointer and Store lifecycle.
 - `TaskSupervisor` owns application background tasks and shutdown cancellation.
 
-## Requirements
+## 📦 Requirements
 
 For local development:
 
@@ -133,7 +181,7 @@ For the recommended deployment, Docker Engine and Docker Compose are enough;
 the image includes Python dependencies, FFmpeg, and Deno. Compose also starts
 PostgreSQL and the `bgutil-provider` service used by the media environment.
 
-## Discord application setup
+## 🔗 Discord application setup
 
 1. Create an application in the [Discord Developer Portal](https://discord.com/developers/applications).
 2. Create a bot user and copy its token into `DISCORD_BOT_TOKEN`.
@@ -155,7 +203,7 @@ PostgreSQL and the `bgutil-provider` service used by the media environment.
 The bot disables allowed mentions globally and does not expose infrastructure
 secrets through Discord.
 
-## Configuration
+## 🔧 Configuration
 
 Infrastructure configuration is loaded from `.env` by Pydantic Settings. Guild
 behavior belongs in PostgreSQL and is changed through `/setup` and `/settings`.
@@ -212,7 +260,7 @@ These limits are operator-controlled and cannot be exceeded by a guild:
 ALLOWED_AI_MODELS=["gemini-3.1-flash-lite"]
 ```
 
-## Local development
+## 💻 Local development
 
 ### Install dependencies
 
@@ -252,7 +300,7 @@ GET /health/ready  PostgreSQL and Discord readiness; returns HTTP 503 otherwise.
 GET /metrics       Plain-text application metrics.
 ```
 
-## Docker Compose deployment
+## 🐳 Docker Compose deployment
 
 Docker Compose is the recommended production starting point.
 
@@ -314,7 +362,7 @@ The image runs as a non-root user, drops Linux capabilities, enables
 `no-new-privileges`, uses bounded CPU/memory/process settings, and configures
 container log rotation.
 
-## Discord commands
+## 🎛️ Discord commands
 
 All guild commands require a guild context. Administrative commands require
 Manage Server unless noted otherwise.
@@ -393,7 +441,7 @@ The AI agent can use `remember`, `recall`, and `forget` tools when the relevant
 guild settings allow them. All side effects are authorized by application code;
 the model cannot grant itself permissions.
 
-## Persistence and migrations
+## 🗄️ Persistence and migrations
 
 PostgreSQL is the system of record for guild behavior and application state.
 The migration chain currently owns:
@@ -429,7 +477,7 @@ Production startup applies pending migrations automatically in the Docker
 image. For controlled deployments, migrations can be run as a separate release
 step before starting the bot.
 
-## Migrating from v1
+## 🔄 Migrating from v1
 
 The repository includes `scripts/migrate_v1_sqlite.py` for importing supported
 data from a v1 SQLite database.
@@ -463,7 +511,7 @@ uv run python scripts/migrate_v1_sqlite.py ./old.sqlite3 \
 The importer uses deterministic IDs for imported text memories, making repeated
 runs safe for the same namespace/content pair.
 
-## Operations
+## 📈 Operations
 
 ### Readiness and metrics
 
@@ -491,7 +539,7 @@ Back up PostgreSQL using your normal PostgreSQL tooling. The named
 playlists, history, audit records, and database-owned memory. The yt-dlp cache is
 rebuildable and must not be treated as application state.
 
-## Testing and quality
+## ✅ Testing and quality
 
 Install development dependencies with `uv sync --group dev`, then run:
 
@@ -524,7 +572,7 @@ docker compose config --quiet
 CI also verifies the locked dependency graph, PostgreSQL migrations, LangGraph
 Store restart persistence, and the production image build.
 
-## Project layout
+## 🗂️ Project layout
 
 ```text
 .
@@ -546,7 +594,7 @@ Store restart persistence, and the production image build.
 └── LICENSE
 ```
 
-## Security model
+## 🔒 Security model
 
 - Secrets are loaded at process startup and are not editable or displayable
   through Discord.
@@ -565,7 +613,7 @@ Store restart persistence, and the production image build.
 - Tool and model execution is bounded by rate limits, concurrency limits,
   recursion limits, timeouts, queue limits, and download limits.
 
-## Troubleshooting
+## 🧰 Troubleshooting
 
 ### Slash commands are not visible
 
@@ -605,6 +653,6 @@ The health server listens inside the container by default. Add a
 `8080:8080` port mapping as shown in the Docker section, or query it from
 inside the Compose network.
 
-## License
+## 📄 License
 
 PeaceMusic is distributed under the terms in [`LICENSE`](LICENSE).
