@@ -16,3 +16,5 @@ SQLAlchemy==2.0.43
 langchain>=1.0,<2
 langchain-google-genai>=4.0,<5
 langgraph>=1.0,<2
+langgraph-checkpoint-postgres>=3.1,<4
+psycopg[binary,pool]>=3.2,<4
