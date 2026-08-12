@@ -62,3 +62,43 @@ def test_memory_service_enforces_limits_and_settings() -> None:
             await service.remember(guild_id=1, user_id=2, content="secret")
 
     asyncio.run(scenario())
+
+
+def test_memory_admin_clears_require_manage_server() -> None:
+    async def scenario() -> None:
+        settings = GuildSettingsService(InMemoryGuildSettingsRepository())
+        repository = InMemoryMemoryRepository()
+        service = MemoryService(repository, settings_service=settings)
+        await service.remember(
+            guild_id=1,
+            user_id=2,
+            content="private preference",
+        )
+        await service.remember(
+            guild_id=1,
+            user_id=2,
+            content="channel preference",
+            scope="channel",
+            channel_id=9,
+        )
+
+        with pytest.raises(PermissionDeniedError):
+            await service.clear_user(
+                guild_id=1,
+                actor_user_id=3,
+                target_user_id=2,
+                can_manage_guild=False,
+            )
+
+        assert (
+            await service.clear_channel(
+                guild_id=1,
+                actor_user_id=3,
+                channel_id=9,
+                can_manage_guild=True,
+            )
+            == 1
+        )
+        assert await service.count_user(guild_id=1, user_id=2) == 1
+
+    asyncio.run(scenario())
