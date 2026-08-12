@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import sys
+import types
 
 import discord
 import pytest
@@ -46,6 +48,67 @@ def test_ytdlp_metadata_is_translated_to_domain_model() -> None:
 
     with pytest.raises(MediaExtractionError, match="no source"):
         YtDlpMediaResolver._to_media({"title": "No URL"})
+
+
+def test_ytdlp_rejects_metadata_without_a_direct_stream() -> None:
+    with pytest.raises(MediaExtractionError, match="direct stream"):
+        YtDlpMediaResolver._to_media(
+            {
+                "title": "Example",
+                "webpage_url": "https://example.test/video",
+            }
+        )
+
+
+def test_ytdlp_expands_flat_search_results(monkeypatch) -> None:
+    calls: list[str] = []
+    options_seen: list[dict[str, object]] = []
+
+    class YoutubeDL:
+        def __init__(self, options) -> None:
+            options_seen.append(options)
+            self.options = options
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def extract_info(self, target, download):
+            assert download is False
+            calls.append(target)
+            if target.startswith("ytsearch"):
+                return {
+                    "entries": [
+                        {
+                            "title": "Example",
+                            "webpage_url": "https://youtube.com/watch?v=1",
+                        }
+                    ]
+                }
+            return {
+                "title": "Example",
+                "webpage_url": target,
+                "url": "https://cdn.example.test/audio",
+            }
+
+    yt_dlp = types.ModuleType("yt_dlp")
+    yt_dlp.YoutubeDL = YoutubeDL
+    monkeypatch.setitem(sys.modules, "yt_dlp", yt_dlp)
+
+    monkeypatch.setenv("YTDL_POT_PROVIDER_URL", "http://pot-provider:4416")
+    data = YtDlpMediaResolver()._extract("ytsearch1:example")
+
+    assert data["url"] == "https://cdn.example.test/audio"
+    assert options_seen[0]["format"] == "bestaudio/best"
+    assert options_seen[0]["extractor_args"] == {
+        "youtubepot-bgutilhttp": {"base_url": "http://pot-provider:4416"}
+    }
+    assert calls == [
+        "ytsearch1:example",
+        "https://youtube.com/watch?v=1",
+    ]
 
 
 def test_buffered_audio_source_is_bounded_and_reports_underruns() -> None:
@@ -107,6 +170,7 @@ def test_ytdlp_resolver_records_request_error_and_duration_metrics(monkeypatch) 
             return {
                 "title": "Example",
                 "webpage_url": "https://example.test/video",
+                "url": "https://cdn.example.test/audio",
             }
 
         resolver._extract = extract  # type: ignore[method-assign]
@@ -176,7 +240,13 @@ def test_ffmpeg_factory_builds_bounded_source_and_cleans_it(monkeypatch) -> None
 
     async def scenario() -> None:
         source = await FFmpegAudioSourceFactory().create(
-            Track("song", "https://example.test/audio", 1), start_seconds=9
+            Track(
+                "song",
+                "https://example.test/video",
+                1,
+                stream_url="https://cdn.example.test/audio",
+            ),
+            start_seconds=9,
         )
         assert source.volume == 0.7
         cleanup_audio_source(source.raw)
