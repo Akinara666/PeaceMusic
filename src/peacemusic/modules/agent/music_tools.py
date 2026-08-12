@@ -26,6 +26,15 @@ class LoopArguments(BaseModel):
     mode: Literal["off", "track", "queue"]
 
 
+class QueueIndexArguments(BaseModel):
+    index: int = Field(ge=0)
+
+
+class QueueMoveArguments(BaseModel):
+    source_index: int = Field(ge=0)
+    target_index: int = Field(ge=0)
+
+
 def build_music_tool_specs(service: MusicService) -> tuple[ToolSpec, ...]:
     """Create model-facing tools with no duplicated music business logic."""
 
@@ -90,6 +99,41 @@ def build_music_tool_specs(service: MusicService) -> tuple[ToolSpec, ...]:
         except PeaceMusicError as exc:
             return _failure(exc)
 
+    async def remove_from_queue(context: AgentRequestContext, index: int) -> ToolResult:
+        try:
+            args = QueueIndexArguments(index=index)
+            track = await service.remove_from_queue(_music_context(context), args.index)
+            return ToolResult.success(
+                f"Removed {track.title}", data={"title": track.title}
+            )
+        except (PydanticValidationError, PeaceMusicError) as exc:
+            return _failure(exc)
+
+    async def move_in_queue(
+        context: AgentRequestContext, source_index: int, target_index: int
+    ) -> ToolResult:
+        try:
+            args = QueueMoveArguments(
+                source_index=source_index,
+                target_index=target_index,
+            )
+            await service.move_in_queue(
+                _music_context(context), args.source_index, args.target_index
+            )
+            return ToolResult.success("Queue position updated")
+        except (PydanticValidationError, PeaceMusicError) as exc:
+            return _failure(exc)
+
+    async def shuffle_queue(context: AgentRequestContext) -> ToolResult:
+        return await _run(service.shuffle_queue, context, "Queue shuffled")
+
+    async def clear_queue(context: AgentRequestContext) -> ToolResult:
+        try:
+            count = await service.clear_queue(_music_context(context))
+            return ToolResult.success("Queue cleared", data={"removed": count})
+        except PeaceMusicError as exc:
+            return _failure(exc)
+
     async def now_playing(context: AgentRequestContext) -> ToolResult:
         try:
             player = await service.player_state(context.guild_id or 0)
@@ -119,6 +163,10 @@ def build_music_tool_specs(service: MusicService) -> tuple[ToolSpec, ...]:
         ToolSpec("set_volume", ToolCategory.MUSIC, set_volume),
         ToolSpec("set_loop_mode", ToolCategory.MUSIC, set_loop_mode),
         ToolSpec("get_queue", ToolCategory.MUSIC, get_queue),
+        ToolSpec("remove_from_queue", ToolCategory.MUSIC, remove_from_queue),
+        ToolSpec("move_in_queue", ToolCategory.MUSIC, move_in_queue),
+        ToolSpec("shuffle_queue", ToolCategory.MUSIC, shuffle_queue),
+        ToolSpec("clear_queue", ToolCategory.MUSIC, clear_queue),
         ToolSpec("now_playing", ToolCategory.MUSIC, now_playing),
     )
 

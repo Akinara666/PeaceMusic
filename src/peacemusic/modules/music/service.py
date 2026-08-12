@@ -136,6 +136,26 @@ class MusicService:
     async def queue(self, context: MusicRequestContext) -> list[Track]:
         return (await self._player(context.guild_id)).queue.list()
 
+    async def remove_from_queue(
+        self, context: MusicRequestContext, index: int
+    ) -> Track:
+        await self._require(context, MusicCapability.QUEUE_REMOVE)
+        return (await self._player(context.guild_id)).queue.remove(index)
+
+    async def move_in_queue(
+        self, context: MusicRequestContext, source_index: int, target_index: int
+    ) -> None:
+        await self._require(context, MusicCapability.QUEUE_MOVE)
+        (await self._player(context.guild_id)).queue.move(source_index, target_index)
+
+    async def shuffle_queue(self, context: MusicRequestContext) -> None:
+        await self._require(context, MusicCapability.QUEUE_SHUFFLE)
+        (await self._player(context.guild_id)).queue.shuffle()
+
+    async def clear_queue(self, context: MusicRequestContext) -> int:
+        await self._require(context, MusicCapability.QUEUE_CLEAR)
+        return len((await self._player(context.guild_id)).queue.clear())
+
     async def player_state(self, guild_id: int) -> GuildPlayer:
         return await self._player(guild_id)
 
