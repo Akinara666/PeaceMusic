@@ -32,6 +32,7 @@ def test_app_settings_reads_operator_environment() -> None:
     assert settings.database.url == "postgresql://localhost/test"
     assert settings.gemini.allowed_models == ("gemini-test",)
     assert settings.limits.max_queue_size == 25
+    assert settings.discord_intents.message_content is True
 
 
 def test_app_settings_rejects_model_outside_operator_allowlist() -> None:
@@ -88,6 +89,31 @@ def test_health_server_reports_live_ready_and_metrics() -> None:
         assert ready.status == 200
         assert json.loads(ready.text) == {"status": "ready"}
         assert metrics.text == "peacemusic_test_metric 1\n"
+
+    asyncio.run(scenario())
+
+
+def test_health_server_start_stop_is_idempotent(monkeypatch) -> None:
+    async def scenario() -> None:
+        class Site:
+            def __init__(self, *_args, **_kwargs) -> None:
+                pass
+
+            async def start(self) -> None:
+                pass
+
+        monkeypatch.setattr("peacemusic.infrastructure.health.server.web.TCPSite", Site)
+        server = HealthServer(
+            host="127.0.0.1",
+            port=18081,
+            readiness_check=lambda: False,
+        )
+        await server.start()
+        await server.start()
+        not_ready = await server._ready(None)  # type: ignore[arg-type]
+        assert not_ready.status == 503
+        await server.stop()
+        await server.stop()
 
     asyncio.run(scenario())
 

@@ -67,6 +67,42 @@ def test_player_skip_button_calls_music_service_and_refreshes_message() -> None:
     asyncio.run(scenario())
 
 
+def test_player_buttons_share_pause_stop_and_shuffle_operations() -> None:
+    async def scenario() -> None:
+        manager = GuildPlayerManager()
+        service = MusicService(manager, Resolver(), AllowAllPermissionService())
+        player = await manager.get_or_create(123)
+        player.enqueue(Track("First", "first", 1))
+        player.enqueue(Track("Second", "second", 1))
+        view = PlayerView(service)
+
+        def make_interaction():
+            return SimpleNamespace(
+                guild=SimpleNamespace(id=123, voice_client=None),
+                user=SimpleNamespace(
+                    id=456,
+                    voice=None,
+                    roles=(),
+                    guild_permissions=SimpleNamespace(manage_guild=False),
+                ),
+                response=Response(),
+            )
+
+        for custom_id in (
+            "peacemusic_player_pause",
+            "peacemusic_player_shuffle",
+            "peacemusic_player_stop",
+        ):
+            button = next(
+                child for child in view.children if child.custom_id == custom_id
+            )
+            await button.callback(make_interaction())
+
+        assert player.status.value == "stopped"
+
+    asyncio.run(scenario())
+
+
 def test_music_command_reuses_persisted_player_message() -> None:
     class MusicServiceStub:
         async def play(self, _context, _query):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import pytest
 
 from peacemusic.modules.agent.conversation import (
     ConversationMessage,
@@ -40,3 +41,10 @@ def test_conversation_compaction_keeps_recent_context_and_summary() -> None:
     assert compacted[0].role == "system"
     assert "Earlier conversation summary" in compacted[0].content
     assert compacted[-1].content == "recent"
+
+
+def test_conversation_boundaries_reject_invalid_compaction_and_empty_windows() -> None:
+    repository = InMemoryConversationRepository()
+    assert asyncio.run(repository.recent("thread", limit=0)) == ()
+    with pytest.raises(ValueError):
+        compact_conversation((), max_tokens=0)

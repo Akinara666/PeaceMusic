@@ -2,12 +2,18 @@ from __future__ import annotations
 
 import asyncio
 
+import discord
 import pytest
 
 from peacemusic.core.errors import MediaExtractionError, PlaybackError, ValidationError
 from peacemusic.core.metrics import MetricsRegistry
 from peacemusic.infrastructure.media.buffered_source import BufferedAudioSource
+from peacemusic.infrastructure.media.ffmpeg import (
+    FFmpegAudioSourceFactory,
+    cleanup_audio_source,
+)
 from peacemusic.infrastructure.media.ytdlp import YtDlpMediaResolver
+from peacemusic.modules.music.models import Track
 from peacemusic.modules.music.recovery import PlaybackRecoveryService
 
 
@@ -119,3 +125,64 @@ def test_ytdlp_resolver_records_request_error_and_duration_metrics(monkeypatch) 
         assert "peacemusic_ytdlp_duration_seconds_count 1" in rendered
 
     asyncio.run(scenario())
+
+
+def test_ytdlp_resolver_translates_provider_failures_and_counts_errors(
+    monkeypatch,
+) -> None:
+    async def scenario() -> None:
+        metrics = MetricsRegistry()
+        resolver = YtDlpMediaResolver(
+            allowed_domains=("example.test",), metrics=metrics
+        )
+
+        def extract(_target: str):
+            raise RuntimeError("provider failed")
+
+        resolver._extract = extract  # type: ignore[method-assign]
+
+        async def immediate_to_thread(function, *args):
+            return function(*args)
+
+        monkeypatch.setattr(
+            "peacemusic.infrastructure.media.ytdlp.asyncio.to_thread",
+            immediate_to_thread,
+        )
+        with pytest.raises(MediaExtractionError):
+            await resolver.resolve("https://example.test/video")
+        assert "peacemusic_ytdlp_errors_total 1" in metrics.render()
+
+    asyncio.run(scenario())
+
+
+def test_ffmpeg_factory_builds_bounded_source_and_cleans_it(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class Raw:
+        def cleanup(self):
+            calls.append(("cleanup", {}))
+
+    class Wrapped:
+        def __init__(self, raw, *, volume):
+            self.raw = raw
+            self.volume = volume
+
+    def build(source, **kwargs):
+        calls.append((source, kwargs))
+        return Raw()
+
+    monkeypatch.setattr(discord, "FFmpegPCMAudio", build)
+    monkeypatch.setattr(discord, "PCMVolumeTransformer", Wrapped)
+
+    async def scenario() -> None:
+        source = await FFmpegAudioSourceFactory().create(
+            Track("song", "https://example.test/audio", 1), start_seconds=9
+        )
+        assert source.volume == 0.7
+        cleanup_audio_source(source.raw)
+        with pytest.raises(PlaybackError):
+            await FFmpegAudioSourceFactory().create(Track("bad", "", 1))
+
+    asyncio.run(scenario())
+    assert calls[0][1]["before_options"] == "-nostdin -ss 9"
+    assert calls[-1][0] == "cleanup"
