@@ -49,6 +49,7 @@ class AgentService:
         conversation_token_limit: int = 3000,
         rate_limiter: UserRateLimiter | None = None,
         max_tool_calls: int = 8,
+        max_model_calls: int = 4,
         attachment_preparer=None,
         direct_audio_handler: (
             Callable[[AgentRequestContext, AttachmentRef], Awaitable[Any]] | None
@@ -68,8 +69,11 @@ class AgentService:
         self._conversation_token_limit = conversation_token_limit
         if max_tool_calls < 1:
             raise ValueError("max_tool_calls must be positive")
+        if max_model_calls < 1:
+            raise ValueError("max_model_calls must be positive")
         self._rate_limiter = rate_limiter
         self._max_tool_calls = max_tool_calls
+        self._max_model_calls = max_model_calls
         self._attachment_preparer = attachment_preparer
         self._direct_audio_handler = direct_audio_handler
         self._workflow = OuterAgentWorkflow()
@@ -179,6 +183,11 @@ class AgentService:
                                 "guild_id": context.guild_id,
                                 "channel_id": context.channel_id,
                             },
+                            # LangGraph counts model and tool nodes as graph
+                            # steps; bound the total so model calls cannot loop.
+                            "recursion_limit": self._max_model_calls
+                            + self._max_tool_calls
+                            + 1,
                         },
                     )
                 except Exception as exc:  # noqa: BLE001 - provider boundary

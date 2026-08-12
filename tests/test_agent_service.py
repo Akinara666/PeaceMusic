@@ -112,7 +112,9 @@ def test_agent_service_reuses_bounded_thread_history() -> None:
             {"role": "user", "content": "second message"},
         ]
         assert config["configurable"]["thread_id"] == "guild:1:channel:2"
+
         assert config["metadata"]["request_id"] == "req-2"
+        assert config["recursion_limit"] == 13
         assert len(conversation.messages["guild:1:channel:2"]) == 4
 
     asyncio.run(scenario())
