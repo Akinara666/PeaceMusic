@@ -10,6 +10,7 @@ from peacemusic.adapters.discord.cogs.playlists import PlaylistCog
 from peacemusic.adapters.discord.cogs.chat import ChatCog
 from peacemusic.adapters.discord.cogs.settings import SettingsCog
 from peacemusic.adapters.discord.voice import DiscordVoiceGateway
+from peacemusic.adapters.discord.views.player import PlayerView
 from peacemusic.bootstrap.container import ApplicationContainer
 from peacemusic.infrastructure.media.ffmpeg import FFmpegAudioSourceFactory
 
@@ -35,6 +36,7 @@ class PeaceMusicV2Bot(commands.Bot):
         return self._ready
 
     async def setup_hook(self) -> None:
+        self.add_view(PlayerView(self.container.music))
         await self.add_cog(SettingsCog(self.container.guild_settings))
         await self.add_cog(
             MusicCog(self.container.music, getattr(self.container, "history", None))

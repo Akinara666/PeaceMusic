@@ -5,6 +5,7 @@ from __future__ import annotations
 import discord
 
 from peacemusic.modules.settings.ports import SettingsAuthorizer
+from peacemusic.modules.music.permissions import MusicRequestContext
 
 
 class DiscordSettingsAuthorizer(SettingsAuthorizer):
@@ -26,3 +27,23 @@ def is_guild_manager(interaction: discord.Interaction) -> bool:
 
     user = interaction.user
     return isinstance(user, discord.Member) and user.guild_permissions.manage_guild
+
+
+def music_request_context(interaction: discord.Interaction) -> MusicRequestContext:
+    """Convert a Discord interaction into the shared music request context."""
+
+    if interaction.guild is None:
+        raise ValueError("Music commands are only available in guilds")
+    member = interaction.user
+    user_voice = getattr(getattr(member, "voice", None), "channel", None)
+    bot_voice = getattr(
+        getattr(interaction.guild, "voice_client", None), "channel", None
+    )
+    permissions = getattr(member, "guild_permissions", None)
+    return MusicRequestContext(
+        guild_id=interaction.guild.id,
+        user_id=interaction.user.id,
+        user_voice_channel_id=getattr(user_voice, "id", None),
+        bot_voice_channel_id=getattr(bot_voice, "id", None),
+        can_manage_guild=bool(getattr(permissions, "manage_guild", False)),
+    )
