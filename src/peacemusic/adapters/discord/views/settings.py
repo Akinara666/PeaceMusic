@@ -27,7 +27,7 @@ class SettingsSectionSelect(discord.ui.Select["SettingsView"]):
 
 
 class SettingsView(discord.ui.View):
-    """Read-only navigation; all mutations belong to the service."""
+    """Settings navigation whose mutations are delegated to the service."""
 
     def __init__(
         self,
@@ -40,16 +40,58 @@ class SettingsView(discord.ui.View):
         self.service = service
         self.guild_id = guild_id
         self.actor_user_id = actor_user_id
+        self.section = "general"
         self.add_item(SettingsSectionSelect())
+
+    @discord.ui.button(label="Toggle AI", style=discord.ButtonStyle.secondary)
+    async def toggle_ai(
+        self, interaction: discord.Interaction, _button: discord.ui.Button
+    ) -> None:
+        await self._toggle(interaction, "ai", "enabled")
+
+    @discord.ui.button(label="Toggle autoplay", style=discord.ButtonStyle.secondary)
+    async def toggle_autoplay(
+        self, interaction: discord.Interaction, _button: discord.ui.Button
+    ) -> None:
+        await self._toggle(interaction, "music", "autoplay_enabled")
+
+    @discord.ui.button(label="Toggle memory", style=discord.ButtonStyle.secondary)
+    async def toggle_memory(
+        self, interaction: discord.Interaction, _button: discord.ui.Button
+    ) -> None:
+        await self._toggle(interaction, "memory", "enabled")
 
     async def show_section(
         self, interaction: discord.Interaction, section: str
     ) -> None:
+        if section not in _SECTIONS:
+            return
+        self.section = section
         settings = await self.service.get(self.guild_id)
         await interaction.response.edit_message(
             embed=settings_embed(settings, section=section),
             view=self,
         )
+
+    async def _toggle(
+        self, interaction: discord.Interaction, section: str, key: str
+    ) -> None:
+        try:
+            settings = await self.service.get(self.guild_id)
+            current = bool(getattr(getattr(settings, section), key))
+            updated = await self.service.update(
+                self.guild_id,
+                actor_user_id=self.actor_user_id,
+                section=section,
+                values={key: not current},
+            )
+            self.section = section
+            await interaction.response.edit_message(
+                embed=settings_embed(updated, section=section),
+                view=self,
+            )
+        except PeaceMusicError as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
 
 
 class SetupMusicChannelSelect(discord.ui.ChannelSelect):
@@ -137,11 +179,57 @@ class AISetupView(discord.ui.View):
 
     async def _finish(self, interaction: discord.Interaction, *, enabled: bool) -> None:
         try:
-            settings = await self.service.update(
+            await self.service.update(
                 self.guild_id,
                 actor_user_id=self.actor_user_id,
                 section="ai",
                 values={"enabled": enabled},
+            )
+            await interaction.response.edit_message(
+                content="Step 3/3 — Enable autoplay for this server?",
+                embed=None,
+                view=SetupAutoplayView(
+                    self.service,
+                    guild_id=self.guild_id,
+                    actor_user_id=self.actor_user_id,
+                ),
+            )
+        except PeaceMusicError as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
+
+
+class SetupAutoplayView(discord.ui.View):
+    def __init__(
+        self,
+        service: GuildSettingsService,
+        *,
+        guild_id: int,
+        actor_user_id: int,
+    ) -> None:
+        super().__init__(timeout=600)
+        self.service = service
+        self.guild_id = guild_id
+        self.actor_user_id = actor_user_id
+
+    @discord.ui.button(label="Enable autoplay", style=discord.ButtonStyle.success)
+    async def enable_autoplay(
+        self, interaction: discord.Interaction, _button: discord.ui.Button
+    ) -> None:
+        await self._finish(interaction, enabled=True)
+
+    @discord.ui.button(label="Keep autoplay off", style=discord.ButtonStyle.secondary)
+    async def disable_autoplay(
+        self, interaction: discord.Interaction, _button: discord.ui.Button
+    ) -> None:
+        await self._finish(interaction, enabled=False)
+
+    async def _finish(self, interaction: discord.Interaction, *, enabled: bool) -> None:
+        try:
+            settings = await self.service.update(
+                self.guild_id,
+                actor_user_id=self.actor_user_id,
+                section="music",
+                values={"autoplay_enabled": enabled},
             )
             await interaction.response.edit_message(
                 content="✅ PeaceMusic is configured. Use `/settings` to open the panel.",
