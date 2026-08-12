@@ -31,4 +31,4 @@ RUN groupadd --system peacemusic && \
 USER peacemusic
 
 # Run the bot
-CMD ["python", "-m", "peacemusic.main"]
+CMD ["sh", "-c", "alembic upgrade head && exec python -m peacemusic.main"]
