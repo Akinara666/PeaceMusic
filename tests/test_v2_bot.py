@@ -11,6 +11,7 @@ def test_v2_bot_uses_container_intents_and_service() -> None:
     container = SimpleNamespace(
         settings=SimpleNamespace(discord_intents=discord.Intents.none()),
         guild_settings=object(),
+        music=SimpleNamespace(attach_runtime=lambda **kwargs: None),
     )
 
     bot = PeaceMusicV2Bot(container)  # type: ignore[arg-type]
