@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, ValidationError as PydanticValidationErro
 
 from peacemusic.core.errors import PeaceMusicError
 from peacemusic.modules.agent.context import AgentRequestContext
+from peacemusic.modules.agent.music_context import music_context
 from peacemusic.modules.agent.results import ToolResult
 from peacemusic.modules.agent.tools import ToolCategory, ToolSpec
 from peacemusic.modules.music.permissions import MusicRequestContext
@@ -204,15 +205,7 @@ async def _run(operation, context: AgentRequestContext, message: str) -> ToolRes
 
 
 def _music_context(context: AgentRequestContext) -> MusicRequestContext:
-    return MusicRequestContext(
-        guild_id=context.guild_id or 0,
-        user_id=context.user_id,
-        user_voice_channel_id=context.user_voice_channel_id,
-        bot_voice_channel_id=context.bot_voice_channel_id,
-        can_manage_guild=context.can_manage_guild,
-        member_role_ids=context.member_role_ids,
-        dj_role_ids=context.dj_role_ids,
-    )
+    return music_context(context)
 
 
 def _failure(error: Exception) -> ToolResult:

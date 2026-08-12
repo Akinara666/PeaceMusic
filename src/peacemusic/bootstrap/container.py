@@ -17,6 +17,7 @@ from peacemusic.infrastructure.llm.langchain_agent import LangChainAgentFactory
 from peacemusic.modules.agent.coordinator import TurnCoordinator
 from peacemusic.modules.agent.limits import UserRateLimiter
 from peacemusic.modules.agent.memory_tools import build_memory_tool_specs
+from peacemusic.modules.agent.music_context import music_context
 from peacemusic.modules.agent.music_tools import build_music_tool_specs
 from peacemusic.modules.agent.service import AgentService
 from peacemusic.modules.agent.tools import ToolRegistry
@@ -182,6 +183,11 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
         conversation_repository=conversation,
         rate_limiter=rate_limiter,
         attachment_preparer=attachment_workflow,
+        direct_audio_handler=lambda context, attachment: music.play_direct_audio(
+            music_context(context),
+            title=attachment.filename,
+            url=attachment.url or "",
+        ),
     )
     health = HealthServer(
         host="0.0.0.0",
