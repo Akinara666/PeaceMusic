@@ -192,6 +192,26 @@ class MusicService:
         await self._record_audit(context, "DISCONNECT")
         self._increment_metric("peacemusic_music_disconnect_total")
 
+    async def connect(self, context: MusicRequestContext) -> None:
+        """Connect the guild player to the caller's current voice channel."""
+
+        await self._require(context, MusicCapability.CONNECT)
+        if self._voice_gateway is None:
+            raise ValidationError("Voice playback is not attached")
+        if context.user_voice_channel_id is None:
+            raise ValidationError("User must be in a voice channel")
+        await self._voice_gateway.connect(
+            context.guild_id, context.user_voice_channel_id
+        )
+        player = await self._player(context.guild_id)
+        player.attach_voice(context.user_voice_channel_id)
+        await self._record_audit(
+            context,
+            "CONNECT",
+            {"voice_channel_id": context.user_voice_channel_id},
+        )
+        self._increment_metric("peacemusic_music_connect_total")
+
     def _increment_metric(self, name: str) -> None:
         if self._metrics is not None:
             self._metrics.increment(name)

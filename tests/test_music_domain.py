@@ -120,6 +120,31 @@ def test_music_service_is_shared_operation_boundary() -> None:
     asyncio.run(scenario())
 
 
+def test_music_service_connects_voice_through_the_shared_boundary() -> None:
+    class Voice:
+        def __init__(self) -> None:
+            self.connected = []
+
+        async def connect(self, guild_id, channel_id):
+            self.connected.append((guild_id, channel_id))
+
+    async def scenario() -> None:
+        voice = Voice()
+        service = MusicService(
+            GuildPlayerManager(), Resolver(), Permissions(), voice_gateway=voice
+        )
+        context = MusicRequestContext(
+            guild_id=123, user_id=456, user_voice_channel_id=789
+        )
+
+        await service.connect(context)
+
+        assert voice.connected == [(123, 789)]
+        assert (await service.player_state(123)).voice_channel_id == 789
+
+    asyncio.run(scenario())
+
+
 def test_music_service_audits_side_effecting_operations() -> None:
     async def scenario() -> None:
         writer = InMemoryAuditWriter()
