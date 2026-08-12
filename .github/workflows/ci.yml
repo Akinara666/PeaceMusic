@@ -54,8 +54,42 @@ jobs:
       - name: Run tests with coverage
         run: uv run pytest --cov=src/peacemusic --cov-report=term-missing --cov-fail-under=80
 
-  build-and-push:
+  integration:
     needs: [lint, test]
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: peacemusic
+          POSTGRES_USER: peacemusic
+          POSTGRES_PASSWORD: peacemusic
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U peacemusic -d peacemusic"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v7
+      - name: Install dependencies
+        run: uv sync --locked --group dev
+      - name: Apply migrations
+        env:
+          DATABASE_URL: postgresql://peacemusic:peacemusic@localhost:5432/peacemusic
+        run: uv run alembic upgrade head
+      - name: Run PostgreSQL integration tests
+        env:
+          DATABASE_URL: postgresql://peacemusic:peacemusic@localhost:5432/peacemusic
+        run: uv run pytest -m integration -q
+
+  build-and-push:
+    needs: [lint, test, integration]
     runs-on: ubuntu-latest
     permissions:
       contents: read
