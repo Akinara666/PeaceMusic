@@ -36,7 +36,9 @@ class PeaceMusicV2Bot(commands.Bot):
 
     async def setup_hook(self) -> None:
         await self.add_cog(SettingsCog(self.container.guild_settings))
-        await self.add_cog(MusicCog(self.container.music))
+        await self.add_cog(
+            MusicCog(self.container.music, getattr(self.container, "history", None))
+        )
         playlist_service = getattr(self.container, "playlists", None)
         if playlist_service is not None:
             await self.add_cog(PlaylistCog(playlist_service))

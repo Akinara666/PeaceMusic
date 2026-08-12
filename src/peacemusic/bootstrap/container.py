@@ -23,10 +23,14 @@ from peacemusic.infrastructure.persistence.repositories.postgres_settings import
 from peacemusic.infrastructure.persistence.repositories.postgres_playlists import (
     PostgresPlaylistRepository,
 )
+from peacemusic.infrastructure.persistence.repositories.postgres_history import (
+    PostgresPlaybackHistoryRepository,
+)
 from peacemusic.adapters.discord.permissions import DiscordMusicPermissionService
 from peacemusic.modules.music.player_manager import GuildPlayerManager
 from peacemusic.modules.music.service import MusicService
 from peacemusic.modules.playlists.service import PlaylistService
+from peacemusic.modules.history.service import PlaybackHistoryService
 from peacemusic.modules.settings.service import GuildSettingsService
 
 
@@ -43,6 +47,7 @@ class ApplicationContainer:
     health: HealthServer
     _discord_ready: bool = False
     playlists: PlaylistService | None = None
+    history: PlaybackHistoryService | None = None
 
     async def start(self) -> None:
         await self.database.connect()
@@ -78,12 +83,14 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
         allowed_models=resolved_settings.gemini.allowed_models,
         audit_writer=settings_audit,
     )
+    history = PlaybackHistoryService(PostgresPlaybackHistoryRepository(database))
     music = MusicService(
         GuildPlayerManager(
             default_max_queue_size=resolved_settings.limits.max_queue_size
         ),
         YtDlpMediaResolver(),
         DiscordMusicPermissionService(),
+        history=history,
     )
     playlists = PlaylistService(
         PostgresPlaylistRepository(database),
@@ -115,6 +122,7 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
         tasks=tasks,
         health=health,
         playlists=playlists,
+        history=history,
     )
     health.set_readiness_check(container.is_ready)
     return container
