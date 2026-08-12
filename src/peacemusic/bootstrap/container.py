@@ -8,6 +8,11 @@ from peacemusic.core.config import AppSettings
 from peacemusic.core.tasks import TaskSupervisor
 from peacemusic.infrastructure.health.server import HealthServer
 from peacemusic.infrastructure.media.ytdlp import YtDlpMediaResolver
+from peacemusic.infrastructure.llm.langchain_agent import LangChainAgentFactory
+from peacemusic.modules.agent.coordinator import TurnCoordinator
+from peacemusic.modules.agent.music_tools import build_music_tool_specs
+from peacemusic.modules.agent.service import AgentService
+from peacemusic.modules.agent.tools import ToolRegistry
 from peacemusic.infrastructure.persistence.database import PostgresDatabase
 from peacemusic.infrastructure.persistence.repositories.postgres_audit import (
     PostgresSettingsAuditWriter,
@@ -29,6 +34,7 @@ class ApplicationContainer:
     database: PostgresDatabase
     guild_settings: GuildSettingsService
     music: MusicService
+    agent: AgentService
     tasks: TaskSupervisor
     health: HealthServer
     _discord_ready: bool = False
@@ -74,6 +80,18 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
         YtDlpMediaResolver(),
         DiscordMusicPermissionService(),
     )
+    tool_registry = ToolRegistry(build_music_tool_specs(music))
+    agent = AgentService(
+        settings_service=guild_settings,
+        tool_registry=tool_registry,
+        agent_factory=LangChainAgentFactory(
+            api_key=resolved_settings.gemini.api_key.get_secret_value(),
+            model_name=resolved_settings.gemini.response_model,
+        ),
+        coordinator=TurnCoordinator(
+            max_concurrent=resolved_settings.limits.max_concurrent_ai_turns,
+        ),
+    )
     health = HealthServer(
         host="0.0.0.0",
         port=resolved_settings.limits.health_server_port,
@@ -84,6 +102,7 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
         database=database,
         guild_settings=guild_settings,
         music=music,
+        agent=agent,
         tasks=tasks,
         health=health,
     )

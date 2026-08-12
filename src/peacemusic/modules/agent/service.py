@@ -35,6 +35,11 @@ class AgentService:
         self._factory = agent_factory
         self._coordinator = coordinator
 
+    async def get_settings(self, guild_id: int):
+        """Read effective settings for a Discord adapter policy check."""
+
+        return await self._settings.get(guild_id)
+
     async def handle(
         self,
         context: AgentRequestContext,
