@@ -44,9 +44,10 @@ def test_migration_revisions_form_one_linear_chain() -> None:
             None if down_revision.group(1) == "None" else down_revision.group(2)
         )
 
-    assert len(revisions) == 5
+    assert len(revisions) == 6
     assert revisions["0001_initial_schema"] is None
     assert revisions["0002_playlist_identity"] == "0001_initial_schema"
     assert revisions["0003_complete_guild_settings"] == "0002_playlist_identity"
     assert revisions["0004_memory_records"] == "0003_complete_guild_settings"
     assert revisions["0005_conversation_messages"] == "0004_memory_records"
+    assert revisions["0006_player_messages"] == "0005_conversation_messages"

@@ -8,6 +8,14 @@ from typing import Protocol
 from peacemusic.modules.music.models import ResolvedMedia, Track
 
 
+class PlayerMessageRepository(Protocol):
+    async def get(self, guild_id: int) -> tuple[int, int] | None:
+        """Return the persisted ``(channel_id, message_id)`` for a guild."""
+
+    async def save(self, guild_id: int, *, channel_id: int, message_id: int) -> None:
+        """Persist the current player message identity for a guild."""
+
+
 class MediaResolver(Protocol):
     async def resolve(self, query: str) -> ResolvedMedia:
         """Resolve a search query or trusted URL into playable metadata."""

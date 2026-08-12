@@ -11,6 +11,7 @@ from peacemusic.adapters.discord.context import music_request_context
 from peacemusic.adapters.discord.views.player import PlayerView
 from peacemusic.core.errors import PeaceMusicError
 from peacemusic.modules.music.models import LoopMode
+from peacemusic.modules.music.ports import PlayerMessageRepository
 from peacemusic.modules.music.permissions import MusicRequestContext
 from peacemusic.modules.music.service import MusicService
 from peacemusic.modules.history.service import PlaybackHistoryService
@@ -23,10 +24,12 @@ class MusicCog(commands.Cog):
         service: MusicService,
         history: PlaybackHistoryService | None = None,
         settings: GuildSettingsService | None = None,
+        player_messages: PlayerMessageRepository | None = None,
     ) -> None:
         self._service = service
         self._history = history
         self._settings = settings
+        self._player_messages = player_messages
 
     @staticmethod
     def _context(interaction: discord.Interaction) -> MusicRequestContext:
@@ -44,14 +47,47 @@ class MusicCog(commands.Cog):
         else:
             await interaction.response.send_message(message, ephemeral=True)
 
+    async def _publish_player(
+        self, interaction: discord.Interaction, embed: discord.Embed
+    ) -> None:
+        """Create or update the one persisted player message for a guild."""
+
+        guild = interaction.guild
+        channel = interaction.channel
+        if self._player_messages is not None and guild is not None:
+            stored = await self._player_messages.get(guild.id)
+            if stored is not None and stored[0] == getattr(channel, "id", None):
+                fetch_message = getattr(channel, "fetch_message", None)
+                if fetch_message is not None:
+                    try:
+                        message = await fetch_message(stored[1])
+                        await message.edit(embed=embed, view=PlayerView(self._service))
+                        await interaction.response.send_message(
+                            "Player updated.", ephemeral=True
+                        )
+                        return
+                    except Exception:  # noqa: BLE001 - stale Discord message
+                        pass
+
+        await interaction.response.send_message(
+            embed=embed, view=PlayerView(self._service)
+        )
+        if self._player_messages is not None and guild is not None:
+            original_response = getattr(interaction, "original_response", None)
+            if original_response is not None:
+                message = await original_response()
+                await self._player_messages.save(
+                    guild.id,
+                    channel_id=getattr(channel, "id", 0),
+                    message_id=message.id,
+                )
+
     @app_commands.command(name="play", description="Play or queue a track")
     @app_commands.guild_only()
     async def play(self, interaction: discord.Interaction, query: str) -> None:
         try:
             track = await self._service.play(self._context(interaction), query)
-            await interaction.response.send_message(
-                embed=track_embed(track), view=PlayerView(self._service)
-            )
+            await self._publish_player(interaction, track_embed(track))
         except PeaceMusicError as exc:
             await self._send_error(interaction, exc)
 
@@ -183,9 +219,7 @@ class MusicCog(commands.Cog):
             if interaction.guild is None:
                 raise PeaceMusicError("Music commands are only available in guilds")
             player = await self._service.player_state(interaction.guild.id)
-            await interaction.response.send_message(
-                embed=player_embed(player), view=PlayerView(self._service)
-            )
+            await self._publish_player(interaction, player_embed(player))
         except PeaceMusicError as exc:
             await self._send_error(interaction, exc)
 
