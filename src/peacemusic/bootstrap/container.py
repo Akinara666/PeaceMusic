@@ -34,6 +34,7 @@ from peacemusic.infrastructure.persistence.repositories.postgres_memory import (
 from peacemusic.adapters.discord.permissions import DiscordMusicPermissionService
 from peacemusic.modules.music.player_manager import GuildPlayerManager
 from peacemusic.modules.music.service import MusicService
+from peacemusic.modules.music.recovery import PlaybackRecoveryService
 from peacemusic.modules.playlists.service import PlaylistService
 from peacemusic.modules.history.service import PlaybackHistoryService
 from peacemusic.modules.memory.service import MemoryService
@@ -107,8 +108,8 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
         media_resolver,
         DiscordMusicPermissionService(),
         history=history,
-        memory=memory,
         autoplay=autoplay,
+        recovery=PlaybackRecoveryService(),
     )
     playlists = PlaylistService(
         PostgresPlaylistRepository(database),
@@ -141,6 +142,7 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
         health=health,
         playlists=playlists,
         history=history,
+        memory=memory,
     )
     health.set_readiness_check(container.is_ready)
     return container

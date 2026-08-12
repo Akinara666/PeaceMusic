@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
-from peacemusic.core.errors import PermissionDeniedError, ValidationError
+from peacemusic.core.errors import PermissionDeniedError, PlaybackError, ValidationError
 from peacemusic.modules.autoplay.service import AutoplayService
 from peacemusic.modules.history.service import PlaybackHistoryService
 from peacemusic.modules.music.models import (
@@ -25,6 +25,7 @@ from peacemusic.modules.music.ports import (
     MediaResolver,
     VoiceGateway,
 )
+from peacemusic.modules.music.recovery import PlaybackRecoveryService
 
 
 class MusicService:
@@ -40,6 +41,7 @@ class MusicService:
         audio_source_factory: AudioSourceFactory | None = None,
         history: PlaybackHistoryService | None = None,
         autoplay: AutoplayService | None = None,
+        recovery: PlaybackRecoveryService | None = None,
     ) -> None:
         self._players = player_manager
         self._resolver = resolver
@@ -48,6 +50,7 @@ class MusicService:
         self._audio_source_factory = audio_source_factory
         self._history = history
         self._autoplay = autoplay
+        self._recovery = recovery
         self._playback_tokens: dict[int, int] = {}
 
     def attach_runtime(
@@ -197,7 +200,6 @@ class MusicService:
             return
         token = self._playback_tokens.get(player.guild_id, 0) + 1
         self._playback_tokens[player.guild_id] = token
-        source = await self._audio_source_factory.create(track)
         loop = asyncio.get_running_loop()
 
         def after(error: Exception | None) -> None:
@@ -207,7 +209,20 @@ class MusicService:
                 )
             )
 
-        await self._voice_gateway.play(player.guild_id, source, after=after)
+        async def start(_attempt: int) -> None:
+            source = await self._audio_source_factory.create(track)
+            await self._voice_gateway.play(player.guild_id, source, after=after)
+
+        try:
+            if self._recovery is None:
+                await start(1)
+            else:
+                player.status = PlaybackStatus.RECOVERING
+                await self._recovery.run(start)
+                player.status = PlaybackStatus.PLAYING
+        except PlaybackError:
+            player.status = PlaybackStatus.FAILED
+            raise
 
     async def _handle_playback_finished(
         self, guild_id: int, token: int, error: Exception | None
@@ -216,6 +231,12 @@ class MusicService:
             return
         player = await self._player(guild_id)
         if error is not None:
+            if self._recovery is not None and player.current_track is not None:
+                try:
+                    await self._start_current(player)
+                except PlaybackError:
+                    return
+                return
             player.status = PlaybackStatus.FAILED
             return
         previous_track = player.current_track
