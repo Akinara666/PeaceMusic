@@ -33,6 +33,9 @@ from peacemusic.infrastructure.persistence.repositories.postgres_history import 
 from peacemusic.infrastructure.persistence.repositories.postgres_memory import (
     PostgresMemoryRepository,
 )
+from peacemusic.infrastructure.persistence.repositories.postgres_dj_roles import (
+    PostgresDJRoleRepository,
+)
 from peacemusic.adapters.discord.permissions import DiscordMusicPermissionService
 from peacemusic.modules.music.player_manager import GuildPlayerManager
 from peacemusic.modules.music.service import MusicService
@@ -55,6 +58,7 @@ class ApplicationContainer:
     tasks: TaskSupervisor
     health: HealthServer
     _discord_ready: bool = False
+    dj_roles: PostgresDJRoleRepository | None = None
     playlists: PlaylistService | None = None
     history: PlaybackHistoryService | None = None
     memory: MemoryService | None = None
@@ -95,6 +99,7 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
         allowed_models=resolved_settings.gemini.allowed_models,
         audit_writer=settings_audit,
     )
+    dj_roles = PostgresDJRoleRepository(database)
     history = PlaybackHistoryService(PostgresPlaybackHistoryRepository(database))
     memory = MemoryService(
         PostgresMemoryRepository(database),
@@ -110,7 +115,7 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
             default_max_queue_size=resolved_settings.limits.max_queue_size
         ),
         media_resolver,
-        DiscordMusicPermissionService(),
+        DiscordMusicPermissionService(dj_roles),
         history=history,
         autoplay=autoplay,
         recovery=PlaybackRecoveryService(),
@@ -142,6 +147,7 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
         settings=resolved_settings,
         database=database,
         guild_settings=guild_settings,
+        dj_roles=dj_roles,
         music=music,
         agent=agent,
         tasks=tasks,
