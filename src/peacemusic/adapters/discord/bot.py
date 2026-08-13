@@ -63,7 +63,13 @@ class PeaceMusicV2Bot(commands.Bot):
             await self.add_cog(PlaylistCog(playlist_service))
         memory_service = getattr(self.container, "memory", None)
         if memory_service is not None:
-            await self.add_cog(MemoryCog(memory_service, self.container.guild_settings))
+            await self.add_cog(
+                MemoryCog(
+                    memory_service,
+                    self.container.guild_settings,
+                    self.container.agent.clear_conversation,
+                )
+            )
         dj_roles = getattr(self.container, "dj_roles", None)
         if dj_roles is not None:
             await self.add_cog(DJCog(dj_roles))

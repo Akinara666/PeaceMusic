@@ -196,6 +196,7 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
         ),
         metrics=metrics,
         conversation_repository=conversation,
+        checkpoint_clearer=langgraph.clear_thread,
         rate_limiter=rate_limiter,
         attachment_preparer=attachment_workflow,
         direct_audio_handler=lambda context, attachment: music.play_direct_audio(

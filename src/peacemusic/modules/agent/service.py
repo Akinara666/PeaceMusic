@@ -15,6 +15,7 @@ from peacemusic.modules.agent.conversation import (
     ConversationMessage,
     ConversationRepository,
     compact_conversation,
+    conversation_thread_id,
 )
 from peacemusic.modules.agent.coordinator import TurnCoordinator
 from peacemusic.modules.agent.graph import OuterAgentWorkflow
@@ -44,6 +45,7 @@ class AgentService:
         coordinator: TurnCoordinator,
         metrics: MetricsRegistry | None = None,
         conversation_repository: ConversationRepository | None = None,
+        checkpoint_clearer: Callable[[str], Awaitable[None]] | None = None,
         conversation_limit: int = 20,
         conversation_token_limit: int = 3000,
         rate_limiter: UserRateLimiter | None = None,
@@ -62,6 +64,7 @@ class AgentService:
         if conversation_limit < 1:
             raise ValueError("conversation_limit must be positive")
         self._conversation = conversation_repository
+        self._checkpoint_clearer = checkpoint_clearer
         self._conversation_limit = conversation_limit
         if conversation_token_limit < 1:
             raise ValueError("conversation_token_limit must be positive")
@@ -252,6 +255,25 @@ class AgentService:
             )
         return response
 
+    async def clear_conversation(self, guild_id: int, channel_id: int) -> int:
+        """Clear short-term messages and the matching LangGraph thread."""
+
+        if guild_id <= 0 or channel_id <= 0:
+            raise ValueError("guild_id and channel_id must be positive")
+        thread_id = conversation_thread_id(guild_id, channel_id)
+
+        async def clear() -> int:
+            deleted = (
+                await self._conversation.clear(thread_id)
+                if self._conversation is not None
+                else 0
+            )
+            if self._checkpoint_clearer is not None:
+                await self._checkpoint_clearer(thread_id)
+            return deleted
+
+        return await self._coordinator.run(channel_id, clear)
+
     @asynccontextmanager
     async def _prepare_attachments(self, attachments):
         if self._attachment_preparer is None or not attachments:
@@ -264,7 +286,7 @@ class AgentService:
     def _thread_id(context: AgentRequestContext) -> str:
         if context.guild_id is None:
             return f"dm:{context.channel_id}"
-        return f"guild:{context.guild_id}:channel:{context.channel_id}"
+        return conversation_thread_id(context.guild_id, context.channel_id)
 
 
 def _content_to_text(content: Any) -> str:

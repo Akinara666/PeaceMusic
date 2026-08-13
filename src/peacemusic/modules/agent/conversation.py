@@ -30,6 +30,15 @@ class ConversationRepository(Protocol):
     async def append(self, thread_id: str, message: ConversationMessage) -> None:
         """Append one message to a thread."""
 
+    async def clear(self, thread_id: str) -> int:
+        """Delete all persisted messages for a thread and return the count."""
+
+
+def conversation_thread_id(guild_id: int, channel_id: int) -> str:
+    """Return the stable short-term conversation key for a guild channel."""
+
+    return f"guild:{guild_id}:channel:{channel_id}"
+
 
 def compact_conversation(
     messages: Sequence[ConversationMessage], *, max_tokens: int
@@ -79,3 +88,7 @@ class InMemoryConversationRepository:
 
     async def append(self, thread_id: str, message: ConversationMessage) -> None:
         self.messages[thread_id].append(message)
+
+    async def clear(self, thread_id: str) -> int:
+        messages = self.messages.pop(thread_id, [])
+        return len(messages)

@@ -74,6 +74,14 @@ class PostgresConversationRepository:
                     self._max_messages,
                 )
 
+    async def clear(self, thread_id: str) -> int:
+        async with self._database.acquire() as connection:
+            result = await connection.execute(
+                "DELETE FROM conversation_messages WHERE thread_id = $1",
+                thread_id,
+            )
+        return int(result.split()[-1])
+
     @staticmethod
     def _message(row: Any) -> ConversationMessage:
         return ConversationMessage(

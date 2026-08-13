@@ -10,7 +10,10 @@ from peacemusic.core.errors import ExternalServiceError
 from peacemusic.infrastructure.persistence.repositories.in_memory_settings import (
     InMemoryGuildSettingsRepository,
 )
-from peacemusic.modules.agent.conversation import InMemoryConversationRepository
+from peacemusic.modules.agent.conversation import (
+    ConversationMessage,
+    InMemoryConversationRepository,
+)
 from peacemusic.modules.agent.limits import UserRateLimiter
 from peacemusic.core.metrics import MetricsRegistry
 from peacemusic.modules.agent.context import AgentRequestContext
@@ -157,6 +160,34 @@ def test_agent_service_reuses_bounded_thread_history() -> None:
         assert config["metadata"]["request_id"] == "req-2"
         assert config["recursion_limit"] == 13
         assert len(conversation.messages["guild:1:channel:2"]) == 4
+
+    asyncio.run(scenario())
+
+
+def test_agent_service_clears_messages_and_checkpoint_for_channel() -> None:
+    async def scenario() -> None:
+        settings = GuildSettingsService(InMemoryGuildSettingsRepository())
+        conversation = InMemoryConversationRepository()
+        await conversation.append(
+            "guild:1:channel:2", ConversationMessage("user", "old message")
+        )
+        cleared_threads: list[str] = []
+
+        async def clear_checkpoint(thread_id: str) -> None:
+            cleared_threads.append(thread_id)
+
+        service = AgentService(
+            settings_service=settings,
+            tool_registry=ToolRegistry(),
+            agent_factory=FakeFactory(),
+            coordinator=TurnCoordinator(timeout_seconds=1),
+            conversation_repository=conversation,
+            checkpoint_clearer=clear_checkpoint,
+        )
+
+        assert await service.clear_conversation(1, 2) == 1
+        assert await conversation.recent("guild:1:channel:2", limit=10) == ()
+        assert cleared_threads == ["guild:1:channel:2"]
 
     asyncio.run(scenario())
 
