@@ -32,9 +32,11 @@ class MusicCog(commands.Cog):
         self._player_messages = player_messages
 
     @staticmethod
-    def _context(interaction: discord.Interaction) -> MusicRequestContext:
+    def _context(
+        interaction: discord.Interaction, *, notify_queue: bool = True
+    ) -> MusicRequestContext:
         try:
-            return music_request_context(interaction)
+            return music_request_context(interaction, notify_queue=notify_queue)
         except ValueError as exc:
             raise PeaceMusicError(str(exc)) from exc
 
@@ -86,7 +88,9 @@ class MusicCog(commands.Cog):
     @app_commands.guild_only()
     async def play(self, interaction: discord.Interaction, query: str) -> None:
         try:
-            track = await self._service.play(self._context(interaction), query)
+            track = await self._service.play(
+                self._context(interaction, notify_queue=False), query
+            )
             await self._publish_player(interaction, track_embed(track))
         except PeaceMusicError as exc:
             await self._send_error(interaction, exc)
