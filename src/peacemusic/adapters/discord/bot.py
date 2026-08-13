@@ -13,6 +13,9 @@ from peacemusic.adapters.discord.cogs.chat import ChatCog
 from peacemusic.adapters.discord.cogs.access import AccessCog
 from peacemusic.adapters.discord.cogs.settings import SettingsCog
 from peacemusic.adapters.discord.context import DiscordSettingsAuthorizer
+from peacemusic.adapters.discord.music_notifications import (
+    DiscordQueueNotificationPublisher,
+)
 from peacemusic.adapters.discord.voice import DiscordVoiceGateway
 from peacemusic.adapters.discord.views.player import PlayerView
 from peacemusic.bootstrap.container import ApplicationContainer
@@ -36,6 +39,13 @@ class PeaceMusicV2Bot(commands.Bot):
             voice_gateway=DiscordVoiceGateway(self),
             audio_source_factory=FFmpegAudioSourceFactory(),
         )
+        attach_notifications = getattr(
+            self.container.music, "attach_queue_notification_publisher", None
+        )
+        if attach_notifications is not None:
+            attach_notifications(
+                DiscordQueueNotificationPublisher(self, self.container.guild_settings)
+            )
         self._ready = False
 
     @property

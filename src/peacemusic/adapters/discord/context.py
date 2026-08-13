@@ -29,7 +29,9 @@ def is_guild_manager(interaction: discord.Interaction) -> bool:
     return isinstance(user, discord.Member) and user.guild_permissions.manage_guild
 
 
-def music_request_context(interaction: discord.Interaction) -> MusicRequestContext:
+def music_request_context(
+    interaction: discord.Interaction, *, notify_queue: bool = True
+) -> MusicRequestContext:
     """Convert a Discord interaction into the shared music request context."""
 
     if interaction.guild is None:
@@ -48,4 +50,6 @@ def music_request_context(interaction: discord.Interaction) -> MusicRequestConte
         bot_voice_channel_id=getattr(bot_voice, "id", None),
         can_manage_guild=bool(getattr(permissions, "manage_guild", False)),
         member_role_ids=role_ids,
+        text_channel_id=getattr(getattr(interaction, "channel", None), "id", None),
+        notify_queue=notify_queue,
     )

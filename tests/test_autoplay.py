@@ -77,6 +77,17 @@ class Audio:
         return f"source:{track.title}"
 
 
+class Publisher:
+    def __init__(self) -> None:
+        self.tracks: list[str] = []
+
+    async def publish_track_queued(
+        self, _context, track, *, queue_position, now_playing
+    ) -> None:
+        del queue_position, now_playing
+        self.tracks.append(track.title)
+
+
 def test_autoplay_honors_guild_setting_and_preserves_requester() -> None:
     async def scenario() -> None:
         previous = Track(
@@ -117,6 +128,7 @@ def test_music_service_requests_autoplay_when_queue_finishes() -> None:
         )
         autoplay = AutoplayService(provider, Settings(True))  # type: ignore[arg-type]
         voice = Voice()
+        publisher = Publisher()
         service = MusicService(
             GuildPlayerManager(),
             Resolver(),
@@ -125,6 +137,7 @@ def test_music_service_requests_autoplay_when_queue_finishes() -> None:
             audio_source_factory=Audio(),
             autoplay=autoplay,
         )
+        service.attach_queue_notification_publisher(publisher)  # type: ignore[arg-type]
         context = MusicRequestContext(
             guild_id=1,
             user_id=42,
@@ -137,5 +150,6 @@ def test_music_service_requests_autoplay_when_queue_finishes() -> None:
         await asyncio.sleep(0)
 
         assert voice.played == ["source:Previous", "source:Recommended"]
+        assert publisher.tracks == ["Previous", "Recommended"]
 
     asyncio.run(scenario())

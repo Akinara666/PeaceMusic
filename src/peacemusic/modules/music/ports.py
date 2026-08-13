@@ -6,6 +6,7 @@ from collections.abc import Callable
 from typing import Protocol
 
 from peacemusic.modules.music.models import ResolvedMedia, Track
+from peacemusic.modules.music.permissions import MusicRequestContext
 
 
 class PlayerMessageRepository(Protocol):
@@ -14,6 +15,18 @@ class PlayerMessageRepository(Protocol):
 
     async def save(self, guild_id: int, *, channel_id: int, message_id: int) -> None:
         """Persist the current player message identity for a guild."""
+
+
+class QueueNotificationPublisher(Protocol):
+    async def publish_track_queued(
+        self,
+        context: "MusicRequestContext",
+        track: Track,
+        *,
+        queue_position: int | None,
+        now_playing: bool,
+    ) -> None:
+        """Publish a user-facing notification after a track enters the queue."""
 
 
 class MediaResolver(Protocol):

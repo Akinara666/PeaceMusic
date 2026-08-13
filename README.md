@@ -387,6 +387,12 @@ memory behavior, and the per-server system prompt. Values are converted and
 validated before being written to PostgreSQL, and invalid values or values
 outside operator safety limits are rejected with an ephemeral error.
 
+Music queue announcements are rich embeds with the track title, source link,
+thumbnail, uploader, duration, requester, and queue position. They are sent
+for slash commands, AI music tools, playlists, and autoplay; the Music
+`track_announce` option and General `notifications_enabled` option control
+whether they are visible for a guild.
+
 Discord channel fields accept a channel ID; leave an optional channel field
 blank to clear it. Boolean fields accept `true`/`false` (also `yes`/`no` or
 `on`/`off`), and loop mode accepts `off`, `track`, or `queue`. The panel is

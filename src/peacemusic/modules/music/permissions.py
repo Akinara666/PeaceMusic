@@ -35,6 +35,8 @@ class MusicRequestContext:
     can_manage_guild: bool = False
     member_role_ids: tuple[int, ...] = ()
     dj_role_ids: tuple[int, ...] = ()
+    text_channel_id: int | None = None
+    notify_queue: bool = True
 
     @property
     def has_dj_role(self) -> bool:
