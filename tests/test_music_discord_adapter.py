@@ -80,9 +80,29 @@ def test_discord_music_permissions_load_persistent_dj_roles() -> None:
 
 
 def test_music_presenters_render_track_and_player_state() -> None:
-    track = Track(title="Example", source_url="https://example.test", requested_by=1)
+    track = Track(
+        title="Example",
+        source_url="https://example.test",
+        requested_by=1,
+        webpage_url="https://example.test/watch",
+        thumbnail="https://example.test/thumb.jpg",
+        uploader="Example Artist",
+        duration=125,
+    )
     player = GuildPlayer(1)
     player.enqueue(track)
 
-    assert track_embed(track).title == "Example"
+    embed = track_embed(track, queue_position=2)
+    assert embed.title == "Example"
+    assert embed.url == "https://example.test/watch"
+    assert embed.thumbnail.url == "https://example.test/thumb.jpg"
+    assert {field.name for field in embed.fields} == {
+        "Artist / channel",
+        "Duration",
+        "Requested by",
+        "Queue",
+    }
+    assert next(field for field in embed.fields if field.name == "Duration").value == (
+        "2:05"
+    )
     assert "Now playing" in (player_embed(player).description or "")

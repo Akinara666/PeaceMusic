@@ -120,6 +120,38 @@ def test_music_service_is_shared_operation_boundary() -> None:
     asyncio.run(scenario())
 
 
+def test_music_service_publishes_queue_notification_after_enqueue() -> None:
+    class Publisher:
+        def __init__(self) -> None:
+            self.events = []
+
+        async def publish_track_queued(
+            self, context, track, *, queue_position, now_playing
+        ):
+            self.events.append(
+                (context.text_channel_id, track.title, queue_position, now_playing)
+            )
+
+    async def scenario() -> None:
+        publisher = Publisher()
+        service = MusicService(GuildPlayerManager(), Resolver(), Permissions())
+        service.attach_queue_notification_publisher(publisher)  # type: ignore[arg-type]
+        context = MusicRequestContext(guild_id=123, user_id=456, text_channel_id=789)
+
+        await service.play(context, "calm music")
+        await service.enqueue_track(
+            context,
+            Track("queued", "https://example.test/queued", requested_by=456),
+        )
+
+        assert publisher.events == [
+            (789, "calm music", None, True),
+            (789, "queued", 1, False),
+        ]
+
+    asyncio.run(scenario())
+
+
 def test_music_service_connects_voice_through_the_shared_boundary() -> None:
     class Voice:
         def __init__(self) -> None:

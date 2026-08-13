@@ -28,6 +28,7 @@ from peacemusic.modules.music.player_manager import GuildPlayerManager
 from peacemusic.modules.music.ports import (
     AudioSourceFactory,
     MediaResolver,
+    QueueNotificationPublisher,
     VoiceGateway,
 )
 from peacemusic.modules.music.recovery import PlaybackRecoveryService
@@ -67,6 +68,8 @@ class MusicService:
         self._metrics = metrics
         self._playback_tokens: dict[int, int] = {}
         self._idle_disconnect_tasks: dict[int, asyncio.Task[None]] = {}
+        self._queue_notifications: QueueNotificationPublisher | None = None
+        self._last_request_context: dict[int, MusicRequestContext] = {}
 
     def attach_runtime(
         self,
@@ -78,6 +81,13 @@ class MusicService:
 
         self._voice_gateway = voice_gateway
         self._audio_source_factory = audio_source_factory
+
+    def attach_queue_notification_publisher(
+        self, publisher: QueueNotificationPublisher
+    ) -> None:
+        """Attach an adapter that announces successful queue additions."""
+
+        self._queue_notifications = publisher
 
     async def play(self, context: MusicRequestContext, query: str) -> Track:
         if self._voice_gateway is not None and context.user_voice_channel_id is None:
@@ -137,6 +147,19 @@ class MusicService:
         self._increment_metric("peacemusic_music_play_total")
         if self._voice_gateway is not None and was_idle:
             await self._start_current(player)
+        notification_context = (
+            replace(context, notify_queue=True)
+            if isinstance(context, MusicRequestContext)
+            else context
+        )
+        self._last_request_context[context.guild_id] = notification_context
+        if getattr(context, "notify_queue", True):
+            await self._publish_track_queued(
+                notification_context,
+                track,
+                queue_position=None if was_idle else len(player.queue.list()),
+                now_playing=was_idle,
+            )
 
     async def resolve_track(self, context: MusicRequestContext, query: str) -> Track:
         """Resolve metadata without enqueueing it into a live player."""
@@ -385,17 +408,51 @@ class MusicService:
             extra={"guild_id": guild_id},
         )
         next_track = player.start_next()
+        autoplay_track: Track | None = None
         if next_track is None and self._autoplay is not None and previous_track:
             candidate = await self._autoplay.next(guild_id, previous_track)
             if candidate is not None:
+                autoplay_track = candidate
                 player.enqueue(candidate)
                 next_track = player.current_track
                 if self._history is not None:
                     await self._history.record(guild_id, candidate)
         if next_track is not None:
             await self._start_current(player)
+            if autoplay_track is not None:
+                context = self._last_request_context.get(guild_id)
+                if context is not None:
+                    await self._publish_track_queued(
+                        context,
+                        autoplay_track,
+                        queue_position=None,
+                        now_playing=True,
+                    )
         elif self._voice_gateway is not None:
             self._schedule_idle_disconnect(guild_id)
+
+    async def _publish_track_queued(
+        self,
+        context: MusicRequestContext,
+        track: Track,
+        *,
+        queue_position: int | None,
+        now_playing: bool,
+    ) -> None:
+        if self._queue_notifications is None:
+            return
+        try:
+            await self._queue_notifications.publish_track_queued(
+                context,
+                track,
+                queue_position=queue_position,
+                now_playing=now_playing,
+            )
+        except Exception:  # noqa: BLE001 - notifications must not break playback
+            logger.exception(
+                "Track queue notification failed",
+                extra={"guild_id": context.guild_id, "track": track.title},
+            )
 
     def _invalidate_playback(self, guild_id: int) -> None:
         self._playback_tokens[guild_id] = self._playback_tokens.get(guild_id, 0) + 1
