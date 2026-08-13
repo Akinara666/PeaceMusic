@@ -34,6 +34,7 @@ class Track:
     uploader: str | None = None
     duration: int | None = None
     stream_url: str | None = None
+    http_headers: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,3 +48,4 @@ class ResolvedMedia:
     uploader: str | None = None
     duration: int | None = None
     stream_url: str | None = None
+    http_headers: tuple[tuple[str, str], ...] = ()

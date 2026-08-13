@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import time
+from collections.abc import Mapping
 from urllib.parse import urlparse
 from typing import Any
 
@@ -168,6 +169,18 @@ class YtDlpMediaResolver:
         ):
             raise MediaExtractionError("Resolved media has no direct stream URL")
         duration = data.get("duration")
+        raw_headers = data.get("http_headers")
+        http_headers = (
+            tuple(
+                sorted(
+                    (str(name), str(value))
+                    for name, value in raw_headers.items()
+                    if str(name).strip() and str(value).strip()
+                )
+            )
+            if isinstance(raw_headers, Mapping)
+            else ()
+        )
         return ResolvedMedia(
             title=title,
             source_url=source_url,
@@ -176,4 +189,5 @@ class YtDlpMediaResolver:
             uploader=data.get("uploader") or data.get("channel"),
             duration=int(duration) if isinstance(duration, (int, float)) else None,
             stream_url=stream_url,
+            http_headers=http_headers,
         )

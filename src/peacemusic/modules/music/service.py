@@ -335,8 +335,8 @@ class MusicService:
         track = player.current_track
         if track is None:
             return
-        if track.stream_url is None:
-            media = await self._resolver.resolve(track.source_url)
+        if track.webpage_url is not None or track.stream_url is None:
+            media = await self._resolver.resolve(track.webpage_url or track.source_url)
             resolved = self._track_from_media(media, requested_by=track.requested_by)
             track = replace(resolved, title=track.title)
             player.current_track = track
@@ -502,4 +502,5 @@ class MusicService:
             uploader=media.uploader,
             duration=media.duration,
             stream_url=media.stream_url,
+            http_headers=media.http_headers,
         )
