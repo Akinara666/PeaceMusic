@@ -159,6 +159,9 @@ def test_music_commands_delegate_to_music_service() -> None:
 
 
 class MemoryStub:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, object]]] = []
+
     async def count_user(self, **_kwargs):
         return 2
 
@@ -166,11 +169,13 @@ class MemoryStub:
         return 1
 
     async def clear_channel(self, **_kwargs):
+        self.calls.append(("clear_channel", _kwargs))
         if not _kwargs["can_manage_guild"]:
             raise PermissionDeniedError("Manage Server permission is required")
         return 1
 
     async def clear_user(self, **_kwargs):
+        self.calls.append(("clear_user", _kwargs))
         return 1
 
 
@@ -181,9 +186,14 @@ def test_memory_and_admin_commands_render_safe_responses() -> None:
         await memory.status.callback(memory, status)
         await memory.stats.callback(memory, interaction(manager=True))
         await memory.forget.callback(memory, interaction(), "memory")
-        await memory.clear_channel.callback(memory, interaction(manager=True), 2)
+        await memory.clear_channel.callback(memory, interaction(manager=True))
         await memory.clear_user.callback(memory, interaction(manager=True), 4)
         assert status.response.messages
+
+        clear_call = next(
+            call for call in memory._service.calls if call[0] == "clear_channel"
+        )
+        assert clear_call[1]["channel_id"] == 2
 
         roles = SimpleNamespace(
             add_role=lambda *args: asyncio.sleep(0),

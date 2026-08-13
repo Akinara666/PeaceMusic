@@ -66,11 +66,10 @@ class MemoryCog(commands.Cog):
 
     @memory.command(name="clear-channel", description="Clear a channel's memories")
     @app_commands.guild_only()
-    async def clear_channel(
-        self, interaction: discord.Interaction, channel_id: int
-    ) -> None:
+    async def clear_channel(self, interaction: discord.Interaction) -> None:
         try:
             guild_id, user_id = self._ids(interaction)
+            channel_id = self._channel_id(interaction)
             deleted = await self._service.clear_channel(
                 guild_id=guild_id,
                 actor_user_id=user_id,
@@ -115,6 +114,13 @@ class MemoryCog(commands.Cog):
                 False,
             )
         )
+
+    @staticmethod
+    def _channel_id(interaction: discord.Interaction) -> int:
+        channel_id = getattr(getattr(interaction, "channel", None), "id", None)
+        if not isinstance(channel_id, int) or channel_id <= 0:
+            raise PeaceMusicError("This command must be used in a Discord channel")
+        return channel_id
 
     @staticmethod
     async def _send_error(interaction: discord.Interaction, error: Exception) -> None:
