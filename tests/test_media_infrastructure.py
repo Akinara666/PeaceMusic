@@ -44,12 +44,20 @@ def test_ytdlp_metadata_is_translated_to_domain_model() -> None:
             "duration": 12.5,
             "uploader": "Artist",
             "url": "https://cdn.example.test/audio",
+            "http_headers": {
+                "User-Agent": "ExampleBrowser/1.0",
+                "Referer": "https://example.test/",
+            },
         }
     )
 
     assert media.title == "Example"
     assert media.duration == 12
     assert media.stream_url == "https://cdn.example.test/audio"
+    assert media.http_headers == (
+        ("Referer", "https://example.test/"),
+        ("User-Agent", "ExampleBrowser/1.0"),
+    )
 
     with pytest.raises(MediaExtractionError, match="no source"):
         YtDlpMediaResolver._to_media({"title": "No URL"})
@@ -243,6 +251,9 @@ def test_ffmpeg_factory_builds_bounded_source_and_cleans_it(monkeypatch) -> None
     calls: list[tuple[str, dict[str, object]]] = []
 
     class Raw:
+        def read(self):
+            return b"first audio frame"
+
         def cleanup(self):
             calls.append(("cleanup", {}))
 
@@ -265,6 +276,7 @@ def test_ffmpeg_factory_builds_bounded_source_and_cleans_it(monkeypatch) -> None
                 "https://example.test/video",
                 1,
                 stream_url="https://cdn.example.test/audio",
+                http_headers=(("User-Agent", "ExampleBrowser/1.0"),),
             ),
             start_seconds=9,
         )
@@ -280,5 +292,7 @@ def test_ffmpeg_factory_builds_bounded_source_and_cleans_it(monkeypatch) -> None
     assert "-reconnect_delay_max 5" in before_options
     assert "-reconnect_on_network_error 1" in before_options
     assert "-reconnect_on_http_error 4xx,5xx" in before_options
+    assert "-headers" in before_options
+    assert "User-Agent: ExampleBrowser/1.0" in before_options
     assert before_options.endswith("-ss 9")
     assert calls[-1][0] == "cleanup"

@@ -50,6 +50,17 @@ class FlakyAudioFactory(AudioFactory):
         return await super().create(track, start_seconds=start_seconds)
 
 
+class RefreshingResolver(Resolver):
+    async def resolve(self, query: str) -> ResolvedMedia:
+        self.calls.append(query)
+        return ResolvedMedia(
+            title="Fresh track",
+            source_url="https://youtube.com/watch?v=fresh",
+            webpage_url="https://youtube.com/watch?v=fresh",
+            stream_url="https://googlevideo.example/fresh",
+        )
+
+
 class VoiceGateway:
     def __init__(self) -> None:
         self.connected: list[tuple[int, int]] = []
@@ -113,6 +124,32 @@ def test_music_service_starts_voice_playback_and_advances_after_callback() -> No
         await service.resume(context)
         await service.set_volume(context, 55)
         assert voice.actions[-3:] == ["pause", "resume", "volume:55"]
+
+    asyncio.run(scenario())
+
+
+def test_music_service_refreshes_expiring_stream_before_starting_playback() -> None:
+    async def scenario() -> None:
+        resolver = RefreshingResolver()
+        service = MusicService(
+            GuildPlayerManager(),
+            resolver,
+            AllowAllPermissionService(),
+            voice_gateway=VoiceGateway(),
+            audio_source_factory=AudioFactory(),
+        )
+        context = MusicRequestContext(
+            guild_id=1,
+            user_id=2,
+            user_voice_channel_id=3,
+        )
+
+        await service.play(context, "fresh query")
+
+        assert resolver.calls == [
+            "fresh query",
+            "https://youtube.com/watch?v=fresh",
+        ]
 
     asyncio.run(scenario())
 
