@@ -77,6 +77,13 @@ class LangGraphPersistence:
         self._store = None
         self._checkpointer = None
 
+    async def clear_thread(self, thread_id: str) -> None:
+        """Delete all LangGraph checkpoints for one conversation thread."""
+
+        if self._checkpointer is None:
+            raise RuntimeError("LangGraph persistence has not started")
+        await self._checkpointer.adelete_thread(thread_id)
+
 
 def to_psycopg_database_url(database_url: str) -> str:
     """Convert the application's asyncpg URL into a psycopg-compatible URL."""

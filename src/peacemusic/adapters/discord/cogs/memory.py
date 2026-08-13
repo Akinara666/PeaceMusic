@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -18,9 +20,11 @@ class MemoryCog(commands.Cog):
         self,
         service: MemoryService,
         settings: GuildSettingsService,
+        conversation_clearer: Callable[[int, int], Awaitable[int]] | None = None,
     ) -> None:
         self._service = service
         self._settings = settings
+        self._conversation_clearer = conversation_clearer
 
     @memory.command(name="status", description="Show memory status")
     @app_commands.guild_only()
@@ -78,6 +82,27 @@ class MemoryCog(commands.Cog):
             )
             await interaction.response.send_message(
                 f"Cleared {deleted} channel memory record(s).", ephemeral=True
+            )
+        except PeaceMusicError as exc:
+            await self._send_error(interaction, exc)
+
+    @memory.command(
+        name="clear-history",
+        description="Clear this channel's short-term AI conversation history",
+    )
+    @app_commands.guild_only()
+    async def clear_history(self, interaction: discord.Interaction) -> None:
+        try:
+            if self._conversation_clearer is None:
+                raise PeaceMusicError("Short-term conversation history is unavailable")
+            guild_id, _user_id = self._ids(interaction)
+            channel_id = self._channel_id(interaction)
+            if not self._can_manage(interaction):
+                raise PeaceMusicError("Manage Server permission is required")
+            deleted = await self._conversation_clearer(guild_id, channel_id)
+            await interaction.response.send_message(
+                f"Cleared {deleted} short-term conversation message(s) and reset the AI thread.",
+                ephemeral=True,
             )
         except PeaceMusicError as exc:
             await self._send_error(interaction, exc)

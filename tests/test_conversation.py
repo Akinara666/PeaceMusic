@@ -7,6 +7,7 @@ from peacemusic.modules.agent.conversation import (
     ConversationMessage,
     InMemoryConversationRepository,
     compact_conversation,
+    conversation_thread_id,
 )
 
 
@@ -48,3 +49,20 @@ def test_conversation_boundaries_reject_invalid_compaction_and_empty_windows() -
     assert asyncio.run(repository.recent("thread", limit=0)) == ()
     with pytest.raises(ValueError):
         compact_conversation((), max_tokens=0)
+
+
+def test_in_memory_conversation_repository_clears_one_thread_only() -> None:
+    async def scenario() -> None:
+        repository = InMemoryConversationRepository()
+        current = conversation_thread_id(1, 2)
+        other = conversation_thread_id(1, 3)
+        await repository.append(current, ConversationMessage("user", "clear me"))
+        await repository.append(other, ConversationMessage("user", "keep me"))
+
+        assert await repository.clear(current) == 1
+        assert await repository.recent(current, limit=10) == ()
+        assert [
+            message.content for message in await repository.recent(other, limit=10)
+        ] == ["keep me"]
+
+    asyncio.run(scenario())

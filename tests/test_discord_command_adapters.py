@@ -207,6 +207,28 @@ def test_memory_and_admin_commands_render_safe_responses() -> None:
     asyncio.run(scenario())
 
 
+def test_clear_history_uses_current_channel_and_requires_manager() -> None:
+    async def scenario() -> None:
+        calls: list[tuple[int, int]] = []
+
+        async def clear_history(guild_id: int, channel_id: int) -> int:
+            calls.append((guild_id, channel_id))
+            return 2
+
+        memory = MemoryCog(  # type: ignore[arg-type]
+            MemoryStub(), SettingsStub(), clear_history
+        )
+        await memory.clear_history.callback(memory, interaction(manager=True))
+
+        assert calls == [(1, 2)]
+
+        denied = interaction(manager=False)
+        await memory.clear_history.callback(memory, denied)
+        assert "Manage Server" in str(denied.response.messages[-1])
+
+    asyncio.run(scenario())
+
+
 def test_settings_and_playlist_adapters_construct_with_services() -> None:
     assert SettingsCog(SettingsStub())
     assert PlaylistCog(object())

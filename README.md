@@ -374,6 +374,7 @@ Manage Server unless noted otherwise.
 | --- | --- |
 | `/setup` | Run the initial seven-step guild setup wizard. |
 | `/settings` | Open the interactive settings panel. |
+| `/memory clear-history` | Delete this channel's short-term AI conversation history and reset its LangGraph thread. |
 | `/dj add <role_id>` | Add a DJ role. |
 | `/dj remove <role_id>` | Remove a DJ role. |
 | `/dj list` | List configured DJ roles. |
