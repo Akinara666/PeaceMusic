@@ -28,6 +28,13 @@ from peacemusic.modules.settings.service import GuildSettingsService
 logger = logging.getLogger(__name__)
 
 
+def format_user_message(context: AgentRequestContext, text: str) -> str:
+    """Prefix model-visible user text with the Discord display name."""
+
+    display_name = " ".join(context.user_name.split()) or f"User {context.user_id}"
+    return f"{display_name}: {text}"
+
+
 class AgentFactory(Protocol):
     def create(self, tools: Sequence[Any], *, system_prompt: str | None = None) -> Any:
         """Build an agent that exposes the supplied tools."""
@@ -158,10 +165,11 @@ class AgentService:
                 system_prompt=settings.ai.system_prompt,
             )
             messages = [message.as_message() for message in history]
-            current_content: object = state.normalized_input
+            user_message = format_user_message(context, state.normalized_input)
+            current_content: object = user_message
             if uploaded:
                 current_content = [
-                    {"type": "text", "text": state.normalized_input},
+                    {"type": "text", "text": user_message},
                     *[
                         {
                             "type": "media",
@@ -245,7 +253,7 @@ class AgentService:
             thread_id = self._thread_id(context)
             await self._conversation.append(
                 thread_id,
-                ConversationMessage(role="user", content=state.normalized_input),
+                ConversationMessage(role="user", content=user_message),
             )
             await self._conversation.append(
                 thread_id,
