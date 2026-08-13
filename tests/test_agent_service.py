@@ -19,7 +19,11 @@ from peacemusic.core.metrics import MetricsRegistry
 from peacemusic.modules.agent.context import AgentRequestContext
 from peacemusic.modules.agent.coordinator import TurnCoordinator
 from peacemusic.modules.agent.graph import InputRoute, normalize_input, route_input
-from peacemusic.modules.agent.service import AgentService, _extract_response
+from peacemusic.modules.agent.service import (
+    AgentService,
+    _extract_response,
+    format_user_message,
+)
 from peacemusic.modules.agent.tools import ToolRegistry
 from peacemusic.modules.agent.state import AttachmentRef
 from peacemusic.modules.settings.service import GuildSettingsService
@@ -78,6 +82,18 @@ def test_extract_response_uses_latest_textual_message() -> None:
 def test_extract_response_rejects_results_without_text() -> None:
     with pytest.raises(ExternalServiceError, match="no textual response"):
         _extract_response({"messages": [{"content": [{"type": "tool_call"}]}]})
+
+
+def test_format_user_message_prefixes_and_normalizes_display_name() -> None:
+    context = AgentRequestContext("req", 1, 2, 3, "  akinara\n  ")
+
+    assert format_user_message(context, "Привет!") == "akinara: Привет!"
+
+
+def test_format_user_message_falls_back_when_display_name_is_empty() -> None:
+    context = AgentRequestContext("req", 1, 2, 3, " \n ")
+
+    assert format_user_message(context, "Hello") == "User 3: Hello"
 
 
 def test_outer_graph_normalizes_and_routes_audio() -> None:
@@ -151,9 +167,9 @@ def test_agent_service_reuses_bounded_thread_history() -> None:
 
         payload, config = factory.agents[1].payloads[0]
         assert payload["messages"] == [
-            {"role": "user", "content": "first message"},
+            {"role": "user", "content": "User: first message"},
             {"role": "assistant", "content": "agent response"},
-            {"role": "user", "content": "second message"},
+            {"role": "user", "content": "User: second message"},
         ]
         assert config["configurable"]["thread_id"] == "guild:1:channel:2"
 
