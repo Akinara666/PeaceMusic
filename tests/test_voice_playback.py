@@ -224,6 +224,37 @@ def test_music_service_retries_source_creation_with_bounded_recovery() -> None:
     asyncio.run(scenario())
 
 
+def test_music_service_refreshes_stream_between_recovery_attempts() -> None:
+    async def scenario() -> None:
+        resolver = RefreshingResolver()
+        voice = VoiceGateway()
+        audio = FlakyAudioFactory(failures=1)
+        service = MusicService(
+            GuildPlayerManager(),
+            resolver,
+            AllowAllPermissionService(),
+            voice_gateway=voice,
+            audio_source_factory=audio,
+            recovery=PlaybackRecoveryService(max_attempts=2, retry_delay_seconds=0),
+        )
+        context = MusicRequestContext(
+            guild_id=1,
+            user_id=2,
+            user_voice_channel_id=3,
+        )
+
+        await service.play(context, "fresh query")
+
+        assert audio.attempts == 2
+        assert resolver.calls == [
+            "fresh query",
+            "https://youtube.com/watch?v=fresh",
+            "https://youtube.com/watch?v=fresh",
+        ]
+
+    asyncio.run(scenario())
+
+
 def test_music_service_marks_player_failed_after_recovery_exhaustion() -> None:
     async def scenario() -> None:
         audio = FlakyAudioFactory(failures=3)
