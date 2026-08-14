@@ -335,11 +335,17 @@ class MusicService:
         track = player.current_track
         if track is None:
             return
-        if track.webpage_url is not None or track.stream_url is None:
+
+        async def refresh_track() -> None:
+            nonlocal track
+            if track.webpage_url is None and track.stream_url is not None:
+                return
             media = await self._resolver.resolve(track.webpage_url or track.source_url)
             resolved = self._track_from_media(media, requested_by=track.requested_by)
             track = replace(resolved, title=track.title)
             player.current_track = track
+
+        await refresh_track()
         token = self._playback_tokens.get(player.guild_id, 0) + 1
         self._playback_tokens[player.guild_id] = token
         loop = asyncio.get_running_loop()
@@ -365,7 +371,7 @@ class MusicService:
                 await start(1)
             else:
                 player.status = PlaybackStatus.RECOVERING
-                await self._recovery.run(start)
+                await self._recovery.run(start, refresh_source=refresh_track)
                 player.status = PlaybackStatus.PLAYING
         except PlaybackError:
             player.status = PlaybackStatus.FAILED
