@@ -6,6 +6,7 @@ import asyncio
 import os
 import time
 from collections.abc import Mapping
+from pathlib import Path
 from urllib.parse import urlparse
 from typing import Any
 
@@ -33,6 +34,7 @@ class YtDlpMediaResolver:
         max_search_results: int = 1,
         metrics: MetricsRegistry | None = None,
         pot_provider_url: str | None = None,
+        cookies_file: str | None = None,
     ) -> None:
         if max_concurrent < 1 or timeout_seconds <= 0 or max_search_results < 1:
             raise ValueError("Invalid yt-dlp execution limits")
@@ -44,6 +46,9 @@ class YtDlpMediaResolver:
         self._max_search_results = max_search_results
         self._metrics = metrics
         self._pot_provider_url = pot_provider_url or os.getenv("YTDL_POT_PROVIDER_URL")
+        self._cookies_file = self._normalize_cookies_file(
+            cookies_file or os.getenv("YTDL_COOKIES_FILE")
+        )
         self._semaphore = asyncio.Semaphore(max_concurrent)
 
     async def resolve(self, query: str) -> ResolvedMedia:
@@ -105,6 +110,12 @@ class YtDlpMediaResolver:
             pot_args["base_url"] = self._pot_provider_url
             extractor_args["youtubepot-bgutilhttp"] = pot_args
             options["extractor_args"] = extractor_args
+        if self._cookies_file:
+            if not self._cookies_file.is_file():
+                raise MediaExtractionError(
+                    f"Configured yt-dlp cookies file does not exist: {self._cookies_file}"
+                )
+            options["cookiefile"] = str(self._cookies_file)
         try:
             with yt_dlp.YoutubeDL(options) as downloader:
                 result = downloader.extract_info(target, download=False)
@@ -154,6 +165,12 @@ class YtDlpMediaResolver:
         if parsed.scheme:
             raise ValidationError("Only HTTP(S) media URLs are supported")
         return f"ytsearch{self._max_search_results}:{query}"
+
+    @staticmethod
+    def _normalize_cookies_file(value: str | None) -> Path | None:
+        if value is None or not value.strip():
+            return None
+        return Path(value).expanduser()
 
     @staticmethod
     def _to_media(data: dict[str, Any]) -> ResolvedMedia:

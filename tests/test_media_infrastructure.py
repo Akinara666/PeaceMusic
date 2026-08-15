@@ -36,6 +36,41 @@ def test_ytdlp_resolver_enforces_trusted_url_domains() -> None:
         resolver._normalize_target("https://untrusted.test/video")
 
 
+def test_ytdlp_resolver_passes_configured_cookies_file_to_yt_dlp(
+    tmp_path, monkeypatch
+) -> None:
+    cookie_file = tmp_path / "cookies.txt"
+    cookie_file.write_text("# Netscape HTTP Cookie File\n", encoding="utf-8")
+    resolver = YtDlpMediaResolver(cookies_file=str(cookie_file))
+    options_seen: list[dict[str, object]] = []
+
+    class YoutubeDL:
+        def __init__(self, options) -> None:
+            options_seen.append(options)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def extract_info(self, _target, download):
+            assert download is False
+            return {
+                "title": "Example",
+                "webpage_url": "https://example.test/video",
+                "url": "https://cdn.example.test/audio",
+            }
+
+    yt_dlp = types.ModuleType("yt_dlp")
+    yt_dlp.YoutubeDL = YoutubeDL
+    monkeypatch.setitem(sys.modules, "yt_dlp", yt_dlp)
+
+    resolver._extract("https://example.test/video")
+
+    assert options_seen[0]["cookiefile"] == str(cookie_file)
+
+
 def test_ytdlp_metadata_is_translated_to_domain_model() -> None:
     media = YtDlpMediaResolver._to_media(
         {
