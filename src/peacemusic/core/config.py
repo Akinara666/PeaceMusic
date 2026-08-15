@@ -83,6 +83,14 @@ class GeminiSettings(_EnvironmentSettings):
     )
 
 
+class MediaSettings(_EnvironmentSettings):
+    """yt-dlp options controlled by the operator."""
+
+    cookies_file: str | None = Field(
+        default=None, validation_alias="YTDL_COOKIES_FILE"
+    )
+
+
 class ObservabilitySettings(_EnvironmentSettings):
     """Logging and optional tracing configuration."""
 
@@ -120,12 +128,14 @@ class AppSettings:
         discord: DiscordSettings | None = None,
         database: DatabaseSettings | None = None,
         gemini: GeminiSettings | None = None,
+        media: MediaSettings | None = None,
         observability: ObservabilitySettings | None = None,
         limits: GlobalLimits | None = None,
     ) -> None:
         self.discord = discord or DiscordSettings()
         self.database = database or DatabaseSettings()
         self.gemini = gemini or GeminiSettings()
+        self.media = media or MediaSettings()
         self.observability = observability or ObservabilitySettings()
         self.limits = limits or GlobalLimits()
 

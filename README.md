@@ -261,6 +261,18 @@ These limits are operator-controlled and cannot be exceeded by a guild:
 ALLOWED_AI_MODELS=["gemini-3.1-flash-lite"]
 ```
 
+yt-dlp cookies are optional. Set `YTDL_COOKIES_FILE` in `.env` to a Netscape
+format cookies file, preferably under `./data`, for example:
+
+```env
+YTDL_COOKIES_FILE=./data/youtube-cookies.txt
+```
+
+The `data` directory is already mounted into the Docker container at
+`/app/data`, so this same relative path works both from the repository root
+without Docker and inside Docker. Keep the file private, do not commit it, and
+use a dedicated account when possible.
+
 ## 💻 Local development
 
 ### Install dependencies

@@ -158,7 +158,10 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
         settings_service=guild_settings,
         metrics=metrics,
     )
-    media_resolver = YtDlpMediaResolver(metrics=metrics)
+    media_resolver = YtDlpMediaResolver(
+        metrics=metrics,
+        cookies_file=resolved_settings.media.cookies_file,
+    )
     autoplay = AutoplayService(
         ResolverAutoplayProvider(media_resolver),
         guild_settings,
