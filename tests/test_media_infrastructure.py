@@ -71,6 +71,70 @@ def test_ytdlp_resolver_passes_configured_cookies_file_to_yt_dlp(
     assert options_seen[0]["cookiefile"] == str(cookie_file)
 
 
+def test_ytdlp_resolver_enables_external_youtube_js_components(monkeypatch) -> None:
+    options_seen: list[dict[str, object]] = []
+
+    class YoutubeDL:
+        def __init__(self, options) -> None:
+            options_seen.append(options)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def extract_info(self, _target, download):
+            assert download is False
+            return {
+                "title": "Example",
+                "webpage_url": "https://youtube.com/watch?v=1",
+                "url": "https://cdn.example.test/audio",
+            }
+
+    yt_dlp = types.ModuleType("yt_dlp")
+    yt_dlp.YoutubeDL = YoutubeDL
+    monkeypatch.setitem(sys.modules, "yt_dlp", yt_dlp)
+
+    YtDlpMediaResolver()._extract("https://youtube.com/watch?v=1")
+
+    assert options_seen[0]["remote_components"] == ["ejs:github"]
+
+
+def test_ytdlp_resolver_accepts_comma_separated_remote_components(
+    monkeypatch,
+) -> None:
+    options_seen: list[dict[str, object]] = []
+
+    class YoutubeDL:
+        def __init__(self, options) -> None:
+            options_seen.append(options)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def extract_info(self, _target, download):
+            assert download is False
+            return {
+                "title": "Example",
+                "webpage_url": "https://youtube.com/watch?v=1",
+                "url": "https://cdn.example.test/audio",
+            }
+
+    yt_dlp = types.ModuleType("yt_dlp")
+    yt_dlp.YoutubeDL = YoutubeDL
+    monkeypatch.setitem(sys.modules, "yt_dlp", yt_dlp)
+
+    YtDlpMediaResolver(
+        remote_components="ejs:github, ejs:npm",
+    )._extract("https://youtube.com/watch?v=1")
+
+    assert options_seen[0]["remote_components"] == ["ejs:github", "ejs:npm"]
+
+
 def test_ytdlp_metadata_is_translated_to_domain_model() -> None:
     media = YtDlpMediaResolver._to_media(
         {

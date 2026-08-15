@@ -161,6 +161,7 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
     media_resolver = YtDlpMediaResolver(
         metrics=metrics,
         cookies_file=resolved_settings.media.cookies_file,
+        remote_components=resolved_settings.media.remote_components,
     )
     autoplay = AutoplayService(
         ResolverAutoplayProvider(media_resolver),

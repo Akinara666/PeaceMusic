@@ -35,6 +35,7 @@ class YtDlpMediaResolver:
         metrics: MetricsRegistry | None = None,
         pot_provider_url: str | None = None,
         cookies_file: str | None = None,
+        remote_components: str | tuple[str, ...] | None = "ejs:github",
     ) -> None:
         if max_concurrent < 1 or timeout_seconds <= 0 or max_search_results < 1:
             raise ValueError("Invalid yt-dlp execution limits")
@@ -48,6 +49,9 @@ class YtDlpMediaResolver:
         self._pot_provider_url = pot_provider_url or os.getenv("YTDL_POT_PROVIDER_URL")
         self._cookies_file = self._normalize_cookies_file(
             cookies_file or os.getenv("YTDL_COOKIES_FILE")
+        )
+        self._remote_components = self._normalize_remote_components(
+            remote_components
         )
         self._semaphore = asyncio.Semaphore(max_concurrent)
 
@@ -104,6 +108,8 @@ class YtDlpMediaResolver:
                 "no_warnings": True,
             }
         )
+        if self._remote_components:
+            options["remote_components"] = list(self._remote_components)
         if self._pot_provider_url:
             extractor_args = dict(options.get("extractor_args") or {})
             pot_args = dict(extractor_args.get("youtubepot-bgutilhttp") or {})
@@ -171,6 +177,15 @@ class YtDlpMediaResolver:
         if value is None or not value.strip():
             return None
         return Path(value).expanduser()
+
+    @staticmethod
+    def _normalize_remote_components(
+        value: str | tuple[str, ...] | None,
+    ) -> tuple[str, ...]:
+        if value is None:
+            return ()
+        values = value.split(",") if isinstance(value, str) else value
+        return tuple(component.strip() for component in values if component.strip())
 
     @staticmethod
     def _to_media(data: dict[str, Any]) -> ResolvedMedia:
