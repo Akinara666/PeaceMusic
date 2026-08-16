@@ -109,7 +109,11 @@ class OuterAgentWorkflow:
             return state.model_copy(
                 update={"final_response": "AI assistant is disabled for this server."}
             )
-        if not state.normalized_input and state.input_route == InputRoute.AI_AGENT:
+        if (
+            not state.normalized_input
+            and state.input_route == InputRoute.AI_AGENT
+            and not state.attachments
+        ):
             return state.model_copy(
                 update={"final_response": "Please provide a message to process."}
             )
