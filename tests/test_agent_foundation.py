@@ -66,6 +66,27 @@ def test_outer_workflow_initializes_checkpoint_safe_route_state() -> None:
     assert state.checkpoint()["input_route"] == "direct_audio"
 
 
+def test_outer_workflow_allows_image_only_ai_input() -> None:
+    context = AgentRequestContext("req-1", 123, 456, 789, "User")
+    state = OuterAgentWorkflow().initialize(
+        context,
+        "",
+        attachments=[
+            AttachmentRef(
+                attachment_id="a1",
+                filename="photo.png",
+                content_type="image/png",
+                size_bytes=1,
+            )
+        ],
+    )
+
+    state = OuterAgentWorkflow().apply_policy(state, ai_enabled=True)
+
+    assert state.normalized_input == ""
+    assert state.final_response is None
+
+
 def test_tool_result_has_stable_success_and_failure_contract() -> None:
     assert ToolResult.success("done").model_dump() == {
         "ok": True,
