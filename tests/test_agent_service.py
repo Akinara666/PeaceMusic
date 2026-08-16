@@ -171,7 +171,7 @@ def test_agent_service_reuses_bounded_thread_history() -> None:
             {"role": "assistant", "content": "agent response"},
             {"role": "user", "content": "User: second message"},
         ]
-        assert config["configurable"]["thread_id"] == "guild:1:channel:2"
+        assert config["configurable"]["thread_id"] == "agent-v2:guild:1:channel:2"
 
         assert config["metadata"]["request_id"] == "req-2"
         assert config["recursion_limit"] == 13
@@ -203,7 +203,7 @@ def test_agent_service_clears_messages_and_checkpoint_for_channel() -> None:
 
         assert await service.clear_conversation(1, 2) == 1
         assert await conversation.recent("guild:1:channel:2", limit=10) == ()
-        assert cleared_threads == ["guild:1:channel:2"]
+        assert cleared_threads == ["agent-v2:guild:1:channel:2"]
 
     asyncio.run(scenario())
 
@@ -229,12 +229,18 @@ def test_agent_service_passes_provider_media_and_cleans_it_up() -> None:
         settings = GuildSettingsService(InMemoryGuildSettingsRepository())
         factory = FakeFactory()
         preparer = Preparer()
+        cleared_threads: list[str] = []
+
+        async def clear_checkpoint(thread_id: str) -> None:
+            cleared_threads.append(thread_id)
+
         service = AgentService(
             settings_service=settings,
             tool_registry=ToolRegistry(),
             agent_factory=factory,
             coordinator=TurnCoordinator(timeout_seconds=1),
             attachment_preparer=preparer,
+            checkpoint_clearer=clear_checkpoint,
         )
         state = await service.handle(
             AgentRequestContext("req", 1, 2, 3, "User"),
@@ -250,11 +256,15 @@ def test_agent_service_passes_provider_media_and_cleans_it_up() -> None:
             ],
         )
 
-        payload, _config = factory.agents[0].payloads[0]
+        payload, config = factory.agents[0].payloads[0]
         current_message = payload["messages"][-1]
         assert current_message["content"][1]["file_uri"] == "https://files.test/1"
+        assert config["configurable"]["thread_id"] == (
+            "agent-v2:guild:1:channel:2:attachment:req"
+        )
         assert state.final_response == "agent response"
         assert preparer.cleaned is True
+        assert cleared_threads == ["agent-v2:guild:1:channel:2:attachment:req"]
 
     asyncio.run(scenario())
 
