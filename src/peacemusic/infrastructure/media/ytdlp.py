@@ -50,9 +50,7 @@ class YtDlpMediaResolver:
         self._cookies_file = self._normalize_cookies_file(
             cookies_file or os.getenv("YTDL_COOKIES_FILE")
         )
-        self._remote_components = self._normalize_remote_components(
-            remote_components
-        )
+        self._remote_components = self._normalize_remote_components(remote_components)
         self._semaphore = asyncio.Semaphore(max_concurrent)
 
     async def resolve(self, query: str) -> ResolvedMedia:
