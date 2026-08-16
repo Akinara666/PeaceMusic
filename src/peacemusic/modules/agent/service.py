@@ -12,6 +12,7 @@ from peacemusic.core.errors import ExternalServiceError, describe_exception
 from peacemusic.core.metrics import MetricsRegistry
 from peacemusic.modules.agent.context import AgentRequestContext
 from peacemusic.modules.agent.conversation import (
+    ConversationMedia,
     ConversationMessage,
     ConversationRepository,
     compact_conversation,
@@ -162,7 +163,15 @@ class AgentService:
         agent_thread_id = self._agent_thread_id(
             context, has_attachments=bool(attachments)
         )
-        async with self._prepare_attachments(attachments) as uploaded:
+        retain_provider_files = bool(
+            attachments
+            and self._conversation is not None
+            and settings.memory.short_term_memory_enabled
+        )
+        uploaded = ()
+        async with self._prepare_attachments(
+            attachments, retain_provider_files=retain_provider_files
+        ) as uploaded:
             agent = self._factory.create(
                 langchain_tools,
                 system_prompt=settings.ai.system_prompt,
@@ -258,7 +267,18 @@ class AgentService:
             thread_id = self._thread_id(context)
             await self._conversation.append(
                 thread_id,
-                ConversationMessage(role="user", content=user_message),
+                ConversationMessage(
+                    role="user",
+                    content=user_message,
+                    media=tuple(
+                        ConversationMedia(
+                            name=item.provider_reference.name,
+                            uri=item.provider_reference.uri,
+                            mime_type=item.provider_reference.mime_type,
+                        )
+                        for item in uploaded
+                    ),
+                ),
             )
             await self._conversation.append(
                 thread_id,
@@ -288,11 +308,15 @@ class AgentService:
         return await self._coordinator.run(channel_id, clear)
 
     @asynccontextmanager
-    async def _prepare_attachments(self, attachments):
+    async def _prepare_attachments(
+        self, attachments, *, retain_provider_files: bool = False
+    ):
         if self._attachment_preparer is None or not attachments:
             yield ()
             return
-        async with self._attachment_preparer.prepare(attachments) as prepared:
+        async with self._attachment_preparer.prepare(
+            attachments, retain_provider_files=retain_provider_files
+        ) as prepared:
             yield prepared
 
     @staticmethod

@@ -105,7 +105,7 @@ docker compose up --build -d
 - Per-user rate limits, bounded model/tool recursion, turn timeouts, and
   cancellation handling.
 - Secure multimodal attachment validation, temporary download handling, Gemini
-  Files upload, and guaranteed cleanup.
+  Files upload, and persistent media references in conversation context.
 
 ### ⚙️ Guild administration
 
@@ -643,7 +643,8 @@ Store restart persistence, and the production image build.
 - Music, memory, settings, playlist, and access-control side effects are
   authorized in Python application services.
 - Attachments are validated by count, MIME type, and size before provider use;
-  temporary files are cleaned up after each request.
+  local temporary files are cleaned up after each request, while successful
+  Gemini media references may remain available for subsequent conversation turns.
 - External media URLs use explicit trusted-domain policies where applicable.
 - LangGraph checkpoint state contains serializable values only; Discord objects,
   database connections, locks, subprocesses, and clients are never persisted.

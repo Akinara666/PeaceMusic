@@ -221,7 +221,7 @@ def test_agent_service_passes_provider_media_and_cleans_it_up() -> None:
             self.cleaned = False
 
         @asynccontextmanager
-        async def prepare(self, attachments):
+        async def prepare(self, attachments, *, retain_provider_files=False):
             yield [Uploaded()]
             self.cleaned = True
 
@@ -265,6 +265,62 @@ def test_agent_service_passes_provider_media_and_cleans_it_up() -> None:
         assert state.final_response == "agent response"
         assert preparer.cleaned is True
         assert cleared_threads == ["agent-v2:guild:1:channel:2:attachment:req"]
+
+    asyncio.run(scenario())
+
+
+def test_agent_service_reuses_persisted_provider_media_on_next_turn() -> None:
+    class Uploaded:
+        provider_reference = type(
+            "Reference",
+            (),
+            {
+                "name": "files/1",
+                "uri": "https://files.test/1",
+                "mime_type": "image/png",
+            },
+        )()
+
+    class Preparer:
+        @asynccontextmanager
+        async def prepare(self, attachments, *, retain_provider_files=False):
+            del attachments, retain_provider_files
+            yield [Uploaded()]
+
+    async def scenario() -> None:
+        settings = GuildSettingsService(InMemoryGuildSettingsRepository())
+        factory = FakeFactory()
+        conversation = InMemoryConversationRepository()
+        service = AgentService(
+            settings_service=settings,
+            tool_registry=ToolRegistry(),
+            agent_factory=factory,
+            coordinator=TurnCoordinator(timeout_seconds=1),
+            conversation_repository=conversation,
+            attachment_preparer=Preparer(),
+        )
+        context = AgentRequestContext("req-1", 1, 2, 3, "User")
+        await service.handle(
+            context,
+            "describe this",
+            attachments=[
+                AttachmentRef(
+                    attachment_id="1",
+                    filename="image.png",
+                    content_type="image/png",
+                    size_bytes=4,
+                    url="https://discord.test/image.png",
+                )
+            ],
+        )
+        await service.handle(
+            AgentRequestContext("req-2", 1, 2, 3, "User"),
+            "what else do you notice?",
+        )
+
+        payload, _config = factory.agents[1].payloads[0]
+        previous_message = payload["messages"][0]
+        assert previous_message["content"][1]["file_uri"] == "https://files.test/1"
 
     asyncio.run(scenario())
 

@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import datetime, timezone
+import json
 from typing import Any
 
 from peacemusic.infrastructure.persistence.database import PostgresDatabase
-from peacemusic.modules.agent.conversation import ConversationMessage
+from peacemusic.modules.agent.conversation import ConversationMedia, ConversationMessage
 
 
 class PostgresConversationRepository:
@@ -28,9 +29,9 @@ class PostgresConversationRepository:
         async with self._database.acquire() as connection:
             rows = await connection.fetch(
                 """
-                SELECT role, content, created_at
+                SELECT role, content, media, created_at
                   FROM (
-                        SELECT id, role, content, created_at
+                        SELECT id, role, content, media, created_at
                           FROM conversation_messages
                          WHERE thread_id = $1
                          ORDER BY id DESC
@@ -50,12 +51,13 @@ class PostgresConversationRepository:
                 await connection.execute(
                     """
                     INSERT INTO conversation_messages
-                        (thread_id, role, content, created_at)
-                    VALUES ($1, $2, $3, $4)
+                        (thread_id, role, content, media, created_at)
+                    VALUES ($1, $2, $3, $4::jsonb, $5)
                     """,
                     thread_id,
                     message.role,
                     message.content,
+                    json.dumps(message.media_payload(), ensure_ascii=False),
                     created_at,
                 )
                 await connection.execute(
@@ -84,8 +86,24 @@ class PostgresConversationRepository:
 
     @staticmethod
     def _message(row: Any) -> ConversationMessage:
+        raw_media = row["media"]
+        if isinstance(raw_media, str):
+            raw_media = json.loads(raw_media)
+        media = tuple(
+            ConversationMedia(
+                name=str(item["name"]),
+                uri=str(item["uri"]),
+                mime_type=str(item["mime_type"]),
+            )
+            for item in raw_media or ()
+            if isinstance(item, dict)
+            and item.get("name")
+            and item.get("uri")
+            and item.get("mime_type")
+        )
         return ConversationMessage(
             role=row["role"],
             content=row["content"],
             created_at=row["created_at"],
+            media=media,
         )

@@ -4,11 +4,45 @@ import asyncio
 import pytest
 
 from peacemusic.modules.agent.conversation import (
+    ConversationMedia,
     ConversationMessage,
     InMemoryConversationRepository,
     compact_conversation,
     conversation_thread_id,
 )
+
+
+def test_conversation_message_rehydrates_persistent_media_for_the_model() -> None:
+    message = ConversationMessage(
+        role="user",
+        content="What is in this image?",
+        media=(
+            ConversationMedia(
+                name="files/1",
+                uri="https://files.test/1",
+                mime_type="image/png",
+            ),
+        ),
+    )
+
+    assert message.as_message() == {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "What is in this image?"},
+            {
+                "type": "media",
+                "file_uri": "https://files.test/1",
+                "mime_type": "image/png",
+            },
+        ],
+    }
+    assert message.media_payload() == [
+        {
+            "name": "files/1",
+            "uri": "https://files.test/1",
+            "mime_type": "image/png",
+        }
+    ]
 
 
 def test_in_memory_conversation_repository_returns_bounded_chronological_history() -> (
@@ -42,6 +76,25 @@ def test_conversation_compaction_keeps_recent_context_and_summary() -> None:
     assert compacted[0].role == "system"
     assert "Earlier conversation summary" in compacted[0].content
     assert compacted[-1].content == "recent"
+
+
+def test_conversation_compaction_keeps_persistent_media_context() -> None:
+    media_message = ConversationMessage(
+        role="user",
+        content="Remember this image",
+        media=(
+            ConversationMedia(
+                name="files/1",
+                uri="https://files.test/1",
+                mime_type="image/png",
+            ),
+        ),
+    )
+    messages = [media_message, ConversationMessage("user", "x" * 500)]
+
+    compacted = compact_conversation(messages, max_tokens=20)
+
+    assert media_message in compacted
 
 
 def test_conversation_boundaries_reject_invalid_compaction_and_empty_windows() -> None:
