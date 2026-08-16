@@ -47,3 +47,29 @@ def test_attachment_workflow_cleans_local_and_provider_files() -> None:
         assert files.cleaned == ["files/1"]
 
     asyncio.run(scenario())
+
+
+def test_attachment_workflow_retains_provider_files_after_success() -> None:
+    async def scenario() -> None:
+        files = Files()
+        workflow = AttachmentProviderWorkflow(
+            AttachmentService(max_bytes=10),
+            files,
+            downloader=lambda _url: asyncio.sleep(0, result=b"data"),
+        )
+        attachment = AttachmentRef(
+            attachment_id="1",
+            filename="image.png",
+            content_type="image/png",
+            size_bytes=4,
+            url="https://discord.test/image.png",
+        )
+
+        async with workflow.prepare(
+            [attachment], retain_provider_files=True
+        ) as prepared:
+            assert prepared[0].provider_reference.uri == "https://files.test/1"
+
+        assert files.cleaned == []
+
+    asyncio.run(scenario())

@@ -366,7 +366,7 @@ The current container wires `LangGraphMemoryRepository`. It maps records to Lang
 - maximum bytes per attachment;
 - download timeout.
 
-Files are downloaded into a `TemporaryDirectory` with random UUID-based names. `AttachmentProviderWorkflow` then uploads prepared files through `GeminiFileService`, yields provider references for the model request, and deletes uploaded provider references in reverse order in a `finally` block. The result is bounded local disk usage and cleanup even when an AI turn fails.
+Files are downloaded into a `TemporaryDirectory` with random UUID-based names. `AttachmentProviderWorkflow` then uploads prepared files through `GeminiFileService`, yields provider references for the model request, and cleans up provider files when a turn fails or when persistent media context is disabled. For successful turns with short-term memory enabled, the provider name, URI, and MIME type are stored with the conversation message, so later model requests can reconstruct the same media content without storing the binary file on the VPS. Local temporary files are still removed after every request.
 
 `HttpAttachmentDownloader` uses `httpx.AsyncClient`, follows no redirects, and maps HTTP failures into application errors. This is both a resource-control and SSRF-reduction measure: the current implementation does not blindly follow redirect chains supplied by remote content.
 
@@ -475,7 +475,7 @@ Frozen dataclasses model request context and media records. Pydantic models vali
 
 ### Defensive resource management
 
-The implementation uses connection-pool context managers, temporary-directory cleanup, provider-file cleanup, bounded queues, semaphores, timeouts, retry limits, and orderly cancellation. These controls address the failure modes most likely in a long-lived bot: slow external providers, oversized attachments, stream failure, abandoned voice sessions, and process shutdown during active I/O.
+The implementation uses connection-pool context managers, temporary-directory cleanup, conditional provider-file cleanup, bounded queues, semaphores, timeouts, retry limits, and orderly cancellation. These controls address the failure modes most likely in a long-lived bot: slow external providers, oversized attachments, stream failure, abandoned voice sessions, and process shutdown during active I/O.
 
 ### Async-first with isolated blocking work
 

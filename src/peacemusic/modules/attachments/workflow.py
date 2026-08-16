@@ -19,7 +19,7 @@ class AttachmentProviderWorkflow:
         self._downloader = downloader
 
     @asynccontextmanager
-    async def prepare(self, attachments):
+    async def prepare(self, attachments, *, retain_provider_files: bool = False):
         inputs = []
         for attachment in attachments:
             if not attachment.url:
@@ -38,6 +38,7 @@ class AttachmentProviderWorkflow:
             self._file_service,
             inputs,
             downloader=self._downloader,
+            retain_provider_files=retain_provider_files,
         ) as uploaded:
             yield uploaded
 
@@ -57,10 +58,12 @@ async def prepare_for_provider(
     attachments: Sequence[AttachmentInput],
     *,
     downloader,
+    retain_provider_files: bool = False,
 ) -> AsyncIterator[list[PreparedProviderAttachment]]:
-    """Prepare local files, upload them, and always delete provider references."""
+    """Prepare files and retain provider references only after a successful turn."""
 
     uploaded: list[PreparedProviderAttachment] = []
+    succeeded = False
     try:
         async with attachment_service.prepare(
             attachments, downloader=downloader
@@ -69,6 +72,8 @@ async def prepare_for_provider(
                 reference = await file_service.upload(attachment)
                 uploaded.append(PreparedProviderAttachment(attachment, reference))
             yield uploaded
+            succeeded = True
     finally:
-        for item in reversed(uploaded):
-            await file_service.cleanup(item.provider_reference)
+        if not retain_provider_files or not succeeded:
+            for item in reversed(uploaded):
+                await file_service.cleanup(item.provider_reference)

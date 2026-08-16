@@ -10,15 +10,52 @@ from typing import Protocol
 
 
 @dataclass(frozen=True, slots=True)
+class ConversationMedia:
+    """Provider-owned media reference retained in conversation context."""
+
+    name: str
+    uri: str
+    mime_type: str
+
+    def as_content(self) -> dict[str, str]:
+        return {
+            "type": "media",
+            "file_uri": self.uri,
+            "mime_type": self.mime_type,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class ConversationMessage:
     """A serializable message safe to pass into an agent invocation."""
 
     role: str
     content: str
     created_at: datetime | None = None
+    media: tuple[ConversationMedia, ...] = ()
 
-    def as_message(self) -> dict[str, str]:
+    def as_message(self) -> dict[str, object]:
+        if self.media:
+            return {
+                "role": self.role,
+                "content": [
+                    {"type": "text", "text": self.content},
+                    *(item.as_content() for item in self.media),
+                ],
+            }
         return {"role": self.role, "content": self.content}
+
+    def media_payload(self) -> list[dict[str, str]]:
+        """Return provider references in a JSON/database-safe shape."""
+
+        return [
+            {
+                "name": item.name,
+                "uri": item.uri,
+                "mime_type": item.mime_type,
+            }
+            for item in self.media
+        ]
 
 
 class ConversationRepository(Protocol):
@@ -52,15 +89,28 @@ def compact_conversation(
         return tuple(messages)
 
     summary_budget = min(800, max(32, budget // 4))
-    recent: list[ConversationMessage] = []
+    recent_indices: list[int] = []
     used = summary_budget
-    for message in reversed(messages):
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if message.media:
+            continue
         if used + len(message.content) > budget:
             break
-        recent.append(message)
+        recent_indices.append(index)
         used += len(message.content)
-    recent.reverse()
-    omitted = messages[: len(messages) - len(recent)]
+    selected_indices = set(recent_indices)
+    selected_indices.update(
+        index for index, message in enumerate(messages) if message.media
+    )
+    selected = tuple(
+        message for index, message in enumerate(messages) if index in selected_indices
+    )
+    omitted = tuple(
+        message
+        for index, message in enumerate(messages)
+        if index not in selected_indices
+    )
     summary = " | ".join(
         f"{message.role}: {message.content.strip()}" for message in omitted
     )[:summary_budget]
@@ -69,7 +119,7 @@ def compact_conversation(
             role="system",
             content=f"Earlier conversation summary: {summary}",
         ),
-        *recent,
+        *selected,
     )
 
 
