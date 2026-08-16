@@ -44,7 +44,7 @@ def test_migration_revisions_form_one_linear_chain() -> None:
             None if down_revision.group(1) == "None" else down_revision.group(2)
         )
 
-    assert len(revisions) == 8
+    assert len(revisions) == 9
     assert revisions["0001_initial_schema"] is None
     assert revisions["0002_playlist_identity"] == "0001_initial_schema"
     assert revisions["0003_complete_guild_settings"] == "0002_playlist_identity"
@@ -53,3 +53,4 @@ def test_migration_revisions_form_one_linear_chain() -> None:
     assert revisions["0006_player_messages"] == "0005_conversation_messages"
     assert revisions["0007_guild_ai_system_prompt"] == "0006_player_messages"
     assert revisions["0008_conversation_media"] == "0007_guild_ai_system_prompt"
+    assert revisions["0009_music_permission_mode"] == "0008_conversation_media"

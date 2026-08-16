@@ -13,6 +13,7 @@ class GeneralGuildSettings(BaseModel):
 
 
 class MusicGuildSettings(BaseModel):
+    permission_mode: str = "role"
     default_volume: int = Field(default=70, ge=0, le=100)
     max_volume: int = Field(default=100, ge=0, le=100)
     max_queue_size: int = Field(default=200, ge=1)
@@ -31,6 +32,13 @@ class MusicGuildSettings(BaseModel):
     def validate_loop_mode(cls, value: str) -> str:
         if value not in {"off", "track", "queue"}:
             raise ValueError("default_loop_mode must be off, track, or queue")
+        return value
+
+    @field_validator("permission_mode")
+    @classmethod
+    def validate_permission_mode(cls, value: str) -> str:
+        if value not in {"role", "everyone"}:
+            raise ValueError("permission_mode must be role or everyone")
         return value
 
     @model_validator(mode="after")

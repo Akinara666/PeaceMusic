@@ -6,10 +6,14 @@ from peacemusic.adapters.discord.permissions import DiscordMusicPermissionServic
 from peacemusic.infrastructure.persistence.repositories.in_memory_dj_roles import (
     InMemoryDJRoleRepository,
 )
+from peacemusic.infrastructure.persistence.repositories.in_memory_settings import (
+    InMemoryGuildSettingsRepository,
+)
 from peacemusic.adapters.discord.presenters.music import player_embed, track_embed
 from peacemusic.modules.music.models import Track
 from peacemusic.modules.music.permissions import MusicCapability, MusicRequestContext
 from peacemusic.modules.music.player import GuildPlayer
+from peacemusic.modules.settings.service import GuildSettingsService
 
 
 def test_discord_music_permissions_require_shared_voice_channel() -> None:
@@ -75,6 +79,36 @@ def test_discord_music_permissions_load_persistent_dj_roles() -> None:
 
         await roles.remove_role(1, 10)
         assert not await service.allowed(context, MusicCapability.SKIP)
+
+    asyncio.run(scenario())
+
+
+def test_discord_music_permissions_can_be_opened_for_all_voice_members() -> None:
+    async def scenario() -> None:
+        settings = GuildSettingsService(InMemoryGuildSettingsRepository())
+        await settings.update(
+            1,
+            actor_user_id=99,
+            section="music",
+            values={"permission_mode": "everyone"},
+        )
+        service = DiscordMusicPermissionService(settings=settings)
+        context = MusicRequestContext(
+            guild_id=1,
+            user_id=2,
+            user_voice_channel_id=3,
+            bot_voice_channel_id=3,
+        )
+
+        assert await service.allowed(context, MusicCapability.SKIP)
+
+        other_voice = MusicRequestContext(
+            guild_id=1,
+            user_id=2,
+            user_voice_channel_id=4,
+            bot_voice_channel_id=3,
+        )
+        assert not await service.allowed(other_voice, MusicCapability.SKIP)
 
     asyncio.run(scenario())
 
