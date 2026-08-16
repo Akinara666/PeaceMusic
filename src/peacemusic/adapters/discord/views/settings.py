@@ -70,6 +70,13 @@ _SETTING_DEFINITIONS: dict[str, tuple[SettingDefinition, ...]] = {
     ),
     "music": (
         _field(
+            "permission_mode",
+            "Music permissions",
+            "Choose role for DJ-only controls or everyone for all voice members.",
+            kind="choice",
+            choices=("role", "everyone"),
+        ),
+        _field(
             "default_volume",
             "Default volume",
             "Volume applied when playback starts.",

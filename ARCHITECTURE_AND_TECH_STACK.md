@@ -343,7 +343,7 @@ Settings are modeled as a validated `GuildSettings` aggregate containing general
 - global ceilings and AI model allowlists are checked before persistence;
 - successful changes are audited and invalidate the cache.
 
-Music permissions are modeled as `MusicCapability` values. `DiscordMusicPermissionService` translates Discord member roles, Manage Server status, and voice-channel membership into those capabilities. Manage Server users bypass the configured DJ-role checks; playback and queue-add operations require the user to be in voice and, when applicable, in the same channel as the bot.
+Music permissions are modeled as `MusicCapability` values. `DiscordMusicPermissionService` translates Discord member roles, Manage Server status, voice-channel membership, and the per-guild `music.permission_mode` setting into those capabilities. The default `role` mode preserves DJ-role protection for destructive/player-control operations; `everyone` mode removes only that DJ-role requirement while still requiring the user to be in the bot's voice channel. Manage Server users bypass the configured DJ-role checks; playback and queue-add operations require the user to be in voice and, when applicable, in the same channel as the bot.
 
 This keeps Discord authorization details at the adapter edge while allowing `MusicService` to ask for a capability decision rather than inspect Discord objects directly.
 

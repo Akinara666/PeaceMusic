@@ -172,7 +172,7 @@ def build_container(settings: AppSettings | None = None) -> ApplicationContainer
             default_max_queue_size=resolved_settings.limits.max_queue_size
         ),
         media_resolver,
-        DiscordMusicPermissionService(dj_roles),
+        DiscordMusicPermissionService(dj_roles, guild_settings),
         history=history,
         autoplay=autoplay,
         recovery=PlaybackRecoveryService(metrics=metrics),

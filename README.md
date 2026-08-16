@@ -399,6 +399,12 @@ memory behavior, and the per-server system prompt. Values are converted and
 validated before being written to PostgreSQL, and invalid values or values
 outside operator safety limits are rejected with an ephemeral error.
 
+The Music section contains **Music permissions** (`role` or `everyone`). In
+`role` mode, DJ-only controls such as skip, stop, pause, queue management,
+loop, and volume require Manage Server or a role configured with `/dj add`.
+In `everyone` mode, those controls are available to any member who is in the
+bot's voice channel; voice-channel membership is still required.
+
 Music queue announcements are rich embeds with the track title, source link,
 thumbnail, uploader, duration, requester, and queue position. They are sent
 for slash commands, AI music tools, playlists, and autoplay; the Music
