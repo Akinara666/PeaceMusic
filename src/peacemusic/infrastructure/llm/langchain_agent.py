@@ -30,9 +30,7 @@ class LangChainAgentFactory:
         self._checkpointer = checkpointer
         self._store = store
 
-    def create(
-        self, tools: Sequence[Any], *, system_prompt: str | None = None
-    ) -> Any:
+    def create(self, tools: Sequence[Any], *, system_prompt: str | None = None) -> Any:
         try:
             from langchain.agents import create_agent
             from langchain_google_genai import ChatGoogleGenerativeAI

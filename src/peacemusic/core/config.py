@@ -86,9 +86,7 @@ class GeminiSettings(_EnvironmentSettings):
 class MediaSettings(_EnvironmentSettings):
     """yt-dlp options controlled by the operator."""
 
-    cookies_file: str | None = Field(
-        default=None, validation_alias="YTDL_COOKIES_FILE"
-    )
+    cookies_file: str | None = Field(default=None, validation_alias="YTDL_COOKIES_FILE")
     remote_components: str = Field(
         default="ejs:github", validation_alias="YTDL_REMOTE_COMPONENTS"
     )
