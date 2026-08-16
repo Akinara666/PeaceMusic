@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
 import types
 
@@ -82,6 +83,54 @@ def test_langchain_tools_return_unexpected_failure_details_to_the_model(
     assert result["ok"] is False
     assert result["code"] == "TOOL_EXECUTION_ERROR"
     assert "HTTP 403" in result["message"]
+
+
+def test_langchain_tools_log_arguments_and_results_without_secrets(
+    monkeypatch, caplog
+) -> None:
+    class FakeStructuredTool:
+        @classmethod
+        def from_function(cls, *, coroutine, name, description, args_schema):
+            return types.SimpleNamespace(coroutine=coroutine, name=name)
+
+    core_tools = types.ModuleType("langchain_core.tools")
+    core_tools.StructuredTool = FakeStructuredTool
+    monkeypatch.setitem(sys.modules, "langchain_core.tools", core_tools)
+
+    async def handler(
+        _context: AgentRequestContext, query: str, token: str | None = None
+    ) -> ToolResult:
+        return ToolResult.success(
+            "queued", data={"query": query, "api_key": "do-not-log"}
+        )
+
+    with caplog.at_level(
+        logging.INFO, logger="peacemusic.modules.agent.langchain_tools"
+    ):
+        tool = build_langchain_tools(
+            [ToolSpec("example", ToolCategory.MUSIC, handler)],
+            context=AgentRequestContext("req", 1, 2, 3, "user"),
+        )[0]
+        result = asyncio.run(tool.coroutine(query="play jazz", token="do-not-log"))
+
+    assert result["ok"] is True
+    started = next(
+        record
+        for record in caplog.records
+        if record.message == "Agent tool call started"
+    )
+    completed = next(
+        record
+        for record in caplog.records
+        if record.message == "Agent tool call completed"
+    )
+    assert started.tool_name == "example"
+    assert started.tool_context["user_name"] == "user"
+    assert started.tool_arguments["query"] == "play jazz"
+    assert started.tool_arguments["token"] == "<redacted>"
+    assert completed.tool_code == "OK"
+    assert completed.tool_result["data"]["api_key"] == "<redacted>"
+    assert completed.tool_duration_ms >= 0
 
 
 def test_langchain_tools_expose_public_argument_schemas() -> None:

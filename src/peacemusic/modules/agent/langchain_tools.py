@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from inspect import Parameter, signature
+import logging
+import time
 from typing import Any, get_type_hints
 
 from pydantic import BaseModel, create_model
@@ -12,6 +14,48 @@ from peacemusic.core.errors import describe_exception
 from peacemusic.modules.agent.context import AgentRequestContext
 from peacemusic.modules.agent.results import ToolResult
 from peacemusic.modules.agent.tools import ToolSpec
+
+logger = logging.getLogger(__name__)
+
+_SENSITIVE_ARGUMENT_KEYS = {
+    "access_token",
+    "api_key",
+    "authorization",
+    "cookie",
+    "cookies",
+    "password",
+    "secret",
+    "token",
+}
+
+
+def _is_sensitive_key(key: str) -> bool:
+    normalized = key.lower().replace("-", "_")
+    return normalized in _SENSITIVE_ARGUMENT_KEYS or any(
+        marker in normalized
+        for marker in ("token", "secret", "password", "cookie", "api_key")
+    )
+
+
+def _safe_log_value(value: Any, *, depth: int = 0) -> Any:
+    """Keep tool diagnostics useful without leaking credentials or huge payloads."""
+
+    if depth > 4:
+        return "<nested value omitted>"
+    if isinstance(value, Mapping):
+        return {
+            str(key): (
+                "<redacted>"
+                if _is_sensitive_key(str(key))
+                else _safe_log_value(item, depth=depth + 1)
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple, set)):
+        return [_safe_log_value(item, depth=depth + 1) for item in value]
+    if isinstance(value, str) and len(value) > 4000:
+        return f"{value[:4000]}…<truncated>"
+    return value
 
 
 def build_langchain_tools(
@@ -41,18 +85,53 @@ def build_langchain_tools(
 
         async def invoke(_spec: ToolSpec = spec, **arguments: object):
             nonlocal call_count
+            call_number = call_count + 1
+            log_context = {
+                "request_id": context.request_id,
+                "guild_id": context.guild_id,
+                "channel_id": context.channel_id,
+                "user_id": context.user_id,
+                "tool_name": _spec.name,
+                "tool_category": _spec.category.value,
+                "tool_call_number": call_number,
+                "tool_context": _safe_log_value(context.to_checkpoint()),
+                "tool_arguments": _safe_log_value(arguments),
+            }
             if call_count >= max_tool_calls:
-                return ToolResult.failure(
+                result = ToolResult.failure(
                     "TOOL_CALL_LIMIT",
                     "The maximum number of tool calls for this turn was reached.",
-                ).model_dump(mode="json")
+                )
+                logger.warning(
+                    "Agent tool call rejected",
+                    extra={
+                        **log_context,
+                        "tool_ok": result.ok,
+                        "tool_code": result.code,
+                        "tool_result": _safe_log_value(result.model_dump(mode="json")),
+                        "tool_duration_ms": 0.0,
+                    },
+                )
+                return result.model_dump(mode="json")
             call_count += 1
+            started = time.monotonic()
+            logger.info("Agent tool call started", extra=log_context)
             try:
                 result = await _spec.handler(context, **arguments)
             except Exception as exc:  # noqa: BLE001 - return failure to the model
                 result = ToolResult.failure(
                     "TOOL_EXECUTION_ERROR", describe_exception(exc)
                 )
+            logger.info(
+                "Agent tool call completed",
+                extra={
+                    **log_context,
+                    "tool_ok": result.ok,
+                    "tool_code": result.code,
+                    "tool_result": _safe_log_value(result.model_dump(mode="json")),
+                    "tool_duration_ms": round((time.monotonic() - started) * 1000, 2),
+                },
+            )
             return result.model_dump(mode="json")
 
         tools.append(
