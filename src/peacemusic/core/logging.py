@@ -22,6 +22,7 @@ _STRUCTURED_FIELDS = (
     "tool_code",
     "tool_result",
     "tool_duration_ms",
+    "agent_thread_id",
 )
 
 

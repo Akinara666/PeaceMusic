@@ -159,6 +159,9 @@ class AgentService:
                 history = compact_conversation(
                     history, max_tokens=self._conversation_token_limit
                 )
+        agent_thread_id = self._agent_thread_id(
+            context, has_attachments=bool(attachments)
+        )
         async with self._prepare_attachments(attachments) as uploaded:
             agent = self._factory.create(
                 langchain_tools,
@@ -189,7 +192,7 @@ class AgentService:
                         {"messages": messages},
                         config={
                             "configurable": {
-                                "thread_id": self._thread_id(context),
+                                "thread_id": agent_thread_id,
                             },
                             "metadata": {
                                 "request_id": context.request_id,
@@ -238,6 +241,8 @@ class AgentService:
                         "peacemusic_agent_turn_duration_seconds",
                         time.monotonic() - started,
                     )
+                if attachments:
+                    await self._clear_checkpoint(agent_thread_id, context)
             logger.info(
                 "Agent turn completed",
                 extra={
@@ -277,7 +282,7 @@ class AgentService:
                 else 0
             )
             if self._checkpoint_clearer is not None:
-                await self._checkpoint_clearer(thread_id)
+                await self._checkpoint_clearer(self._checkpoint_thread_id(thread_id))
             return deleted
 
         return await self._coordinator.run(channel_id, clear)
@@ -295,6 +300,41 @@ class AgentService:
         if context.guild_id is None:
             return f"dm:{context.channel_id}"
         return conversation_thread_id(context.guild_id, context.channel_id)
+
+    @classmethod
+    def _checkpoint_thread_id(cls, thread_id: str) -> str:
+        """Version agent checkpoints independently from text conversation history."""
+
+        return f"agent-v2:{thread_id}"
+
+    @classmethod
+    def _agent_thread_id(
+        cls, context: AgentRequestContext, *, has_attachments: bool
+    ) -> str:
+        thread_id = cls._checkpoint_thread_id(cls._thread_id(context))
+        if has_attachments:
+            return f"{thread_id}:attachment:{context.request_id}"
+        return thread_id
+
+    async def _clear_checkpoint(
+        self, thread_id: str, context: AgentRequestContext
+    ) -> None:
+        if self._checkpoint_clearer is None:
+            return
+        try:
+            await self._checkpoint_clearer(thread_id)
+        except Exception:  # noqa: BLE001 - cleanup must not mask the AI result
+            logger.warning(
+                "Failed to clear ephemeral agent checkpoint",
+                extra={
+                    "request_id": context.request_id,
+                    "guild_id": context.guild_id,
+                    "channel_id": context.channel_id,
+                    "user_id": context.user_id,
+                    "agent_thread_id": thread_id,
+                },
+                exc_info=True,
+            )
 
 
 def _content_to_text(content: Any) -> str:
