@@ -3,6 +3,10 @@ from __future__ import annotations
 import asyncio
 
 from peacemusic.core.errors import MediaExtractionError
+from peacemusic.adapters.discord.permissions import DiscordMusicPermissionService
+from peacemusic.infrastructure.persistence.repositories.in_memory_dj_roles import (
+    InMemoryDJRoleRepository,
+)
 from peacemusic.modules.agent.context import AgentRequestContext
 from peacemusic.modules.agent.music_tools import build_music_tool_specs
 from peacemusic.modules.agent.tools import ToolRegistry
@@ -82,5 +86,41 @@ def test_music_tool_preserves_the_underlying_media_provider_reason() -> None:
         assert result.ok is False
         assert "yt-dlp could not resolve the query" in result.message
         assert "HTTP 403: signature challenge failed" in result.message
+
+    asyncio.run(scenario())
+
+
+def test_music_tool_returns_the_reason_for_a_missing_dj_role() -> None:
+    async def scenario() -> None:
+        roles = InMemoryDJRoleRepository()
+        await roles.add_role(123, 10, "DJ")
+        service = MusicService(
+            GuildPlayerManager(),
+            Resolver(),
+            DiscordMusicPermissionService(roles),
+        )
+        registry = ToolRegistry(build_music_tool_specs(service))
+        context = AgentRequestContext(
+            "req-1",
+            123,
+            456,
+            789,
+            "User",
+            user_voice_channel_id=10,
+            bot_voice_channel_id=10,
+        )
+
+        result = await registry.invoke(
+            "stop_music",
+            context,
+            {},
+            GuildSettings(guild_id=123),
+        )
+
+        assert result.ok is False
+        assert result.code == "MUSIC_PERMISSION_DENIED"
+        assert "requires a DJ role" in result.message
+        assert result.data["reason"] == "dj_role_required"
+        assert result.data["capability"] == "stop"
 
     asyncio.run(scenario())

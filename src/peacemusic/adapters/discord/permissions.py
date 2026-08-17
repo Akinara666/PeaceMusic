@@ -35,8 +35,15 @@ class DiscordMusicPermissionService:
     async def allowed(
         self, context: MusicRequestContext, capability: MusicCapability
     ) -> bool:
+        return await self.denial_reason(context, capability) is None
+
+    async def denial_reason(
+        self, context: MusicRequestContext, capability: MusicCapability
+    ) -> tuple[str, dict[str, object]] | None:
+        """Explain a rejected request for user- and model-facing adapters."""
+
         if context.can_manage_guild:
-            return True
+            return None
         permission_mode = "role"
         if self._settings is not None:
             guild_settings = await self._settings.get(context.guild_id)
@@ -50,13 +57,76 @@ class DiscordMusicPermissionService:
             and permission_mode == "role"
             and not has_dj_role
         ):
-            return False
+            if configured_roles:
+                message = (
+                    f"Cannot perform '{capability.value}': this server requires a "
+                    "DJ role for music controls, and the user does not have one. "
+                    "The user also does not have Manage Server permission."
+                )
+                reason = "dj_role_required"
+            else:
+                message = (
+                    f"Cannot perform '{capability.value}': this server is configured "
+                    "to require a DJ role for music controls, but no DJ role is "
+                    "configured. The user also does not have Manage Server "
+                    "permission."
+                )
+                reason = "dj_role_not_configured"
+            return message, {
+                "capability": capability.value,
+                "reason": reason,
+                "permission_mode": permission_mode,
+                "has_manage_guild": False,
+                "has_dj_role": False,
+            }
         if capability in {MusicCapability.QUEUE_ADD, MusicCapability.PLAY}:
-            return context.user_voice_channel_id is not None and (
-                context.bot_voice_channel_id is None
-                or context.user_voice_channel_id == context.bot_voice_channel_id
+            if context.user_voice_channel_id is None:
+                return (
+                    f"Cannot perform '{capability.value}': the user is not in a "
+                    "voice channel.",
+                    {
+                        "capability": capability.value,
+                        "reason": "user_not_in_voice_channel",
+                    },
+                )
+            if (
+                context.bot_voice_channel_id is not None
+                and context.user_voice_channel_id != context.bot_voice_channel_id
+            ):
+                return (
+                    f"Cannot perform '{capability.value}': the user is not in the "
+                    "bot's voice channel.",
+                    {
+                        "capability": capability.value,
+                        "reason": "different_voice_channel",
+                    },
+                )
+            return None
+        if context.user_voice_channel_id is None:
+            return (
+                f"Cannot perform '{capability.value}': the user is not in a voice "
+                "channel.",
+                {
+                    "capability": capability.value,
+                    "reason": "user_not_in_voice_channel",
+                },
             )
-        return (
-            context.user_voice_channel_id is not None
-            and context.user_voice_channel_id == context.bot_voice_channel_id
-        )
+        if context.bot_voice_channel_id is None:
+            return (
+                f"Cannot perform '{capability.value}': the bot is not connected "
+                "to a voice channel.",
+                {
+                    "capability": capability.value,
+                    "reason": "bot_not_in_voice_channel",
+                },
+            )
+        if context.user_voice_channel_id != context.bot_voice_channel_id:
+            return (
+                f"Cannot perform '{capability.value}': the user is not in the "
+                "bot's voice channel.",
+                {
+                    "capability": capability.value,
+                    "reason": "different_voice_channel",
+                },
+            )
+        return None

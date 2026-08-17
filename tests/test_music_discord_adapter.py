@@ -113,6 +113,35 @@ def test_discord_music_permissions_can_be_opened_for_all_voice_members() -> None
     asyncio.run(scenario())
 
 
+def test_discord_music_permissions_explain_missing_dj_role() -> None:
+    async def scenario() -> None:
+        roles = InMemoryDJRoleRepository()
+        await roles.add_role(1, 10, "DJ")
+        service = DiscordMusicPermissionService(roles)
+        context = MusicRequestContext(
+            guild_id=1,
+            user_id=2,
+            user_voice_channel_id=3,
+            bot_voice_channel_id=3,
+        )
+
+        denial = await service.denial_reason(context, MusicCapability.STOP)
+
+        assert denial is not None
+        message, data = denial
+        assert "requires a DJ role" in message
+        assert "does not have one" in message
+        assert data == {
+            "capability": "stop",
+            "reason": "dj_role_required",
+            "permission_mode": "role",
+            "has_manage_guild": False,
+            "has_dj_role": False,
+        }
+
+    asyncio.run(scenario())
+
+
 def test_music_presenters_render_track_and_player_state() -> None:
     track = Track(
         title="Example",
