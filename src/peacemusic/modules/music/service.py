@@ -308,7 +308,19 @@ class MusicService:
         self, context: MusicRequestContext, capability: MusicCapability
     ) -> None:
         if not await self._permissions.allowed(context, capability):
-            raise PermissionDeniedError(f"Capability denied: {capability.value}")
+            message = f"Capability denied: {capability.value}"
+            data: dict[str, object] = {"capability": capability.value}
+            explain = getattr(self._permissions, "denial_reason", None)
+            if explain is not None:
+                explanation = await explain(context, capability)
+                if explanation is not None:
+                    message, explanation_data = explanation
+                    data.update(explanation_data)
+            raise PermissionDeniedError(
+                message,
+                code="MUSIC_PERMISSION_DENIED",
+                data=data,
+            )
 
     async def _player(self, guild_id: int) -> GuildPlayer:
         return await self._players.get_or_create(guild_id)

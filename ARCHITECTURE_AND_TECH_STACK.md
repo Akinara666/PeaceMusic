@@ -347,6 +347,13 @@ Music permissions are modeled as `MusicCapability` values. `DiscordMusicPermissi
 
 This keeps Discord authorization details at the adapter edge while allowing `MusicService` to ask for a capability decision rather than inspect Discord objects directly.
 
+When a capability is denied, the permission adapter also provides a structured
+reason such as `dj_role_required`, `dj_role_not_configured`, or
+`different_voice_channel`. `MusicService` carries that reason into
+`PermissionDeniedError`, and the AI music-tool adapter returns it in both the
+human-readable message and `ToolResult.data`. The model can therefore explain
+the actual authorization failure and must not claim that playback changed.
+
 ## Memory, attachments, and multimodal requests
 
 ### Memory

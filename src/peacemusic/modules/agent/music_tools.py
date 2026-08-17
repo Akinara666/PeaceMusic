@@ -6,7 +6,11 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationError as PydanticValidationError
 
-from peacemusic.core.errors import PeaceMusicError, describe_exception
+from peacemusic.core.errors import (
+    PermissionDeniedError,
+    PeaceMusicError,
+    describe_exception,
+)
 from peacemusic.modules.agent.context import AgentRequestContext
 from peacemusic.modules.agent.music_context import music_context
 from peacemusic.modules.agent.results import ToolResult
@@ -298,6 +302,13 @@ def _failure(error: Exception) -> ToolResult:
     code = (
         "INVALID_TOOL_ARGUMENTS"
         if isinstance(error, PydanticValidationError)
-        else type(error).__name__.upper()
+        else (
+            getattr(error, "code", "PERMISSION_DENIED")
+            if isinstance(error, PermissionDeniedError)
+            else type(error).__name__.upper()
+        )
     )
-    return ToolResult.failure(code, describe_exception(error))
+    data = (
+        getattr(error, "data", {}) if isinstance(error, PermissionDeniedError) else {}
+    )
+    return ToolResult.failure(code, describe_exception(error), data=data)

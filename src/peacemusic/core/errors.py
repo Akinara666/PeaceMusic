@@ -18,7 +18,22 @@ class ValidationError(PeaceMusicError):
 
 
 class PermissionDeniedError(PeaceMusicError):
-    """The caller is not allowed to perform an operation."""
+    """The caller is not allowed to perform an operation.
+
+    ``code`` and ``data`` let model-facing adapters preserve the concrete
+    authorization reason without parsing a human-readable message.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "PERMISSION_DENIED",
+        data: dict[str, object] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.data = data or {}
 
 
 class ResourceNotFoundError(PeaceMusicError):
