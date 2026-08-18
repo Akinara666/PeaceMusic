@@ -65,7 +65,15 @@ class ChatCog(commands.Cog):
                 if getattr(getattr(message.author, "voice", None), "channel", None)
                 else None
             ),
-            bot_voice_channel_id=None,
+            bot_voice_channel_id=(
+                getattr(
+                    getattr(
+                        getattr(message.guild, "voice_client", None), "channel", None
+                    ),
+                    "id",
+                    None,
+                )
+            ),
             can_manage_guild=bool(
                 getattr(
                     getattr(message.author, "guild_permissions", None),
