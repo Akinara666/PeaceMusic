@@ -215,7 +215,8 @@ def test_ytdlp_expands_flat_search_results(monkeypatch) -> None:
     assert data["url"] == "https://cdn.example.test/audio"
     assert options_seen[0]["format"] == "bestaudio/best"
     assert options_seen[0]["extractor_args"] == {
-        "youtubepot-bgutilhttp": {"base_url": "http://pot-provider:4416"}
+        "youtubepot-bgutilhttp": {"base_url": "http://pot-provider:4416"},
+        "youtube": {"player_client": ["mweb"]},
     }
     assert calls == [
         "ytsearch1:example",

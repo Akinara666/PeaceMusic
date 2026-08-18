@@ -23,6 +23,11 @@ _STRUCTURED_FIELDS = (
     "tool_result",
     "tool_duration_ms",
     "agent_thread_id",
+    "track",
+    "was_idle",
+    "player_status",
+    "voice_gateway_attached",
+    "start_seconds",
 )
 
 
