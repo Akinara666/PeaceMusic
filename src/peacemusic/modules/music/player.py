@@ -33,6 +33,15 @@ class GuildPlayer:
         if self.current_track is None:
             self.start_next()
 
+    def reset_failed_playback(self) -> None:
+        """Discard a failed current track so a later enqueue can restart."""
+
+        if self.status is not PlaybackStatus.FAILED:
+            return
+        self.current_track = None
+        self.position_seconds = 0
+        self.status = PlaybackStatus.IDLE
+
     def start_next(self) -> Track | None:
         next_track = self.queue.advance(self.current_track)
         self.current_track = next_track

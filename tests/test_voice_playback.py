@@ -128,6 +128,37 @@ def test_music_service_starts_voice_playback_and_advances_after_callback() -> No
     asyncio.run(scenario())
 
 
+def test_music_service_restarts_after_a_previous_stream_failure() -> None:
+    async def scenario() -> None:
+        voice = VoiceGateway()
+        service = MusicService(
+            GuildPlayerManager(),
+            Resolver(),
+            AllowAllPermissionService(),
+            voice_gateway=voice,
+            audio_source_factory=AudioFactory(),
+        )
+        context = MusicRequestContext(
+            guild_id=1,
+            user_id=2,
+            user_voice_channel_id=3,
+        )
+
+        await service.play(context, "failed")
+        voice.callbacks[0](RuntimeError("stream closed"))
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert (await service.player_state(1)).status is PlaybackStatus.FAILED
+
+        await service.play(context, "restarted")
+
+        assert voice.played == [(1, "source:failed"), (1, "source:restarted")]
+        assert (await service.player_state(1)).current_track is not None
+        assert (await service.player_state(1)).current_track.title == "restarted"
+
+    asyncio.run(scenario())
+
+
 def test_music_service_refreshes_expiring_stream_before_starting_playback() -> None:
     async def scenario() -> None:
         resolver = RefreshingResolver()

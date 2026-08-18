@@ -130,7 +130,18 @@ class MusicService:
             raise ValidationError("User must be in a voice channel")
         player = await self._players.get_or_create(context.guild_id)
         self._cancel_idle_disconnect(context.guild_id)
+        player.reset_failed_playback()
         was_idle = player.current_track is None
+        logger.info(
+            "Track enqueued",
+            extra={
+                "guild_id": context.guild_id,
+                "track": track.title,
+                "was_idle": was_idle,
+                "player_status": player.status.value,
+                "voice_gateway_attached": self._voice_gateway is not None,
+            },
+        )
         if self._voice_gateway is not None:
             await self._voice_gateway.connect(
                 context.guild_id, context.user_voice_channel_id
@@ -347,6 +358,14 @@ class MusicService:
         track = player.current_track
         if track is None:
             return
+        logger.info(
+            "Starting audio playback",
+            extra={
+                "guild_id": player.guild_id,
+                "track": track.title,
+                "start_seconds": start_seconds,
+            },
+        )
 
         async def refresh_track() -> None:
             nonlocal track
