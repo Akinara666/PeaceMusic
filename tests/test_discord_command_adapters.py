@@ -38,6 +38,31 @@ class Response:
         self.messages.append((args, kwargs))
 
 
+class DeferredResponse:
+    def __init__(self) -> None:
+        self.deferred = False
+        self.defer_calls: list[dict[str, object]] = []
+
+    def is_done(self) -> bool:
+        return self.deferred
+
+    async def defer(self, **kwargs: object) -> None:
+        self.defer_calls.append(kwargs)
+        self.deferred = True
+
+    async def send_message(self, *_args: object, **_kwargs: object) -> None:
+        raise AssertionError("a deferred interaction must use a follow-up")
+
+
+class Followup:
+    def __init__(self) -> None:
+        self.messages: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    async def send(self, *args: object, **kwargs: object) -> SimpleNamespace:
+        self.messages.append((args, kwargs))
+        return SimpleNamespace(id=123)
+
+
 def interaction(*, manager: bool = False):
     return SimpleNamespace(
         guild=SimpleNamespace(id=1, voice_client=None),
@@ -154,6 +179,25 @@ def test_music_commands_delegate_to_music_service() -> None:
         await cog.move.callback(cog, interaction(), 0, 1)
         await cog.shuffle.callback(cog, interaction())
         await cog.clear.callback(cog, interaction())
+
+    asyncio.run(scenario())
+
+
+def test_slow_music_command_defers_and_uses_followup() -> None:
+    async def scenario() -> None:
+        deferred = DeferredResponse()
+        followup = Followup()
+        command_interaction = interaction()
+        command_interaction.response = deferred
+        command_interaction.followup = followup
+
+        cog = MusicCog(MusicStub())
+        await cog.play.callback(cog, command_interaction, "query")
+
+        assert deferred.defer_calls == [{"ephemeral": False}]
+        assert len(followup.messages) == 1
+        assert followup.messages[0][1]["wait"] is True
+        assert followup.messages[0][1]["embed"].title == "queued"
 
     asyncio.run(scenario())
 

@@ -43,11 +43,34 @@ class MusicCog(commands.Cog):
     async def _send_error(
         self, interaction: discord.Interaction, error: Exception
     ) -> None:
-        message = str(error) or "Music operation failed"
+        await self._send(
+            interaction,
+            str(error) or "Music operation failed",
+            ephemeral=True,
+        )
+
+    @staticmethod
+    async def _defer(
+        interaction: discord.Interaction, *, ephemeral: bool = False
+    ) -> None:
+        """Acknowledge a slash command before slow provider or voice work."""
+
         if interaction.response.is_done():
-            await interaction.followup.send(message, ephemeral=True)
-        else:
-            await interaction.response.send_message(message, ephemeral=True)
+            return
+        defer = getattr(interaction.response, "defer", None)
+        if defer is not None:
+            await defer(ephemeral=ephemeral)
+
+    @staticmethod
+    async def _send(
+        interaction: discord.Interaction, *args: object, **kwargs: object
+    ) -> discord.WebhookMessage | None:
+        """Send an initial response or a follow-up after a deferred response."""
+
+        if interaction.response.is_done():
+            return await interaction.followup.send(*args, wait=True, **kwargs)
+        await interaction.response.send_message(*args, **kwargs)
+        return None
 
     async def _publish_player(
         self, interaction: discord.Interaction, embed: discord.Embed
@@ -64,20 +87,20 @@ class MusicCog(commands.Cog):
                     try:
                         message = await fetch_message(stored[1])
                         await message.edit(embed=embed, view=PlayerView(self._service))
-                        await interaction.response.send_message(
-                            "Player updated.", ephemeral=True
-                        )
+                        await self._send(interaction, "Player updated.", ephemeral=True)
                         return
                     except Exception:  # noqa: BLE001 - stale Discord message
                         pass
 
-        await interaction.response.send_message(
-            embed=embed, view=PlayerView(self._service)
+        message = await self._send(
+            interaction, embed=embed, view=PlayerView(self._service)
         )
         if self._player_messages is not None and guild is not None:
-            original_response = getattr(interaction, "original_response", None)
-            if original_response is not None:
-                message = await original_response()
+            if message is None:
+                original_response = getattr(interaction, "original_response", None)
+                if original_response is not None:
+                    message = await original_response()
+            if message is not None:
                 await self._player_messages.save(
                     guild.id,
                     channel_id=getattr(channel, "id", 0),
@@ -87,6 +110,7 @@ class MusicCog(commands.Cog):
     @app_commands.command(name="play", description="Play or queue a track")
     @app_commands.guild_only()
     async def play(self, interaction: discord.Interaction, query: str) -> None:
+        await self._defer(interaction)
         try:
             track = await self._service.play(
                 self._context(interaction, notify_queue=False), query
@@ -98,10 +122,11 @@ class MusicCog(commands.Cog):
     @app_commands.command(name="search", description="Search for a playable track")
     @app_commands.guild_only()
     async def search(self, interaction: discord.Interaction, query: str) -> None:
+        await self._defer(interaction)
         try:
             track = await self._service.resolve_track(self._context(interaction), query)
-            await interaction.response.send_message(
-                embed=track_embed(track, description="Search result")
+            await self._send(
+                interaction, embed=track_embed(track, description="Search result")
             )
         except PeaceMusicError as exc:
             await self._send_error(interaction, exc)
@@ -109,24 +134,27 @@ class MusicCog(commands.Cog):
     @app_commands.command(name="pause", description="Pause playback")
     @app_commands.guild_only()
     async def pause(self, interaction: discord.Interaction) -> None:
+        await self._defer(interaction)
         try:
             await self._service.pause(self._context(interaction))
-            await interaction.response.send_message("⏸ Playback paused.")
+            await self._send(interaction, "⏸ Playback paused.")
         except PeaceMusicError as exc:
             await self._send_error(interaction, exc)
 
     @app_commands.command(name="resume", description="Resume playback")
     @app_commands.guild_only()
     async def resume(self, interaction: discord.Interaction) -> None:
+        await self._defer(interaction)
         try:
             await self._service.resume(self._context(interaction))
-            await interaction.response.send_message("▶ Playback resumed.")
+            await self._send(interaction, "▶ Playback resumed.")
         except PeaceMusicError as exc:
             await self._send_error(interaction, exc)
 
     @app_commands.command(name="skip", description="Skip the current track")
     @app_commands.guild_only()
     async def skip(self, interaction: discord.Interaction) -> None:
+        await self._defer(interaction)
         try:
             next_track = await self._service.skip(self._context(interaction))
             message = (
@@ -134,54 +162,57 @@ class MusicCog(commands.Cog):
                 if next_track
                 else "Queue ended."
             )
-            await interaction.response.send_message(message)
+            await self._send(interaction, message)
         except PeaceMusicError as exc:
             await self._send_error(interaction, exc)
 
     @app_commands.command(name="stop", description="Stop playback and clear the queue")
     @app_commands.guild_only()
     async def stop(self, interaction: discord.Interaction) -> None:
+        await self._defer(interaction)
         try:
             await self._service.stop(self._context(interaction))
-            await interaction.response.send_message("⏹ Playback stopped.")
+            await self._send(interaction, "⏹ Playback stopped.")
         except PeaceMusicError as exc:
             await self._send_error(interaction, exc)
 
     @app_commands.command(name="seek", description="Seek within the current track")
     @app_commands.guild_only()
     async def seek(self, interaction: discord.Interaction, seconds: int) -> None:
+        await self._defer(interaction)
         try:
             position = await self._service.seek(self._context(interaction), seconds)
-            await interaction.response.send_message(
-                f"⏩ Playback moved to {position} seconds."
-            )
+            await self._send(interaction, f"⏩ Playback moved to {position} seconds.")
         except PeaceMusicError as exc:
             await self._send_error(interaction, exc)
 
     @app_commands.command(name="leave", description="Disconnect from voice")
     @app_commands.guild_only()
     async def leave(self, interaction: discord.Interaction) -> None:
+        await self._defer(interaction)
         try:
             await self._service.disconnect(self._context(interaction))
-            await interaction.response.send_message("👋 Disconnected from voice.")
+            await self._send(interaction, "👋 Disconnected from voice.")
         except PeaceMusicError as exc:
             await self._send_error(interaction, exc)
 
     @app_commands.command(name="join", description="Join your voice channel")
     @app_commands.guild_only()
     async def join(self, interaction: discord.Interaction) -> None:
+        await self._defer(interaction)
         try:
             await self._service.connect(self._context(interaction))
-            await interaction.response.send_message("🔊 Joined your voice channel.")
+            await self._send(interaction, "🔊 Joined your voice channel.")
         except PeaceMusicError as exc:
             await self._send_error(interaction, exc)
 
     @app_commands.command(name="volume", description="Set player volume")
     @app_commands.guild_only()
     async def volume(self, interaction: discord.Interaction, value: int) -> None:
+        await self._defer(interaction)
         try:
             volume = await self._service.set_volume(self._context(interaction), value)
-            await interaction.response.send_message(f"🔊 Volume set to {volume}%.")
+            await self._send(interaction, f"🔊 Volume set to {volume}%.")
         except PeaceMusicError as exc:
             await self._send_error(interaction, exc)
 
@@ -197,28 +228,29 @@ class MusicCog(commands.Cog):
     async def loop(
         self, interaction: discord.Interaction, mode: app_commands.Choice[str]
     ) -> None:
+        await self._defer(interaction)
         try:
             selected = await self._service.set_loop_mode(
                 self._context(interaction), LoopMode(mode.value)
             )
-            await interaction.response.send_message(
-                f"🔁 Loop mode: `{selected.value}`."
-            )
+            await self._send(interaction, f"🔁 Loop mode: `{selected.value}`.")
         except PeaceMusicError as exc:
             await self._send_error(interaction, exc)
 
     @app_commands.command(name="queue", description="Show the current queue")
     @app_commands.guild_only()
     async def queue(self, interaction: discord.Interaction) -> None:
+        await self._defer(interaction)
         try:
             player = await self._service.player_state(interaction.guild.id)  # type: ignore[union-attr]
-            await interaction.response.send_message(embed=player_embed(player))
+            await self._send(interaction, embed=player_embed(player))
         except PeaceMusicError as exc:
             await self._send_error(interaction, exc)
 
     @app_commands.command(name="nowplaying", description="Show the current track")
     @app_commands.guild_only()
     async def nowplaying(self, interaction: discord.Interaction) -> None:
+        await self._defer(interaction)
         try:
             if interaction.guild is None:
                 raise PeaceMusicError("Music commands are only available in guilds")
@@ -230,6 +262,7 @@ class MusicCog(commands.Cog):
     @app_commands.command(name="autoplay", description="Enable or disable autoplay")
     @app_commands.guild_only()
     async def autoplay(self, interaction: discord.Interaction, enabled: bool) -> None:
+        await self._defer(interaction)
         try:
             if self._settings is None or interaction.guild is None:
                 raise PeaceMusicError("Guild settings are unavailable")
@@ -240,16 +273,17 @@ class MusicCog(commands.Cog):
                 values={"autoplay_enabled": enabled},
             )
             state = "enabled" if settings.music.autoplay_enabled else "disabled"
-            await interaction.response.send_message(f"Autoplay {state}.")
+            await self._send(interaction, f"Autoplay {state}.")
         except PeaceMusicError as exc:
             await self._send_error(interaction, exc)
 
     @app_commands.command(name="history", description="Show recently played tracks")
     @app_commands.guild_only()
     async def history(self, interaction: discord.Interaction, limit: int = 10) -> None:
+        await self._defer(interaction, ephemeral=True)
         if self._history is None:
-            await interaction.response.send_message(
-                "Playback history is unavailable.", ephemeral=True
+            await self._send(
+                interaction, "Playback history is unavailable.", ephemeral=True
             )
             return
         try:
@@ -261,18 +295,19 @@ class MusicCog(commands.Cog):
                 )
                 or "No playback history yet."
             )
-            await interaction.response.send_message(description, ephemeral=True)
+            await self._send(interaction, description, ephemeral=True)
         except PeaceMusicError as exc:
             await self._send_error(interaction, exc)
 
     @app_commands.command(name="remove", description="Remove a queued track")
     @app_commands.guild_only()
     async def remove(self, interaction: discord.Interaction, index: int) -> None:
+        await self._defer(interaction)
         try:
             track = await self._service.remove_from_queue(
                 self._context(interaction), index
             )
-            await interaction.response.send_message(f"Removed **{track.title}**.")
+            await self._send(interaction, f"Removed **{track.title}**.")
         except PeaceMusicError as exc:
             await self._send_error(interaction, exc)
 
@@ -281,28 +316,31 @@ class MusicCog(commands.Cog):
     async def move(
         self, interaction: discord.Interaction, source_index: int, target_index: int
     ) -> None:
+        await self._defer(interaction)
         try:
             await self._service.move_in_queue(
                 self._context(interaction), source_index, target_index
             )
-            await interaction.response.send_message("Queue position updated.")
+            await self._send(interaction, "Queue position updated.")
         except PeaceMusicError as exc:
             await self._send_error(interaction, exc)
 
     @app_commands.command(name="shuffle", description="Shuffle the queue")
     @app_commands.guild_only()
     async def shuffle(self, interaction: discord.Interaction) -> None:
+        await self._defer(interaction)
         try:
             await self._service.shuffle_queue(self._context(interaction))
-            await interaction.response.send_message("🔀 Queue shuffled.")
+            await self._send(interaction, "🔀 Queue shuffled.")
         except PeaceMusicError as exc:
             await self._send_error(interaction, exc)
 
     @app_commands.command(name="clear", description="Clear the queue")
     @app_commands.guild_only()
     async def clear(self, interaction: discord.Interaction) -> None:
+        await self._defer(interaction)
         try:
             count = await self._service.clear_queue(self._context(interaction))
-            await interaction.response.send_message(f"Cleared {count} queued tracks.")
+            await self._send(interaction, f"Cleared {count} queued tracks.")
         except PeaceMusicError as exc:
             await self._send_error(interaction, exc)
