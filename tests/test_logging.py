@@ -40,3 +40,16 @@ def test_context_formatter_includes_tool_diagnostics() -> None:
 
     assert 'tool_name="play_music"' in formatted
     assert 'tool_arguments={"query": "jazz"}' in formatted
+
+
+def test_context_formatter_includes_playback_diagnostics() -> None:
+    record = _record()
+    record.track = "Aoi"
+    record.was_idle = True
+    record.voice_gateway_attached = True
+
+    formatted = ContextFormatter("%(message)s").format(record)
+
+    assert 'track="Aoi"' in formatted
+    assert "was_idle=true" in formatted
+    assert "voice_gateway_attached=true" in formatted

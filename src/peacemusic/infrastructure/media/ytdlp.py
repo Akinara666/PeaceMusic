@@ -113,6 +113,12 @@ class YtDlpMediaResolver:
             pot_args = dict(extractor_args.get("youtubepot-bgutilhttp") or {})
             pot_args["base_url"] = self._pot_provider_url
             extractor_args["youtubepot-bgutilhttp"] = pot_args
+            youtube_args = dict(extractor_args.get("youtube") or {})
+            # YouTube now selectively enforces GVS PO tokens for android_vr.
+            # The bundled bgutil provider supplies the recommended mweb token;
+            # avoid the default client chain producing an unplayable URL.
+            youtube_args.setdefault("player_client", ["mweb"])
+            extractor_args["youtube"] = youtube_args
             options["extractor_args"] = extractor_args
         if self._cookies_file:
             if not self._cookies_file.is_file():
