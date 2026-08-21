@@ -34,6 +34,15 @@ class ConversationMessage:
     created_at: datetime | None = None
     media: tuple[ConversationMedia, ...] = ()
 
+    def without_media(self) -> "ConversationMessage":
+        """Return the same message without provider-owned media references."""
+
+        return ConversationMessage(
+            role=self.role,
+            content=self.content,
+            created_at=self.created_at,
+        )
+
     def as_message(self) -> dict[str, object]:
         if self.media:
             return {
@@ -69,6 +78,9 @@ class ConversationRepository(Protocol):
 
     async def clear(self, thread_id: str) -> int:
         """Delete all persisted messages for a thread and return the count."""
+
+    async def clear_media(self, thread_id: str) -> int:
+        """Remove provider media references while retaining message text."""
 
 
 def conversation_thread_id(guild_id: int, channel_id: int) -> str:
@@ -142,3 +154,12 @@ class InMemoryConversationRepository:
     async def clear(self, thread_id: str) -> int:
         messages = self.messages.pop(thread_id, [])
         return len(messages)
+
+    async def clear_media(self, thread_id: str) -> int:
+        messages = self.messages.get(thread_id, [])
+        cleared = 0
+        for index, message in enumerate(messages):
+            if message.media:
+                messages[index] = message.without_media()
+                cleared += 1
+        return cleared

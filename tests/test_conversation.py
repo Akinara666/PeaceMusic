@@ -119,3 +119,29 @@ def test_in_memory_conversation_repository_clears_one_thread_only() -> None:
         ] == ["keep me"]
 
     asyncio.run(scenario())
+
+
+def test_in_memory_conversation_repository_clears_media_but_keeps_text() -> None:
+    async def scenario() -> None:
+        repository = InMemoryConversationRepository()
+        await repository.append(
+            "thread",
+            ConversationMessage(
+                "user",
+                "remember this",
+                media=(
+                    ConversationMedia("files/1", "https://files.test/1", "image/png"),
+                ),
+            ),
+        )
+        await repository.append("thread", ConversationMessage("assistant", "ok"))
+
+        assert await repository.clear_media("thread") == 1
+        messages = await repository.recent("thread", limit=10)
+        assert [(message.role, message.content) for message in messages] == [
+            ("user", "remember this"),
+            ("assistant", "ok"),
+        ]
+        assert messages[0].media == ()
+
+    asyncio.run(scenario())
