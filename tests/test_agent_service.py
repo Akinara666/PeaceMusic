@@ -11,6 +11,7 @@ from peacemusic.infrastructure.persistence.repositories.in_memory_settings impor
     InMemoryGuildSettingsRepository,
 )
 from peacemusic.modules.agent.conversation import (
+    ConversationMedia,
     ConversationMessage,
     InMemoryConversationRepository,
 )
@@ -321,6 +322,69 @@ def test_agent_service_reuses_persisted_provider_media_on_next_turn() -> None:
         payload, _config = factory.agents[1].payloads[0]
         previous_message = payload["messages"][0]
         assert previous_message["content"][1]["file_uri"] == "https://files.test/1"
+
+    asyncio.run(scenario())
+
+
+def test_agent_service_recovers_from_expired_persisted_provider_media() -> None:
+    class RetryAgent(FakeAgent):
+        async def ainvoke(self, payload, *, config=None):
+            self.payloads.append((payload, config))
+            if len(self.payloads) == 1:
+                raise RuntimeError(
+                    "403 PERMISSION_DENIED: You do not have permission to access "
+                    "the File gn431oaeu0ma or it may not exist."
+                )
+            return {"messages": [SimpleNamespace(content="recovered response")]}
+
+    class RetryFactory(FakeFactory):
+        def create(self, tools, *, system_prompt=None):
+            self.tools = tools
+            self.system_prompt = system_prompt
+            agent = RetryAgent()
+            self.agents.append(agent)
+            return agent
+
+    async def scenario() -> None:
+        settings = GuildSettingsService(InMemoryGuildSettingsRepository())
+        conversation = InMemoryConversationRepository()
+        await conversation.append(
+            "guild:1:channel:2",
+            ConversationMessage(
+                "user",
+                "describe this image",
+                media=(
+                    ConversationMedia("files/1", "https://files.test/1", "image/png"),
+                ),
+            ),
+        )
+        factory = RetryFactory()
+        service = AgentService(
+            settings_service=settings,
+            tool_registry=ToolRegistry(),
+            agent_factory=factory,
+            coordinator=TurnCoordinator(timeout_seconds=1),
+            conversation_repository=conversation,
+        )
+
+        state = await service.handle(
+            AgentRequestContext("req", 1, 2, 3, "User"),
+            "continue our conversation",
+        )
+
+        assert state.final_response == "recovered response"
+        agent = factory.agents[0]
+        assert len(agent.payloads) == 2
+        first_messages = agent.payloads[0][0]["messages"]
+        retry_messages = agent.payloads[1][0]["messages"]
+        assert first_messages[0]["content"][1]["file_uri"] == "https://files.test/1"
+        assert retry_messages[0] == {
+            "role": "user",
+            "content": "describe this image",
+        }
+        stored = await conversation.recent("guild:1:channel:2", limit=10)
+        assert stored[0].content == "describe this image"
+        assert stored[0].media == ()
 
     asyncio.run(scenario())
 

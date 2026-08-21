@@ -84,6 +84,21 @@ class PostgresConversationRepository:
             )
         return int(result.split()[-1])
 
+    async def clear_media(self, thread_id: str) -> int:
+        """Remove expired provider references without deleting conversation text."""
+
+        async with self._database.acquire() as connection:
+            result = await connection.execute(
+                """
+                UPDATE conversation_messages
+                   SET media = '[]'::jsonb
+                 WHERE thread_id = $1
+                   AND jsonb_array_length(media) > 0
+                """,
+                thread_id,
+            )
+        return int(result.split()[-1])
+
     @staticmethod
     def _message(row: Any) -> ConversationMessage:
         raw_media = row["media"]

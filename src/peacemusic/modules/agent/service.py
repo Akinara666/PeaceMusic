@@ -176,7 +176,6 @@ class AgentService:
                 langchain_tools,
                 system_prompt=settings.ai.system_prompt,
             )
-            messages = [message.as_message() for message in history]
             user_message = format_user_message(context, state.normalized_input)
             current_content: object = user_message
             if uploaded:
@@ -191,14 +190,24 @@ class AgentService:
                         for item in uploaded
                     ],
                 ]
-            messages.append({"role": "user", "content": current_content})
 
-            async def run_agent() -> Any:
+            def build_messages(
+                conversation_history: Sequence[ConversationMessage],
+            ) -> list[dict[str, object]]:
+                messages = [message.as_message() for message in conversation_history]
+                messages.append({"role": "user", "content": current_content})
+                return messages
+
+            messages = build_messages(history)
+
+            async def run_agent(
+                request_messages: Sequence[Mapping[str, object]],
+            ) -> Any:
                 try:
                     if self._metrics is not None:
                         self._metrics.increment("peacemusic_llm_requests_total")
                     return await agent.ainvoke(
-                        {"messages": messages},
+                        {"messages": request_messages},
                         config={
                             "configurable": {
                                 "thread_id": agent_thread_id,
@@ -233,11 +242,38 @@ class AgentService:
                 },
             )
             try:
-                result = await self._coordinator.run(
-                    context.channel_id,
-                    run_agent,
-                    timeout_seconds=settings.ai.turn_timeout,
-                )
+                try:
+                    result = await self._coordinator.run(
+                        context.channel_id,
+                        lambda: run_agent(messages),
+                        timeout_seconds=settings.ai.turn_timeout,
+                    )
+                except ExternalServiceError as exc:
+                    if not self._should_retry_without_provider_media(
+                        exc, history=history, uploaded=uploaded
+                    ):
+                        raise
+                    thread_id = self._thread_id(context)
+                    logger.warning(
+                        "Stale provider media detected; retrying without persisted media",
+                        extra={
+                            "request_id": context.request_id,
+                            "guild_id": context.guild_id,
+                            "channel_id": context.channel_id,
+                            "user_id": context.user_id,
+                        },
+                    )
+                    if self._conversation is not None:
+                        await self._conversation.clear_media(thread_id)
+                    await self._clear_checkpoint(agent_thread_id, context)
+                    messages = build_messages(
+                        tuple(message.without_media() for message in history)
+                    )
+                    result = await self._coordinator.run(
+                        context.channel_id,
+                        lambda: run_agent(messages),
+                        timeout_seconds=settings.ai.turn_timeout,
+                    )
                 response = self._workflow.finalize(state, _extract_response(result))
             except Exception:
                 if self._metrics is not None:
@@ -287,6 +323,29 @@ class AgentService:
                 ),
             )
         return response
+
+    @staticmethod
+    def _should_retry_without_provider_media(
+        error: ExternalServiceError,
+        *,
+        history: Sequence[ConversationMessage],
+        uploaded: Sequence[object],
+    ) -> bool:
+        """Recognize expired Gemini file references without hiding other failures."""
+
+        if uploaded and not any(message.media for message in history):
+            # A current upload failing is a real upload/provider failure; retrying
+            # the same current file cannot repair it.
+            return False
+        message = str(error).casefold()
+        return (
+            "file " in message
+            and ("permission_denied" in message or "permission denied" in message)
+            and any(
+                marker in message
+                for marker in ("may not exist", "does not exist", "not found")
+            )
+        )
 
     async def clear_conversation(self, guild_id: int, channel_id: int) -> int:
         """Clear short-term messages and the matching LangGraph thread."""
