@@ -73,9 +73,13 @@ class MusicCog(commands.Cog):
         return None
 
     async def _publish_player(
-        self, interaction: discord.Interaction, embed: discord.Embed
+        self,
+        interaction: discord.Interaction,
+        embed: discord.Embed,
+        *,
+        response_embed: discord.Embed | None = None,
     ) -> None:
-        """Create or update the one persisted player message for a guild."""
+        """Create or update the persisted player and optionally announce it."""
 
         guild = interaction.guild
         channel = interaction.channel
@@ -87,7 +91,12 @@ class MusicCog(commands.Cog):
                     try:
                         message = await fetch_message(stored[1])
                         await message.edit(embed=embed, view=PlayerView(self._service))
-                        await self._send(interaction, "Player updated.", ephemeral=True)
+                        if response_embed is None:
+                            await self._send(
+                                interaction, "Player updated.", ephemeral=True
+                            )
+                        else:
+                            await self._send(interaction, embed=response_embed)
                         return
                     except Exception:  # noqa: BLE001 - stale Discord message
                         pass
@@ -115,7 +124,12 @@ class MusicCog(commands.Cog):
             track = await self._service.play(
                 self._context(interaction, notify_queue=False), query
             )
-            await self._publish_player(interaction, track_embed(track))
+            embed = track_embed(track)
+            await self._publish_player(
+                interaction,
+                embed,
+                response_embed=embed,
+            )
         except PeaceMusicError as exc:
             await self._send_error(interaction, exc)
 

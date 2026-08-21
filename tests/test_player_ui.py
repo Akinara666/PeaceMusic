@@ -148,6 +148,7 @@ def test_music_command_reuses_persisted_player_message() -> None:
         await cog.play.callback(cog, interaction, "query")
 
         assert message.edited["embed"].title == "Queued"
-        assert interaction.response.calls[0]["ephemeral"] is True
+        assert interaction.response.calls[0]["embed"].title == "Queued"
+        assert "ephemeral" not in interaction.response.calls[0]
 
     asyncio.run(scenario())
